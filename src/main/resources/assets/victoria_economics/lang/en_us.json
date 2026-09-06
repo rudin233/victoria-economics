@@ -1,0 +1,13 @@
+{
+  "itemGroup.victoria_economics": "Example Mod Tab",
+  "block.victoria_economics.example_block": "Example Block",
+  "item.victoria_economics.example_item": "Example Item",
+
+  "victoria_economics.configuration.title": "Victoria Economics Configs",
+  "victoria_economics.configuration.section.victoria_economics.common.toml": "Victoria Economics Configs",
+  "victoria_economics.configuration.section.victoria_economics.common.toml.title": "Victoria Economics Configs",
+  "victoria_economics.configuration.items": "Item List",
+  "victoria_economics.configuration.logDirtBlock": "Log Dirt Block",
+  "victoria_economics.configuration.magicNumberIntroduction": "Magic Number Text",
+  "victoria_economics.configuration.magicNumber": "Magic Number"
+}
