@@ -1,7 +1,7 @@
 package com.bbmurloc.victoriaeconomics;
 
 
-import com.bbmurloc.victoriaeconomics.common.createmodetabs.CreateModeTabs;
+import com.bbmurloc.victoriaeconomics.common.registry.ModCreativeModeTabs;
 import com.bbmurloc.victoriaeconomics.common.registry.ModBlockEntities;
 import com.bbmurloc.victoriaeconomics.common.registry.ModBlocks;
 import com.bbmurloc.victoriaeconomics.common.registry.ModItems;
@@ -46,7 +46,7 @@ public class VictoriaEconomics {
         // Register the Deferred Register to the mod event bus so items get registered
         ModBlockEntities.register(modEventBus);
 
-        CreateModeTabs.register(modEventBus);
+        ModCreativeModeTabs.register(modEventBus);
 
         ServerLifecycleEvents.register();
         // Register ourselves for server and other game events we are interested in.

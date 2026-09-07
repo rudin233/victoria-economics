@@ -1,7 +1,5 @@
-package com.bbmurloc.victoriaeconomics.common.createmodetabs;
+package com.bbmurloc.victoriaeconomics.common.registry;
 
-import com.bbmurloc.victoriaeconomics.common.registry.ModBlocks;
-import com.bbmurloc.victoriaeconomics.common.registry.ModItems;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.CreativeModeTab;
@@ -14,7 +12,7 @@ import net.neoforged.neoforge.registries.DeferredRegister;
 import static com.bbmurloc.victoriaeconomics.VictoriaEconomics.MODID;
 import static com.bbmurloc.victoriaeconomics.common.registry.ModItems.EXAMPLE_ITEM;
 
-public class CreateModeTabs {
+public class ModCreativeModeTabs {
     // Create a Deferred Register to hold creative tabs in this mod's namespace.
     public static final DeferredRegister<CreativeModeTab> CREATIVE_MODE_TABS = DeferredRegister.create(Registries.CREATIVE_MODE_TAB, MODID);
 

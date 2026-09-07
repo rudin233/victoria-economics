@@ -20,7 +20,7 @@ public final class ServerEconomyRuntime {
     public static void start(MinecraftServer server) {
         Objects.requireNonNull(server, "server");
 
-        ServerEconomyContext context = new ServerEconomyContext();
+        ServerEconomyContext context = new ServerEconomyContext(server);
 
         ServerEconomyContext existing = CONTEXTS.putIfAbsent(server, context);
 
@@ -54,7 +54,11 @@ public final class ServerEconomyRuntime {
     public static void stop(MinecraftServer server) {
         Objects.requireNonNull(server, "server");
 
-        CONTEXTS.remove(server);
+        ServerEconomyContext context = CONTEXTS.remove(server);
+
+        if (context != null) {
+            context.close();
+        }
     }
 
     /**

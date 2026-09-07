@@ -28,6 +28,8 @@ sourceSets.main.resources {
 
 repositories {
     // Add here additional repositories if required by some of the dependencies below.
+    // SQLite JDBC 从 Maven Central 获取
+    mavenCentral()
 }
 
 base {
@@ -113,9 +115,16 @@ neoForge {
 // "optional", meaning it will not be pulled by dependents of this mod.
 configurations {
     runtimeClasspath.extendsFrom localRuntime
+//    为了引入sqlite-jdbc
+    additionalRuntimeClasspath.extendsFrom localRuntime
 }
 
 dependencies {
+    // SQLite JDBC
+    implementation "org.xerial:sqlite-jdbc:3.46.1.0"
+    localRuntime "org.xerial:sqlite-jdbc:3.46.1.0"
+    jarJar "org.xerial:sqlite-jdbc:3.46.1.0"
+
     // Example optional mod dependency with JEI
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
     // compileOnly "mezz.jei:jei-${mc_version}-common-api:${jei_version}"

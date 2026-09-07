@@ -5,6 +5,7 @@ import com.bbmurloc.victoriaeconomics.server.ServerEconomyContext;
 import com.bbmurloc.victoriaeconomics.server.ServerEconomyRuntime;
 import com.bbmurloc.victoriaeconomics.server.building.EconomicBuilding;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionResult;
@@ -43,18 +44,55 @@ public class BuildingAnchorBlock extends Block implements EntityBlock {
 
             if (blockEntity instanceof BuildingAnchorBlockEntity anchor) {
 
+                MinecraftServer server = serverLevel.getServer();
+
+                ServerEconomyContext context =
+                        ServerEconomyRuntime.get(server);
+
                 if (anchor.getBuildingId() == null) {
-
-                    MinecraftServer server = serverLevel.getServer();
-
-                    ServerEconomyContext context =
-                            ServerEconomyRuntime.get(server);
 
                     EconomicBuilding building =
                             context.getBuildingService()
                                     .createBuilding("test_factory");
 
                     anchor.setBuildingId(building.getId());
+
+                    player.displayClientMessage(
+                            Component.literal(
+                                    "Created building: " + building.getId()
+                            ),
+                            false
+                    );
+                }
+                else {
+                    EconomicBuilding building =
+                            context.getBuildingRegistry()
+                                    .get(anchor.getBuildingId());
+
+                    if (building != null) {
+                        context.getBuildingService()
+                                .stopBuilding(building.getId());
+
+                        player.displayClientMessage(
+                                Component.literal(
+                                        "Found building: "
+                                                + building.getId()
+                                                + " | type = "
+                                                + building.getBuildingTypeId()
+                                                + " | status = "
+                                                + building.getStatus()
+                                ),
+                                false
+                        );
+                    } else {
+                        player.displayClientMessage(
+                                Component.literal(
+                                        "Building not found: "
+                                                + anchor.getBuildingId()
+                                ),
+                                false
+                        );
+                    }
                 }
             }
         }
