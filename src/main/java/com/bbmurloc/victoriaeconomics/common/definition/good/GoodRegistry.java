@@ -1,28 +1,28 @@
-package com.bbmurloc.victoriaeconomics.common.definition.building;
+package com.bbmurloc.victoriaeconomics.common.definition.good;
 
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
-public final class BuildingTypeRegistry {
+public final class GoodRegistry {
 
-    private final Map<String, BuildingTypeDefinition> definitions =
+    private final Map<String, GoodDefinition> definitions =
             new HashMap<>();
 
-    public void register(BuildingTypeDefinition definition) {
+    public void register(GoodDefinition definition) {
         String id = definition.getId();
 
         if (definitions.containsKey(id)) {
             throw new IllegalArgumentException(
-                    "Building type already registered: " + id
+                    "Good already registered: " + id
             );
         }
 
         definitions.put(id, definition);
     }
 
-    public BuildingTypeDefinition get(String id) {
+    public GoodDefinition get(String id) {
         return definitions.get(id);
     }
 
@@ -30,12 +30,9 @@ public final class BuildingTypeRegistry {
         return definitions.containsKey(id);
     }
 
-    public Collection<BuildingTypeDefinition> getAll() {
+    public Collection<GoodDefinition> getAll() {
         return Collections.unmodifiableCollection(
                 definitions.values()
         );
     }
-
-
-
 }

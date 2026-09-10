@@ -53,7 +53,7 @@ public class BuildingAnchorBlock extends Block implements EntityBlock {
 
                     EconomicBuilding building =
                             context.getBuildingService()
-                                    .createBuilding("test_factory");
+                                    .createBuilding("steel_mill");
 
                     anchor.setBuildingId(building.getId());
 
