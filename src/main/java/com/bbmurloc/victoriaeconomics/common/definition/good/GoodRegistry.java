@@ -11,7 +11,7 @@ public final class GoodRegistry {
             new HashMap<>();
 
     public void register(GoodDefinition definition) {
-        String id = definition.getId();
+        String id = definition.id();
 
         if (definitions.containsKey(id)) {
             throw new IllegalArgumentException(

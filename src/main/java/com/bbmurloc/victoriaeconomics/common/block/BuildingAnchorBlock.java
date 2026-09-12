@@ -4,6 +4,7 @@ import com.bbmurloc.victoriaeconomics.common.blockentity.BuildingAnchorBlockEnti
 import com.bbmurloc.victoriaeconomics.server.ServerEconomyContext;
 import com.bbmurloc.victoriaeconomics.server.ServerEconomyRuntime;
 import com.bbmurloc.victoriaeconomics.server.building.EconomicBuilding;
+import com.bbmurloc.victoriaeconomics.server.production.ResolvedProductionRecipe;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
@@ -53,7 +54,7 @@ public class BuildingAnchorBlock extends Block implements EntityBlock {
 
                     EconomicBuilding building =
                             context.getBuildingService()
-                                    .createBuilding("steel_mill");
+                                    .createBuilding("tooling_workshop");
 
                     anchor.setBuildingId(building.getId());
 
@@ -70,8 +71,8 @@ public class BuildingAnchorBlock extends Block implements EntityBlock {
                                     .get(anchor.getBuildingId());
 
                     if (building != null) {
-                        context.getBuildingService()
-                                .stopBuilding(building.getId());
+//                        context.getBuildingService()
+//                                .stopBuilding(building.getId());
 
                         player.displayClientMessage(
                                 Component.literal(
@@ -84,6 +85,19 @@ public class BuildingAnchorBlock extends Block implements EntityBlock {
                                 ),
                                 false
                         );
+
+                        //        测试生产配方
+                        ResolvedProductionRecipe recipe =
+                                context.getProductionRecipeResolver()
+                                        .resolve(building);
+
+                        player.displayClientMessage(
+                                Component.literal(
+                                        "Recipe = " + recipe
+                                ),
+                                false
+                        );
+
                     } else {
                         player.displayClientMessage(
                                 Component.literal(
@@ -96,6 +110,9 @@ public class BuildingAnchorBlock extends Block implements EntityBlock {
                 }
             }
         }
+
+
+
         return InteractionResult.sidedSuccess(level.isClientSide);
     }
 

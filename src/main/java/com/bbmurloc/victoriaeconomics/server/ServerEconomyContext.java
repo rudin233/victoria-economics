@@ -5,11 +5,14 @@ import com.bbmurloc.victoriaeconomics.common.definition.DefinitionValidator;
 import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.good.GoodRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.industry.IndustryRegistry;
+import com.bbmurloc.victoriaeconomics.common.definition.occupation.OccupationRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMethodGroupRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMethodRegistry;
 import com.bbmurloc.victoriaeconomics.server.building.BuildingRegistry;
 import com.bbmurloc.victoriaeconomics.server.building.BuildingRepository;
 import com.bbmurloc.victoriaeconomics.server.building.BuildingService;
+import com.bbmurloc.victoriaeconomics.server.employment.EmploymentRegistry;
+import com.bbmurloc.victoriaeconomics.server.employment.EmploymentService;
 import com.bbmurloc.victoriaeconomics.server.production.ProductionRecipeResolver;
 import com.bbmurloc.victoriaeconomics.server.storage.EconomyDatabase;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteBuildingRepository;
@@ -27,6 +30,9 @@ public final class ServerEconomyContext implements AutoCloseable{
     private final ProductionMethodRegistry productionMethodRegistry;
     private final ProductionMethodGroupRegistry productionMethodGroupRegistry;
     private final ProductionRecipeResolver productionRecipeResolver;
+    private final OccupationRegistry occupationRegistry;
+    private final EmploymentRegistry employmentRegistry;
+    private final EmploymentService employmentService;
 
     private final BuildingTypeRegistry buildingTypeRegistry;
 
@@ -51,12 +57,23 @@ public final class ServerEconomyContext implements AutoCloseable{
         this.productionMethodGroupRegistry =
                 new ProductionMethodGroupRegistry();
 
+        this.occupationRegistry =
+                new OccupationRegistry();
+
+
+        this.employmentRegistry =
+                new EmploymentRegistry();
+
         DefaultDefinitions.registerIndustries(
                 industryRegistry
         );
 
         DefaultDefinitions.registerGoods(
                 goodRegistry
+        );
+
+        DefaultDefinitions.registerOccupations(
+                occupationRegistry
         );
 
         DefaultDefinitions.registerProductionMethods(
@@ -74,6 +91,7 @@ public final class ServerEconomyContext implements AutoCloseable{
         DefinitionValidator.validateAll(
                 industryRegistry,
                 goodRegistry,
+                occupationRegistry,
                 buildingTypeRegistry,
                 productionMethodGroupRegistry,
                 productionMethodRegistry
@@ -83,7 +101,9 @@ public final class ServerEconomyContext implements AutoCloseable{
                 new BuildingRegistry();
 
         this.buildingRepository =
-                new SqliteBuildingRepository(database);
+                new SqliteBuildingRepository(
+                        database.getConnection()
+                );
 
         this.buildingRepository
                 .loadAll()
@@ -103,6 +123,16 @@ public final class ServerEconomyContext implements AutoCloseable{
                         productionMethodGroupRegistry,
                         productionMethodRegistry
                 );
+
+        this.employmentService =
+                new EmploymentService(
+                        employmentRegistry,
+                        buildingRegistry,
+                        buildingTypeRegistry,
+                        occupationRegistry,
+                        productionRecipeResolver
+                );
+
     }
 
     public BuildingTypeRegistry getBuildingTypeRegistry() {
@@ -129,5 +159,17 @@ public final class ServerEconomyContext implements AutoCloseable{
 
     public ProductionRecipeResolver getProductionRecipeResolver() {
         return productionRecipeResolver;
+    }
+
+    public OccupationRegistry getOccupationRegistry() {
+        return occupationRegistry;
+    }
+
+    public EmploymentRegistry getEmploymentRegistry() {
+        return employmentRegistry;
+    }
+
+    public EmploymentService getEmploymentService() {
+        return employmentService;
     }
 }

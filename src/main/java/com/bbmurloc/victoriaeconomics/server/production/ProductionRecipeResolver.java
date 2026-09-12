@@ -52,7 +52,7 @@ public final class ProductionRecipeResolver {
                 new HashMap<>();
 
         for (String groupId
-                : buildingType.getProductionMethodGroupIds()) {
+                : buildingType.productionMethodGroupIds()) {
 
             ProductionMethodGroupDefinition group =
                     productionMethodGroupRegistry.get(groupId);
@@ -91,7 +91,7 @@ public final class ProductionRecipeResolver {
                 );
             }
 
-            if (!method.getGroupId().equals(groupId)) {
+            if (!method.groupId().equals(groupId)) {
                 throw new IllegalStateException(
                         "Production method '"
                                 + selectedMethodId
@@ -103,17 +103,17 @@ public final class ProductionRecipeResolver {
 
             mergeDoubleChanges(
                     inputs,
-                    method.getInputChanges()
+                    method.inputChanges()
             );
 
             mergeDoubleChanges(
                     outputs,
-                    method.getOutputChanges()
+                    method.outputChanges()
             );
 
             mergeIntegerChanges(
                     requiredWorkers,
-                    method.getWorkerChanges()
+                    method.workerChanges()
             );
         }
 

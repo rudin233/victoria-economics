@@ -7,6 +7,8 @@ import com.bbmurloc.victoriaeconomics.common.definition.good.GoodDefinition;
 import com.bbmurloc.victoriaeconomics.common.definition.good.GoodRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.industry.IndustryDefinition;
 import com.bbmurloc.victoriaeconomics.common.definition.industry.IndustryRegistry;
+import com.bbmurloc.victoriaeconomics.common.definition.occupation.OccupationDefinition;
+import com.bbmurloc.victoriaeconomics.common.definition.occupation.OccupationRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.production.*;
 
 import java.util.List;
@@ -157,4 +159,28 @@ public final class DefaultDefinitions {
     }
 
 
+    public static void registerOccupations(
+            OccupationRegistry registry
+    ) {
+        registry.register(
+                new OccupationDefinition(
+                        "laborer",
+                        1.0
+                )
+        );
+
+        registry.register(
+                new OccupationDefinition(
+                        "machinist",
+                        1.5
+                )
+        );
+
+        registry.register(
+                new OccupationDefinition(
+                        "engineer",
+                        3.0
+                )
+        );
+    }
 }

@@ -11,12 +11,12 @@ public final class ProductionMethodRegistry {
 
     public void register(ProductionMethodDefinition definition) {
         if (definitions.putIfAbsent(
-                definition.getId(),
+                definition.id(),
                 definition
         ) != null) {
             throw new IllegalArgumentException(
                     "Production method already registered: "
-                            + definition.getId()
+                            + definition.id()
             );
         }
     }

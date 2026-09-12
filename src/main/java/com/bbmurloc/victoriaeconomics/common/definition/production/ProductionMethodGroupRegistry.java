@@ -11,12 +11,12 @@ public final class ProductionMethodGroupRegistry {
 
     public void register(ProductionMethodGroupDefinition definition) {
         if (definitions.putIfAbsent(
-                definition.getId(),
+                definition.id(),
                 definition
         ) != null) {
             throw new IllegalArgumentException(
                     "Production method group already registered: "
-                            + definition.getId()
+                            + definition.id()
             );
         }
     }

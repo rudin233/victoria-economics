@@ -11,7 +11,7 @@ public final class BuildingTypeRegistry {
             new HashMap<>();
 
     public void register(BuildingTypeDefinition definition) {
-        String id = definition.getId();
+        String id = definition.id();
 
         if (definitions.containsKey(id)) {
             throw new IllegalArgumentException(

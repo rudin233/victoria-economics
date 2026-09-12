@@ -4,6 +4,7 @@ import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeDef
 import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.good.GoodRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.industry.IndustryRegistry;
+import com.bbmurloc.victoriaeconomics.common.definition.occupation.OccupationRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMethodDefinition;
 import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMethodGroupDefinition;
 import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMethodGroupRegistry;
@@ -17,9 +18,11 @@ public final class DefinitionValidator {
     public static void validateAll(
             IndustryRegistry industryRegistry,
             GoodRegistry goodRegistry,
+            OccupationRegistry occupationRegistry,
             BuildingTypeRegistry buildingTypeRegistry,
             ProductionMethodGroupRegistry productionMethodGroupRegistry,
             ProductionMethodRegistry productionMethodRegistry
+
     ) {
         validateBuildingTypes(
                 industryRegistry,
@@ -35,6 +38,7 @@ public final class DefinitionValidator {
 
         validateProductionMethods(
                 goodRegistry,
+                occupationRegistry,
                 productionMethodGroupRegistry,
                 productionMethodRegistry
         );
@@ -56,19 +60,19 @@ public final class DefinitionValidator {
                 : buildingTypeRegistry.getAll()) {
 
             if (!industryRegistry.contains(
-                    buildingType.getIndustryId()
+                    buildingType.industryId()
             )) {
                 throw new IllegalStateException(
                         "Building type '"
-                                + buildingType.getId()
+                                + buildingType.id()
                                 + "' references unknown industry '"
-                                + buildingType.getIndustryId()
+                                + buildingType.industryId()
                                 + "'"
                 );
             }
 
             for (String groupId
-                    : buildingType.getProductionMethodGroupIds()) {
+                    : buildingType.productionMethodGroupIds()) {
 
                 ProductionMethodGroupDefinition group =
                         productionMethodGroupRegistry.get(groupId);
@@ -76,23 +80,23 @@ public final class DefinitionValidator {
                 if (group == null) {
                     throw new IllegalStateException(
                             "Building type '"
-                                    + buildingType.getId()
+                                    + buildingType.id()
                                     + "' references unknown production method group '"
                                     + groupId
                                     + "'"
                     );
                 }
 
-                if (!group.getBuildingTypeId()
-                        .equals(buildingType.getId())) {
+                if (!group.buildingTypeId()
+                        .equals(buildingType.id())) {
 
                     throw new IllegalStateException(
                             "Production method group '"
                                     + groupId
                                     + "' belongs to building type '"
-                                    + group.getBuildingTypeId()
+                                    + group.buildingTypeId()
                                     + "', but is referenced by building type '"
-                                    + buildingType.getId()
+                                    + buildingType.id()
                                     + "'"
                     );
                 }
@@ -118,33 +122,33 @@ public final class DefinitionValidator {
 
             BuildingTypeDefinition buildingType =
                     buildingTypeRegistry.get(
-                            group.getBuildingTypeId()
+                            group.buildingTypeId()
                     );
 
             if (buildingType == null) {
                 throw new IllegalStateException(
                         "Production method group '"
-                                + group.getId()
+                                + group.id()
                                 + "' references unknown building type '"
-                                + group.getBuildingTypeId()
+                                + group.buildingTypeId()
                                 + "'"
                 );
             }
 
             if (!buildingType
-                    .getProductionMethodGroupIds()
-                    .contains(group.getId())) {
+                    .productionMethodGroupIds()
+                    .contains(group.id())) {
 
                 throw new IllegalStateException(
                         "Production method group '"
-                                + group.getId()
+                                + group.id()
                                 + "' belongs to building type '"
-                                + buildingType.getId()
+                                + buildingType.id()
                                 + "', but the building type does not reference this group"
                 );
             }
 
-            for (String methodId : group.getMethodIds()) {
+            for (String methodId : group.methodIds()) {
 
                 ProductionMethodDefinition method =
                         productionMethodRegistry.get(methodId);
@@ -152,23 +156,23 @@ public final class DefinitionValidator {
                 if (method == null) {
                     throw new IllegalStateException(
                             "Production method group '"
-                                    + group.getId()
+                                    + group.id()
                                     + "' references unknown production method '"
                                     + methodId
                                     + "'"
                     );
                 }
 
-                if (!method.getGroupId()
-                        .equals(group.getId())) {
+                if (!method.groupId()
+                        .equals(group.id())) {
 
                     throw new IllegalStateException(
                             "Production method '"
                                     + methodId
                                     + "' belongs to group '"
-                                    + method.getGroupId()
+                                    + method.groupId()
                                     + "', but is referenced by group '"
-                                    + group.getId()
+                                    + group.id()
                                     + "'"
                     );
                 }
@@ -182,9 +186,11 @@ public final class DefinitionValidator {
      * 1. PM 声明的 PMG 是否存在
      * 2. PM 是否真的被对应 PMG 收录
      * 3. PM 引用的 input/output Good 是否存在
+     * 4. PM 引用的 Occupation 是否存在
      */
     private static void validateProductionMethods(
             GoodRegistry goodRegistry,
+            OccupationRegistry occupationRegistry,
             ProductionMethodGroupRegistry productionMethodGroupRegistry,
             ProductionMethodRegistry productionMethodRegistry
     ) {
@@ -193,44 +199,58 @@ public final class DefinitionValidator {
 
             ProductionMethodGroupDefinition group =
                     productionMethodGroupRegistry.get(
-                            method.getGroupId()
+                            method.groupId()
                     );
 
             if (group == null) {
                 throw new IllegalStateException(
                         "Production method '"
-                                + method.getId()
+                                + method.id()
                                 + "' references unknown production method group '"
-                                + method.getGroupId()
+                                + method.groupId()
                                 + "'"
                 );
             }
 
-            if (!group.getMethodIds()
-                    .contains(method.getId())) {
+            if (!group.methodIds()
+                    .contains(method.id())) {
 
                 throw new IllegalStateException(
                         "Production method '"
-                                + method.getId()
+                                + method.id()
                                 + "' declares group '"
-                                + method.getGroupId()
+                                + method.groupId()
                                 + "', but the group does not contain this method"
                 );
             }
 
             validateGoods(
                     method,
-                    method.getInputChanges(),
+                    method.inputChanges(),
                     "input",
                     goodRegistry
             );
 
             validateGoods(
                     method,
-                    method.getOutputChanges(),
+                    method.outputChanges(),
                     "output",
                     goodRegistry
             );
+
+            for (String occupationId
+                    : method.workerChanges().keySet()) {
+
+                if (!occupationRegistry.contains(occupationId)) {
+                    throw new IllegalStateException(
+                            "Production method '"
+                                    + method.id()
+                                    + "' references unknown occupation '"
+                                    + occupationId
+                                    + "'"
+                    );
+                }
+            }
         }
     }
 
@@ -245,7 +265,7 @@ public final class DefinitionValidator {
             if (!goodRegistry.contains(goodId)) {
                 throw new IllegalStateException(
                         "Production method '"
-                                + method.getId()
+                                + method.id()
                                 + "' references unknown "
                                 + type
                                 + " good '"

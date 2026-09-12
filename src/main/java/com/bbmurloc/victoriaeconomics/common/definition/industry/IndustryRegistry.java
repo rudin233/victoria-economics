@@ -12,12 +12,12 @@ public final class IndustryRegistry {
 
     public void register(IndustryDefinition definition) {
         if (definitions.putIfAbsent(
-                definition.getId(),
+                definition.id(),
                 definition
         ) != null) {
             throw new IllegalArgumentException(
                     "Industry already registered: "
-                            + definition.getId()
+                            + definition.id()
             );
         }
     }
