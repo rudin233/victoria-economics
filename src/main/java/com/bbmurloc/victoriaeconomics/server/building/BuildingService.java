@@ -6,55 +6,85 @@ import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMet
 import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMethodGroupDefinition;
 import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMethodGroupRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMethodRegistry;
+import com.bbmurloc.victoriaeconomics.server.building.department.production.ProductionDepartment;
 
+import java.util.Objects;
 import java.util.UUID;
 
 public final class BuildingService {
 
     private final BuildingRegistry buildingRegistry;
+
     private final BuildingRepository buildingRepository;
 
     private final BuildingTypeRegistry buildingTypeRegistry;
+
     private final ProductionMethodGroupRegistry productionMethodGroupRegistry;
+
     private final ProductionMethodRegistry productionMethodRegistry;
 
     public BuildingService(
             BuildingRegistry buildingRegistry,
             BuildingRepository buildingRepository,
-            BuildingTypeRegistry buildingTypeRegistry, ProductionMethodGroupRegistry productionMethodGroupRegistry, ProductionMethodRegistry productionMethodRegistry
+            BuildingTypeRegistry buildingTypeRegistry,
+            ProductionMethodGroupRegistry productionMethodGroupRegistry,
+            ProductionMethodRegistry productionMethodRegistry
     ) {
-        this.buildingRegistry = buildingRegistry;
-        this.buildingRepository = buildingRepository;
-        this.buildingTypeRegistry = buildingTypeRegistry;
-        this.productionMethodGroupRegistry = productionMethodGroupRegistry;
-        this.productionMethodRegistry = productionMethodRegistry;
+        this.buildingRegistry =
+                Objects.requireNonNull(buildingRegistry);
+
+        this.buildingRepository =
+                Objects.requireNonNull(buildingRepository);
+
+        this.buildingTypeRegistry =
+                Objects.requireNonNull(buildingTypeRegistry);
+
+        this.productionMethodGroupRegistry =
+                Objects.requireNonNull(
+                        productionMethodGroupRegistry
+                );
+
+        this.productionMethodRegistry =
+                Objects.requireNonNull(
+                        productionMethodRegistry
+                );
     }
 
+    /**
+     * 创建 EconomicBuilding，
+     * 并为每一个 PMG 设置默认 PM。
+     */
     public EconomicBuilding createBuilding(
             String buildingTypeId
     ) {
         BuildingTypeDefinition buildingType =
-                buildingTypeRegistry.get(buildingTypeId);
+                buildingTypeRegistry.get(
+                        buildingTypeId
+                );
 
         if (buildingType == null) {
             throw new IllegalArgumentException(
-                    "Unknown building type: " + buildingTypeId
+                    "Unknown building type: "
+                            + buildingTypeId
             );
         }
 
-        UUID buildingId = UUID.randomUUID();
-
         EconomicBuilding building =
                 new EconomicBuilding(
-                        buildingId,
+                        UUID.randomUUID(),
                         buildingTypeId
                 );
+
+        ProductionDepartment productionDepartment =
+                building.getProductionDepartment();
 
         for (String groupId
                 : buildingType.productionMethodGroupIds()) {
 
             ProductionMethodGroupDefinition group =
-                    productionMethodGroupRegistry.get(groupId);
+                    productionMethodGroupRegistry.get(
+                            groupId
+                    );
 
             if (group == null) {
                 throw new IllegalStateException(
@@ -63,55 +93,121 @@ public final class BuildingService {
                 );
             }
 
-            building.setSelectedProductionMethod(
-                    groupId,
-                    group.defaultMethodId()
-            );
+            productionDepartment
+                    .setSelectedProductionMethod(
+                            groupId,
+                            group.defaultMethodId()
+                    );
         }
 
-        buildingRepository.save(building);
-        buildingRegistry.add(building);
+        buildingRepository.save(
+                building
+        );
+
+        buildingRegistry.add(
+                building
+        );
 
         return building;
     }
 
-    public boolean stopBuilding(UUID buildingId) {
+    public boolean stopBuilding(
+            UUID buildingId
+    ) {
         EconomicBuilding building =
-                buildingRegistry.get(buildingId);
+                buildingRegistry.get(
+                        buildingId
+                );
 
         if (building == null) {
             return false;
         }
 
-        building.setStatus(BuildingStatus.STOPPED);
+        building.setStatus(
+                BuildingStatus.STOPPED
+        );
 
-        buildingRepository.save(building);
+        buildingRepository.save(
+                building
+        );
 
         return true;
     }
 
+    /**
+     * 修改建筑当前设备数量。
+     */
+    public void setCurrentEquipment(
+            UUID buildingId,
+            int equipmentAmount
+    ) {
+        EconomicBuilding building =
+                requireBuilding(
+                        buildingId
+                );
+
+        BuildingTypeDefinition buildingType =
+                requireBuildingType(
+                        building
+                );
+
+        if (equipmentAmount < 0) {
+            throw new IllegalArgumentException(
+                    "Equipment amount cannot be negative"
+            );
+        }
+
+        if (equipmentAmount
+                > buildingType.maxEquipment()) {
+
+            throw new IllegalArgumentException(
+                    "Equipment amount exceeds max equipment: "
+                            + equipmentAmount
+                            + " > "
+                            + buildingType.maxEquipment()
+            );
+        }
+
+        building
+                .getProductionDepartment()
+                .setCurrentEquipment(
+                        equipmentAmount
+                );
+
+        buildingRepository.save(
+                building
+        );
+    }
+
+    /**
+     * 修改某个 PMG 当前选择的 PM。
+     *
+     * Victoria Economics 当前规则：
+     *
+     * later PM tier <= base PM tier
+     *
+     * 如果降低 base PM 后会导致已有 later PM 超过上限，
+     * 则拒绝修改，不自动降级其他 PM。
+     */
     public void selectProductionMethod(
             UUID buildingId,
             String groupId,
             String methodId
     ) {
         EconomicBuilding building =
-                buildingRegistry.get(buildingId);
-
-        if (building == null) {
-            throw new IllegalArgumentException(
-                    "Unknown building: " + buildingId
-            );
-        }
+                requireBuilding(
+                        buildingId
+                );
 
         BuildingTypeDefinition buildingType =
-                buildingTypeRegistry.get(
-                        building.getBuildingTypeId()
+                requireBuildingType(
+                        building
                 );
 
         if (!buildingType
                 .productionMethodGroupIds()
                 .contains(groupId)) {
+
             throw new IllegalArgumentException(
                     "Production method group '"
                             + groupId
@@ -122,18 +218,32 @@ public final class BuildingService {
         }
 
         ProductionMethodGroupDefinition group =
-                productionMethodGroupRegistry.get(groupId);
+                productionMethodGroupRegistry.get(
+                        groupId
+                );
 
-        ProductionMethodDefinition targetMethod =
-                productionMethodRegistry.get(methodId);
-
-        if (targetMethod == null) {
+        if (group == null) {
             throw new IllegalArgumentException(
-                    "Unknown production method: " + methodId
+                    "Unknown production method group: "
+                            + groupId
             );
         }
 
-        if (!targetMethod.groupId().equals(groupId)) {
+        ProductionMethodDefinition method =
+                productionMethodRegistry.get(
+                        methodId
+                );
+
+        if (method == null) {
+            throw new IllegalArgumentException(
+                    "Unknown production method: "
+                            + methodId
+            );
+        }
+
+        if (!group.methodIds().contains(methodId)
+                || !method.groupId().equals(groupId)) {
+
             throw new IllegalArgumentException(
                     "Production method '"
                             + methodId
@@ -143,91 +253,142 @@ public final class BuildingService {
             );
         }
 
-        String baseGroupId =
-                buildingType.baseProductionMethodGroupId();
+        ProductionDepartment productionDepartment =
+                building.getProductionDepartment();
 
-        // 正在修改第一个/基础 PMG
+        String baseGroupId =
+                buildingType
+                        .baseProductionMethodGroupId();
+
         if (groupId.equals(baseGroupId)) {
 
-            int targetBaseTier =
-                    targetMethod.tier();
-
+            /*
+             * 修改的是 Base PM。
+             *
+             * 新 Base tier 不能低于任何当前 later PM tier。
+             */
             for (String otherGroupId
-                    : buildingType.productionMethodGroupIds()) {
+                    : buildingType
+                    .productionMethodGroupIds()) {
 
-                if (otherGroupId.equals(baseGroupId)) {
+                if (otherGroupId.equals(
+                        baseGroupId
+                )) {
                     continue;
                 }
 
                 String selectedMethodId =
-                        building.getSelectedProductionMethodId(
-                                otherGroupId
-                        );
+                        productionDepartment
+                                .getSelectedProductionMethodId(
+                                        otherGroupId
+                                );
 
-                ProductionMethodDefinition selectedMethod =
+                if (selectedMethodId == null) {
+                    continue;
+                }
+
+                ProductionMethodDefinition
+                        selectedMethod =
                         productionMethodRegistry.get(
                                 selectedMethodId
                         );
 
-                if (selectedMethod.tier() > targetBaseTier) {
+                if (selectedMethod == null) {
                     throw new IllegalStateException(
-                            "Cannot lower base production method to tier "
-                                    + targetBaseTier
-                                    + " because group '"
-                                    + otherGroupId
-                                    + "' is using tier "
+                            "Unknown selected production method: "
+                                    + selectedMethodId
+                    );
+                }
+
+                if (selectedMethod.tier()
+                        > method.tier()) {
+
+                    throw new IllegalStateException(
+                            "Cannot lower base production method tier to "
+                                    + method.tier()
+                                    + " because production method '"
+                                    + selectedMethod.id()
+                                    + "' currently uses tier "
                                     + selectedMethod.tier()
                     );
                 }
             }
-        }
 
-        // 正在修改后续 PMG
-        else {
+        } else {
 
-            String selectedBaseMethodId =
-                    building.getSelectedProductionMethodId(
-                            baseGroupId
-                    );
+            /*
+             * 修改的是 later PM。
+             *
+             * 它的 tier 不能高于当前 Base PM tier。
+             */
+            String baseMethodId =
+                    productionDepartment
+                            .getSelectedProductionMethodId(
+                                    baseGroupId
+                            );
 
-            ProductionMethodDefinition selectedBaseMethod =
+            if (baseMethodId == null) {
+                throw new IllegalStateException(
+                        "Building has no selected base production method"
+                );
+            }
+
+            ProductionMethodDefinition baseMethod =
                     productionMethodRegistry.get(
-                            selectedBaseMethodId
+                            baseMethodId
                     );
 
-            if (targetMethod.tier()
-                    > selectedBaseMethod.tier()) {
+            if (baseMethod == null) {
+                throw new IllegalStateException(
+                        "Unknown selected base production method: "
+                                + baseMethodId
+                );
+            }
+
+            if (method.tier()
+                    > baseMethod.tier()) {
 
                 throw new IllegalStateException(
                         "Production method tier "
-                                + targetMethod.tier()
-                                + " exceeds base production method tier "
-                                + selectedBaseMethod.tier()
+                                + method.tier()
+                                + " exceeds current base production method tier "
+                                + baseMethod.tier()
                 );
             }
         }
 
-        building.setSelectedProductionMethod(
-                groupId,
-                methodId
-        );
+        productionDepartment
+                .setSelectedProductionMethod(
+                        groupId,
+                        methodId
+                );
 
-        buildingRepository.save(building);
+        buildingRepository.save(
+                building
+        );
     }
 
-    public void setCurrentEquipment(
-            UUID buildingId,
-            int equipmentAmount
+    private EconomicBuilding requireBuilding(
+            UUID buildingId
     ) {
         EconomicBuilding building =
-                buildingRegistry.get(buildingId);
+                buildingRegistry.get(
+                        buildingId
+                );
 
         if (building == null) {
             throw new IllegalArgumentException(
-                    "Unknown building: " + buildingId
+                    "Unknown building: "
+                            + buildingId
             );
         }
 
+        return building;
+    }
+
+    private BuildingTypeDefinition requireBuildingType(
+            EconomicBuilding building
+    ) {
         BuildingTypeDefinition buildingType =
                 buildingTypeRegistry.get(
                         building.getBuildingTypeId()
@@ -240,23 +401,6 @@ public final class BuildingService {
             );
         }
 
-        if (equipmentAmount < 0) {
-            throw new IllegalArgumentException(
-                    "Equipment amount cannot be negative"
-            );
-        }
-
-        if (equipmentAmount > buildingType.maxEquipment()) {
-            throw new IllegalArgumentException(
-                    "Equipment amount exceeds max equipment: "
-                            + equipmentAmount
-                            + " > "
-                            + buildingType.maxEquipment()
-            );
-        }
-
-        building.setCurrentEquipment(equipmentAmount);
-
-        buildingRepository.save(building);
+        return buildingType;
     }
 }

@@ -1,4 +1,4 @@
-package com.bbmurloc.victoriaeconomics.server.building.department;
+package com.bbmurloc.victoriaeconomics.server.building.department.hr;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -18,14 +18,14 @@ import java.util.Objects;
  *
  * 未明确配置的职业默认目标为 100%。
  */
-public record StaffingPlan(
+public record StaffingExpectation(
         Map<String, Double> targetRatios
 ) {
 
     public static final double DEFAULT_TARGET_RATIO =
             1.0;
 
-    public StaffingPlan {
+    public StaffingExpectation {
         Objects.requireNonNull(
                 targetRatios,
                 "targetRatios cannot be null"
@@ -65,8 +65,8 @@ public record StaffingPlan(
      * 空 Map 不代表“0%”，
      * 而表示没有特殊覆盖值。
      */
-    public static StaffingPlan fullStaffing() {
-        return new StaffingPlan(
+    public static StaffingExpectation fullStaffing() {
+        return new StaffingExpectation(
                 Map.of()
         );
     }
@@ -89,7 +89,7 @@ public record StaffingPlan(
      * StaffingPlan 是 immutable record，
      * 修改一个职业的目标时返回一份新的 Plan。
      */
-    public StaffingPlan withTargetRatio(
+    public StaffingExpectation withTargetRatio(
             String occupationId,
             double targetRatio
     ) {
@@ -116,7 +116,7 @@ public record StaffingPlan(
                 targetRatio
         );
 
-        return new StaffingPlan(
+        return new StaffingExpectation(
                 newTargets
         );
     }

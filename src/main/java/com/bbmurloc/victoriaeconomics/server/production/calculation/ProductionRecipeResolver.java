@@ -1,4 +1,4 @@
-package com.bbmurloc.victoriaeconomics.server.production;
+package com.bbmurloc.victoriaeconomics.server.production.calculation;
 
 import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeDefinition;
 import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeRegistry;
@@ -65,9 +65,11 @@ public final class ProductionRecipeResolver {
             }
 
             String selectedMethodId =
-                    building.getSelectedProductionMethodId(
-                            groupId
-                    );
+                    building
+                            .getProductionDepartment()
+                            .getSelectedProductionMethodId(
+                                    groupId
+                            );
 
             if (selectedMethodId == null) {
                 throw new IllegalStateException(

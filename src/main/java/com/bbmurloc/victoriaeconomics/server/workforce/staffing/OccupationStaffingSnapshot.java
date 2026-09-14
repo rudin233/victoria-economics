@@ -1,4 +1,4 @@
-package com.bbmurloc.victoriaeconomics.server.staffing;
+package com.bbmurloc.victoriaeconomics.server.workforce.staffing;
 
 import java.util.Objects;
 

@@ -1,4 +1,4 @@
-package com.bbmurloc.victoriaeconomics.server.production;
+package com.bbmurloc.victoriaeconomics.server.production.calculation;
 
 public final class EquipmentCapacityCalculator {
 

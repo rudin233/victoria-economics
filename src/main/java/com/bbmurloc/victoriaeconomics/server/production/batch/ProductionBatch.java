@@ -1,4 +1,4 @@
-package com.bbmurloc.victoriaeconomics.server.production;
+package com.bbmurloc.victoriaeconomics.server.production.batch;
 
 import java.util.Objects;
 import java.util.UUID;

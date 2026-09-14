@@ -1,13 +1,13 @@
-package com.bbmurloc.victoriaeconomics.server.staffing;
+package com.bbmurloc.victoriaeconomics.server.workforce.staffing;
 
 import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeDefinition;
 import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeRegistry;
 import com.bbmurloc.victoriaeconomics.server.building.EconomicBuilding;
-import com.bbmurloc.victoriaeconomics.server.building.department.StaffingPlan;
-import com.bbmurloc.victoriaeconomics.server.employment.EmploymentRegistry;
-import com.bbmurloc.victoriaeconomics.server.production.EquipmentCapacityCalculator;
-import com.bbmurloc.victoriaeconomics.server.production.ProductionRecipeResolver;
-import com.bbmurloc.victoriaeconomics.server.production.ResolvedProductionRecipe;
+import com.bbmurloc.victoriaeconomics.server.building.department.hr.StaffingExpectation;
+import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentRegistry;
+import com.bbmurloc.victoriaeconomics.server.production.calculation.EquipmentCapacityCalculator;
+import com.bbmurloc.victoriaeconomics.server.production.calculation.ProductionRecipeResolver;
+import com.bbmurloc.victoriaeconomics.server.production.calculation.ResolvedProductionRecipe;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -88,11 +88,13 @@ public final class StaffingCalculator {
          */
         double equipmentCapacity =
                 EquipmentCapacityCalculator.calculate(
-                        building.getCurrentEquipment(),
+                        building
+                                .getProductionDepartment()
+                                .getCurrentEquipment(),
                         buildingType.maxEquipment()
                 );
 
-        StaffingPlan staffingPlan =
+        StaffingExpectation staffingExpectation =
                 building
                         .getHumanResourcesDepartment()
                         .getStaffingPlan();
@@ -142,7 +144,7 @@ public final class StaffingCalculator {
              * HR希望达到多少比例。
              */
             double targetRatio =
-                    staffingPlan.targetRatio(
+                    staffingExpectation.targetRatio(
                             occupationId
                     );
 

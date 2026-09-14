@@ -107,7 +107,9 @@ public final class SqliteBuildingRepository
 
             statement.setInt(
                     4,
-                    building.getCurrentEquipment()
+                    building
+                            .getProductionDepartment()
+                            .getCurrentEquipment()
             );
 
             statement.executeUpdate();
@@ -140,7 +142,9 @@ public final class SqliteBuildingRepository
         }
 
         Map<String, String> selections =
-                building.getSelectedProductionMethods();
+                building
+                        .getProductionDepartment()
+                        .getSelectedProductionMethods();
 
         if (selections.isEmpty()) {
             return;
@@ -359,10 +363,11 @@ public final class SqliteBuildingRepository
                         status
                 );
 
-                building.setCurrentEquipment(
-                        currentEquipment
-                );
-
+                building
+                        .getProductionDepartment()
+                        .setCurrentEquipment(
+                                currentEquipment
+                        );
                 buildings.put(
                         id,
                         building
@@ -426,10 +431,12 @@ public final class SqliteBuildingRepository
 
                 if (building != null) {
 
-                    building.setSelectedProductionMethod(
-                            groupId,
-                            methodId
-                    );
+                    building
+                            .getProductionDepartment()
+                            .setSelectedProductionMethod(
+                                    groupId,
+                                    methodId
+                            );
                 }
             }
 

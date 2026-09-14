@@ -1,4 +1,4 @@
-package com.bbmurloc.victoriaeconomics.server.building.department;
+package com.bbmurloc.victoriaeconomics.server.building.department.hr;
 
 import java.util.Objects;
 
@@ -18,33 +18,33 @@ import java.util.Objects;
  */
 public final class HumanResourcesDepartment {
 
-    private StaffingPlan staffingPlan;
+    private StaffingExpectation staffingExpectation;
 
     public HumanResourcesDepartment() {
         this(
-                StaffingPlan.fullStaffing()
+                StaffingExpectation.fullStaffing()
         );
     }
 
     public HumanResourcesDepartment(
-            StaffingPlan staffingPlan
+            StaffingExpectation staffingExpectation
     ) {
-        this.staffingPlan =
+        this.staffingExpectation =
                 Objects.requireNonNull(
-                        staffingPlan
+                        staffingExpectation
                 );
     }
 
-    public StaffingPlan getStaffingPlan() {
-        return staffingPlan;
+    public StaffingExpectation getStaffingPlan() {
+        return staffingExpectation;
     }
 
     public void setStaffingPlan(
-            StaffingPlan staffingPlan
+            StaffingExpectation staffingExpectation
     ) {
-        this.staffingPlan =
+        this.staffingExpectation =
                 Objects.requireNonNull(
-                        staffingPlan
+                        staffingExpectation
                 );
     }
 
@@ -52,8 +52,8 @@ public final class HumanResourcesDepartment {
             String occupationId,
             double targetRatio
     ) {
-        this.staffingPlan =
-                staffingPlan.withTargetRatio(
+        this.staffingExpectation =
+                staffingExpectation.withTargetRatio(
                         occupationId,
                         targetRatio
                 );

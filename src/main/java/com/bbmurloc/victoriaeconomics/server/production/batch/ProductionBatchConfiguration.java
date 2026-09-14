@@ -1,12 +1,9 @@
-package com.bbmurloc.victoriaeconomics.server.production;
+package com.bbmurloc.victoriaeconomics.server.production.batch;
 
-import com.bbmurloc.victoriaeconomics.server.staffing.StaffingSnapshot;
+import com.bbmurloc.victoriaeconomics.server.production.calculation.ResolvedProductionRecipe;
+import com.bbmurloc.victoriaeconomics.server.workforce.staffing.StaffingSnapshot;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.UUID;
+import java.util.*;
 
 /**
  * 某一生产批次开始瞬间冻结下来的生产条件。
@@ -127,4 +124,5 @@ public record ProductionBatchConfiguration(
         return staffingSnapshot
                 .productionSpeed();
     }
+
 }

@@ -1,13 +1,13 @@
-package com.bbmurloc.victoriaeconomics.server.employment;
+package com.bbmurloc.victoriaeconomics.server.workforce.employment;
 
 import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeDefinition;
 import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.occupation.OccupationRegistry;
 import com.bbmurloc.victoriaeconomics.server.building.BuildingRegistry;
 import com.bbmurloc.victoriaeconomics.server.building.EconomicBuilding;
-import com.bbmurloc.victoriaeconomics.server.production.EquipmentCapacityCalculator;
-import com.bbmurloc.victoriaeconomics.server.production.ProductionRecipeResolver;
-import com.bbmurloc.victoriaeconomics.server.production.ResolvedProductionRecipe;
+import com.bbmurloc.victoriaeconomics.server.production.calculation.EquipmentCapacityCalculator;
+import com.bbmurloc.victoriaeconomics.server.production.calculation.ProductionRecipeResolver;
+import com.bbmurloc.victoriaeconomics.server.production.calculation.ResolvedProductionRecipe;
 
 import java.util.Objects;
 import java.util.UUID;
@@ -177,7 +177,9 @@ public final class EmploymentService {
          */
         double equipmentCapacity =
                 EquipmentCapacityCalculator.calculate(
-                        building.getCurrentEquipment(),
+                        building
+                                .getProductionDepartment()
+                                .getCurrentEquipment(),
                         buildingType.maxEquipment()
                 );
 

@@ -4,8 +4,9 @@ import com.bbmurloc.victoriaeconomics.common.blockentity.BuildingAnchorBlockEnti
 import com.bbmurloc.victoriaeconomics.server.ServerEconomyContext;
 import com.bbmurloc.victoriaeconomics.server.ServerEconomyRuntime;
 import com.bbmurloc.victoriaeconomics.server.building.EconomicBuilding;
-import com.bbmurloc.victoriaeconomics.server.production.ResolvedProductionRecipe;
-import com.bbmurloc.victoriaeconomics.server.staffing.StaffingSnapshot;
+import com.bbmurloc.victoriaeconomics.server.production.batch.ProductionBatch;
+import com.bbmurloc.victoriaeconomics.server.production.calculation.ResolvedProductionRecipe;
+import com.bbmurloc.victoriaeconomics.server.workforce.staffing.StaffingSnapshot;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -135,6 +136,11 @@ public class BuildingAnchorBlock
                             building,
                             player
                     );
+                    runProductionBatchProgressTest(
+                            context,
+                            building,
+                            player
+                    );
                 }
             }
         }
@@ -230,6 +236,11 @@ public class BuildingAnchorBlock
         );
 
         showStaffing(
+                context,
+                building,
+                player
+        );
+        runProductionBatchLockTest(
                 context,
                 building,
                 player
@@ -558,6 +569,265 @@ public class BuildingAnchorBlock
                                 + laborer.staffingRatio()
                                 + ", speed="
                                 + staffing.productionSpeed()
+                )
+        );
+    }
+
+    /**
+     * 测试 ProductionBatchConfiguration 的批次锁定机制。
+     *
+     * 测试步骤：
+     *
+     * 1. 使用当前 Live State 创建 ProductionBatch；
+     *
+     *    当前预期：
+     *    equipmentCapacity = 0.5
+     *    productionSpeed = 0.5
+     *
+     * 2. Batch 创建后，
+     *    把建筑实时设备数量从 50 改成 20；
+     *
+     * 3. 重新计算当前 Live Staffing；
+     *
+     * 4. 比较：
+     *
+     *    Live State：
+     *    equipmentCapacity 应变成 0.2
+     *
+     *    Locked Batch：
+     *    equipmentCapacity 仍然应为 0.5
+     *    productionSpeed 仍然应为 0.5
+     *
+     * 如果结果如此，
+     * 说明 ProductionBatchConfiguration 已经真正与
+     * 建筑后续实时状态变化解耦。
+     */
+    private void runProductionBatchLockTest(
+            ServerEconomyContext context,
+            EconomicBuilding building,
+            Player player
+    ) {
+        /*
+         * 如果已经有 Batch，
+         * 不重复创建。
+         */
+        ProductionBatch existingBatch =
+                building
+                        .getProductionDepartment()
+                        .getActiveBatch();
+
+        if (existingBatch != null) {
+
+            player.sendSystemMessage(
+                    Component.literal(
+                            "[EXISTING BATCH] "
+                                    + "id="
+                                    + existingBatch.getId()
+                                    + " | status="
+                                    + existingBatch.getStatus()
+                                    + " | progress="
+                                    + existingBatch.getProgress()
+                                    + " | lockedEquipment="
+                                    + existingBatch
+                                    .getConfiguration()
+                                    .equipmentCapacity()
+                                    + " | lockedSpeed="
+                                    + existingBatch
+                                    .getConfiguration()
+                                    .productionSpeed()
+                    )
+            );
+
+            return;
+        }
+
+        /*
+         * 根据当前 Live State 创建 Batch。
+         *
+         * 当前测试环境中：
+         *
+         * equipment = 50 / 100
+         * laborer = 5 / 10
+         * machinist = 2 / 4
+         *
+         * 因此预期：
+         *
+         * equipmentCapacity = 0.5
+         * productionSpeed = 0.5
+         */
+        ProductionBatch batch =
+                context.getProductionService()
+                        .startBatch(
+                                building.getId()
+                        );
+
+        player.sendSystemMessage(
+                Component.literal(
+                        "[BATCH START] "
+                                + "id="
+                                + batch.getId()
+                                + " | lockedEquipment="
+                                + batch
+                                .getConfiguration()
+                                .equipmentCapacity()
+                                + " | lockedSpeed="
+                                + batch
+                                .getConfiguration()
+                                .productionSpeed()
+                                + " | lockedPMs="
+                                + batch
+                                .getConfiguration()
+                                .productionMethodSelections()
+                )
+        );
+
+        /*
+         * Batch 已经开始。
+         *
+         * 现在故意改变建筑的实时设备状态：
+         *
+         * 50 -> 20
+         */
+        context.getBuildingService()
+                .setCurrentEquipment(
+                        building.getId(),
+                        20
+                );
+
+        /*
+         * 重新计算 Live Staffing。
+         *
+         * 注意：
+         * 这是新的实时状态，
+         * 不是 Batch 中锁定的 StaffingSnapshot。
+         */
+        StaffingSnapshot liveStaffing =
+                context.getStaffingCalculator()
+                        .calculate(
+                                building
+                        );
+
+        player.sendSystemMessage(
+                Component.literal(
+                        "[LIVE AFTER CHANGE] "
+                                + "equipment="
+                                + liveStaffing.equipmentCapacity()
+                                + " | canStart="
+                                + liveStaffing.canStart()
+                                + " | speed="
+                                + liveStaffing.productionSpeed()
+                )
+        );
+
+        /*
+         * 再次读取 Batch Configuration。
+         *
+         * 如果批次锁定正确，
+         * 这里仍然必须保持创建 Batch 时的值。
+         */
+        player.sendSystemMessage(
+                Component.literal(
+                        "[LOCKED BATCH] "
+                                + "equipment="
+                                + batch
+                                .getConfiguration()
+                                .equipmentCapacity()
+                                + " | speed="
+                                + batch
+                                .getConfiguration()
+                                .productionSpeed()
+                )
+        );
+    }
+
+    /**
+     * 测试 ProductionBatch 使用锁定的 productionSpeed 推进进度。
+     *
+     * 当前 Batch 启动时锁定：
+     *
+     * productionSpeed = 0.5
+     *
+     * 每次调用：
+     *
+     * fullSpeedProgressDelta = 0.2
+     *
+     * 因此实际应推进：
+     *
+     * 0.2 * 0.5 = 0.1
+     *
+     * 即每调用一次，本批进度增加 10%。
+     *
+     * 注意：
+     * 即使建筑当前 Live Staffing 已经变成 speed = 0，
+     * 当前 Batch 仍然必须使用启动时锁定的 speed = 0.5。
+     */
+    private void runProductionBatchProgressTest(
+            ServerEconomyContext context,
+            EconomicBuilding building,
+            Player player
+    ) {
+        ProductionBatch batch =
+                building
+                        .getProductionDepartment()
+                        .getActiveBatch();
+
+        if (batch == null) {
+            player.sendSystemMessage(
+                    Component.literal(
+                            "[TEST ERROR] No production batch exists"
+                    )
+            );
+            return;
+        }
+
+        /*
+         * 已结束的 Batch 不再继续 advance。
+         */
+        if (!batch.isActive()) {
+            player.sendSystemMessage(
+                    Component.literal(
+                            "[BATCH FINISHED] "
+                                    + "status="
+                                    + batch.getStatus()
+                                    + " | progress="
+                                    + batch.getProgress()
+                    )
+            );
+            return;
+        }
+
+        double progressBefore =
+                batch.getProgress();
+
+        /*
+         * 满速情况下，本次推进 20%。
+         *
+         * Batch 锁定速度为 0.5，
+         * 所以实际只推进 10%。
+         */
+        context.getProductionService()
+                .advanceBatch(
+                        building.getId(),
+                        0.2
+                );
+
+        double progressAfter =
+                batch.getProgress();
+
+        player.sendSystemMessage(
+                Component.literal(
+                        "[BATCH PROGRESS] "
+                                + "before="
+                                + progressBefore
+                                + " | lockedSpeed="
+                                + batch
+                                .getConfiguration()
+                                .productionSpeed()
+                                + " | fullSpeedDelta=0.2"
+                                + " | after="
+                                + progressAfter
+                                + " | status="
+                                + batch.getStatus()
                 )
         );
     }

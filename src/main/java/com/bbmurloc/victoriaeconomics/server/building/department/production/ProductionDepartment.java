@@ -1,6 +1,6 @@
-package com.bbmurloc.victoriaeconomics.server.building.department;
+package com.bbmurloc.victoriaeconomics.server.building.department.production;
 
-import com.bbmurloc.victoriaeconomics.server.production.ProductionBatch;
+import com.bbmurloc.victoriaeconomics.server.production.batch.ProductionBatch;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -115,14 +115,13 @@ public final class ProductionDepartment {
                 "batch cannot be null"
         );
 
-        if (hasActiveBatch()) {
+        if (activeBatch != null) {
             throw new IllegalStateException(
-                    "Production department already has an active batch"
+                    "Production department already contains a production batch"
             );
         }
 
-        this.activeBatch =
-                batch;
+        this.activeBatch = batch;
     }
 
     /**

@@ -1,4 +1,4 @@
-package com.bbmurloc.victoriaeconomics.server.employment;
+package com.bbmurloc.victoriaeconomics.server.workforce.employment;
 
 import java.util.Objects;
 import java.util.UUID;

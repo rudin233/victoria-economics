@@ -11,10 +11,11 @@ import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMet
 import com.bbmurloc.victoriaeconomics.server.building.BuildingRegistry;
 import com.bbmurloc.victoriaeconomics.server.building.BuildingRepository;
 import com.bbmurloc.victoriaeconomics.server.building.BuildingService;
-import com.bbmurloc.victoriaeconomics.server.employment.EmploymentRegistry;
-import com.bbmurloc.victoriaeconomics.server.employment.EmploymentService;
-import com.bbmurloc.victoriaeconomics.server.production.ProductionRecipeResolver;
-import com.bbmurloc.victoriaeconomics.server.staffing.StaffingCalculator;
+import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentRegistry;
+import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentService;
+import com.bbmurloc.victoriaeconomics.server.production.calculation.ProductionRecipeResolver;
+import com.bbmurloc.victoriaeconomics.server.production.ProductionService;
+import com.bbmurloc.victoriaeconomics.server.workforce.staffing.StaffingCalculator;
 import com.bbmurloc.victoriaeconomics.server.storage.EconomyDatabase;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteBuildingRepository;
 import net.minecraft.server.MinecraftServer;
@@ -34,6 +35,7 @@ public final class ServerEconomyContext implements AutoCloseable{
     private final OccupationRegistry occupationRegistry;
     private final EmploymentRegistry employmentRegistry;
     private final StaffingCalculator staffingCalculator;
+    private final ProductionService productionService;
     private final EmploymentService employmentService;
     private final BuildingTypeRegistry buildingTypeRegistry;
 
@@ -135,6 +137,14 @@ public final class ServerEconomyContext implements AutoCloseable{
                         productionRecipeResolver
                 );
 
+        this.productionService =
+                new ProductionService(
+                        buildingRegistry,
+                        productionRecipeResolver,
+                        staffingCalculator,
+                        employmentRegistry
+                );
+
         this.employmentService =
                 new EmploymentService(
                         employmentRegistry,
@@ -186,5 +196,9 @@ public final class ServerEconomyContext implements AutoCloseable{
 
     public StaffingCalculator getStaffingCalculator() {
         return staffingCalculator;
+    }
+
+    public ProductionService getProductionService() {
+        return productionService;
     }
 }
