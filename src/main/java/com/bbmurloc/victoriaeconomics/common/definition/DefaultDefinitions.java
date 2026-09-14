@@ -84,7 +84,10 @@ public final class DefaultDefinitions {
                         Map.of(
                                 "tools", 30.0
                         ),
-                        Map.of()
+                        Map.of(
+                                "laborer", 10,
+                                "machinist", 4
+                        )
                 )
         );
 

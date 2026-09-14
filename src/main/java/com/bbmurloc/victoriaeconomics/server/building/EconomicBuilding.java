@@ -1,5 +1,7 @@
 package com.bbmurloc.victoriaeconomics.server.building;
 
+import com.bbmurloc.victoriaeconomics.server.building.department.HumanResourcesDepartment;
+
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -11,6 +13,7 @@ public class EconomicBuilding {
     private BuildingStatus status;
     private final Map<String, String> selectedProductionMethods;
     private int currentEquipment;
+    private final HumanResourcesDepartment humanResourcesDepartment;
 
     public EconomicBuilding(
             UUID id,
@@ -21,6 +24,7 @@ public class EconomicBuilding {
         this.status = BuildingStatus.ACTIVE;
         this.selectedProductionMethods = new HashMap<>();
         this.currentEquipment = 0;
+        this.humanResourcesDepartment = new HumanResourcesDepartment();
 
     }
 
@@ -67,5 +71,9 @@ public class EconomicBuilding {
         }
 
         this.currentEquipment = currentEquipment;
+    }
+
+    public HumanResourcesDepartment getHumanResourcesDepartment() {
+        return humanResourcesDepartment;
     }
 }

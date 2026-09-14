@@ -14,6 +14,7 @@ import com.bbmurloc.victoriaeconomics.server.building.BuildingService;
 import com.bbmurloc.victoriaeconomics.server.employment.EmploymentRegistry;
 import com.bbmurloc.victoriaeconomics.server.employment.EmploymentService;
 import com.bbmurloc.victoriaeconomics.server.production.ProductionRecipeResolver;
+import com.bbmurloc.victoriaeconomics.server.staffing.StaffingCalculator;
 import com.bbmurloc.victoriaeconomics.server.storage.EconomyDatabase;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteBuildingRepository;
 import net.minecraft.server.MinecraftServer;
@@ -32,9 +33,11 @@ public final class ServerEconomyContext implements AutoCloseable{
     private final ProductionRecipeResolver productionRecipeResolver;
     private final OccupationRegistry occupationRegistry;
     private final EmploymentRegistry employmentRegistry;
+    private final StaffingCalculator staffingCalculator;
     private final EmploymentService employmentService;
-
     private final BuildingTypeRegistry buildingTypeRegistry;
+
+
 
     public ServerEconomyContext(
             MinecraftServer server
@@ -63,6 +66,7 @@ public final class ServerEconomyContext implements AutoCloseable{
 
         this.employmentRegistry =
                 new EmploymentRegistry();
+
 
         DefaultDefinitions.registerIndustries(
                 industryRegistry
@@ -124,6 +128,13 @@ public final class ServerEconomyContext implements AutoCloseable{
                         productionMethodRegistry
                 );
 
+        this.staffingCalculator =
+                new StaffingCalculator(
+                        employmentRegistry,
+                        buildingTypeRegistry,
+                        productionRecipeResolver
+                );
+
         this.employmentService =
                 new EmploymentService(
                         employmentRegistry,
@@ -171,5 +182,9 @@ public final class ServerEconomyContext implements AutoCloseable{
 
     public EmploymentService getEmploymentService() {
         return employmentService;
+    }
+
+    public StaffingCalculator getStaffingCalculator() {
+        return staffingCalculator;
     }
 }
