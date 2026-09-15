@@ -8,6 +8,7 @@ import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentRegi
 import com.bbmurloc.victoriaeconomics.server.production.calculation.EquipmentCapacityCalculator;
 import com.bbmurloc.victoriaeconomics.server.production.calculation.ProductionRecipeResolver;
 import com.bbmurloc.victoriaeconomics.server.production.calculation.ResolvedProductionRecipe;
+import com.bbmurloc.victoriaeconomics.server.productionequipment.ProductionEquipmentRegistry;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -34,10 +35,14 @@ public final class StaffingCalculator {
     private final ProductionRecipeResolver
             productionRecipeResolver;
 
+    private final ProductionEquipmentRegistry
+            productionEquipmentRegistry;
+
     public StaffingCalculator(
             EmploymentRegistry employmentRegistry,
             BuildingTypeRegistry buildingTypeRegistry,
-            ProductionRecipeResolver productionRecipeResolver
+            ProductionRecipeResolver productionRecipeResolver,
+            ProductionEquipmentRegistry productionEquipmentRegistry
     ) {
         this.employmentRegistry =
                 Objects.requireNonNull(
@@ -52,6 +57,12 @@ public final class StaffingCalculator {
         this.productionRecipeResolver =
                 Objects.requireNonNull(
                         productionRecipeResolver
+                );
+
+        this.productionEquipmentRegistry =
+                Objects.requireNonNull(
+                        productionEquipmentRegistry,
+                        "productionEquipmentRegistry cannot be null"
                 );
     }
 
@@ -84,14 +95,18 @@ public final class StaffingCalculator {
         }
 
         /*
-         * e = currentEquipment / maxEquipment
+         * e = installedProductionEquipment / maxEquipment
          */
+        int installedProductionEquipment =
+                productionEquipmentRegistry
+                        .getInstalledQuantity(
+                                building.getId()
+                        );
+
         double equipmentCapacity =
                 EquipmentCapacityCalculator.calculate(
-                        building
-                                .getProductionDepartment()
-                                .getCurrentEquipment(),
-                        buildingType.maxEquipment()
+                        installedProductionEquipment,
+                        buildingType.maxProductionEquipment()
                 );
 
         StaffingExpectation staffingExpectation =

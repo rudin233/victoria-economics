@@ -6,31 +6,48 @@ import java.util.Objects;
 public record BuildingTypeDefinition(
         String id,
         String industryId,
-        String equipmentTypeId,
-        int maxEquipment,
+        String productionEquipmentTypeId,
+        int maxProductionEquipment,
         List<String> productionMethodGroupIds
 ) {
-
     public BuildingTypeDefinition {
-        Objects.requireNonNull(id, "id");
-        Objects.requireNonNull(industryId, "industryId");
-        Objects.requireNonNull(equipmentTypeId, "equipmentTypeId");
 
-        if (maxEquipment <= 0) {
+        Objects.requireNonNull(
+                id,
+                "id cannot be null"
+        );
+
+        Objects.requireNonNull(
+                industryId,
+                "industryId cannot be null"
+        );
+
+        Objects.requireNonNull(
+                productionEquipmentTypeId,
+                "productionEquipmentTypeId cannot be null"
+        );
+
+        Objects.requireNonNull(
+                productionMethodGroupIds,
+                "productionMethodGroupIds cannot be null"
+        );
+
+        if (maxProductionEquipment <= 0) {
             throw new IllegalArgumentException(
-                    "maxEquipment must be greater than 0"
+                    "maxProductionEquipment must be positive"
             );
         }
 
-        Objects.requireNonNull(productionMethodGroupIds, "productionMethodGroupIds");
+        productionMethodGroupIds =
+                List.copyOf(
+                        productionMethodGroupIds
+                );
 
         if (productionMethodGroupIds.isEmpty()) {
             throw new IllegalArgumentException(
-                    "Building type must contain at least one production method group"
+                    "Building type must have at least one production method group"
             );
         }
-
-        productionMethodGroupIds = List.copyOf(productionMethodGroupIds);
     }
 
     public String baseProductionMethodGroupId() {

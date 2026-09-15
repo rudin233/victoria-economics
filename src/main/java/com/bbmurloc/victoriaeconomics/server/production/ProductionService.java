@@ -8,6 +8,7 @@ import com.bbmurloc.victoriaeconomics.server.production.batch.ProductionBatch;
 import com.bbmurloc.victoriaeconomics.server.production.batch.ProductionBatchConfiguration;
 import com.bbmurloc.victoriaeconomics.server.production.calculation.ProductionRecipeResolver;
 import com.bbmurloc.victoriaeconomics.server.production.calculation.ResolvedProductionRecipe;
+import com.bbmurloc.victoriaeconomics.server.productionequipment.ProductionEquipmentService;
 import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentRegistry;
 import com.bbmurloc.victoriaeconomics.server.workforce.staffing.OccupationStaffingSnapshot;
 import com.bbmurloc.victoriaeconomics.server.workforce.staffing.StaffingCalculator;
@@ -34,11 +35,15 @@ public final class ProductionService {
     private final EmploymentRegistry
             employmentRegistry;
 
+    private final ProductionEquipmentService
+            productionEquipmentService;
+
     public ProductionService(
             BuildingRegistry buildingRegistry,
             ProductionRecipeResolver productionRecipeResolver,
             StaffingCalculator staffingCalculator,
-            EmploymentRegistry employmentRegistry
+            EmploymentRegistry employmentRegistry,
+            ProductionEquipmentService productionEquipmentService
     ) {
         this.buildingRegistry =
                 Objects.requireNonNull(
@@ -58,6 +63,11 @@ public final class ProductionService {
         this.employmentRegistry =
                 Objects.requireNonNull(
                         employmentRegistry
+                );
+        this.productionEquipmentService =
+                Objects.requireNonNull(
+                        productionEquipmentService,
+                        "productionEquipmentService cannot be null"
                 );
     }
 
@@ -110,6 +120,23 @@ public final class ProductionService {
 
             throw new IllegalStateException(
                     "Building already contains a production batch"
+            );
+        }
+
+        /*
+         * 上一个 Batch Boundary 的设备重配置
+         * 必须全部处理完成以后，
+         * 才允许开始新的 Batch。
+         */
+        if (productionEquipmentService
+                .hasPendingOperationsForBuilding(
+                        buildingId
+                )) {
+
+            throw new IllegalStateException(
+                    "Cannot start production batch while building has "
+                            + "pending production equipment reconfiguration: "
+                            + buildingId
             );
         }
 
@@ -188,17 +215,41 @@ public final class ProductionService {
             UUID buildingId,
             double fullSpeedProgressDelta
     ) {
+        EconomicBuilding building =
+                requireBuilding(
+                        buildingId
+                );
+
         ProductionBatch batch =
                 requireBatch(
                         buildingId
                 );
 
+        boolean wasActive =
+                batch.isActive();
+
         batch.advance(
                 fullSpeedProgressDelta
         );
 
+        /*
+         * 只响应 ACTIVE -> 非 ACTIVE 的状态跃迁。
+         *
+         * 例如：
+         * ACTIVE -> COMPLETED
+         */
+        if (wasActive
+                && !batch.isActive()) {
+
+            handleBatchBoundary(
+                    building,
+                    batch
+            );
+        }
+
         return batch;
     }
+
 
     /**
      * 中止当前生产批次。
@@ -212,17 +263,32 @@ public final class ProductionService {
      * 结算实际劳动工资
      * 不产生产品
      */
-    public ProductionBatch abortBatch(
+    public void abortBatch(
             UUID buildingId
     ) {
+        EconomicBuilding building =
+                requireBuilding(
+                        buildingId
+                );
+
         ProductionBatch batch =
                 requireBatch(
                         buildingId
                 );
 
+        boolean wasActive =
+                batch.isActive();
+
         batch.abort();
 
-        return batch;
+        if (wasActive
+                && !batch.isActive()) {
+
+            handleBatchBoundary(
+                    building,
+                    batch
+            );
+        }
     }
 
     /**
@@ -365,5 +431,34 @@ public final class ProductionService {
         }
 
         return batch;
+    }
+
+    private void handleBatchBoundary(
+            EconomicBuilding building,
+            ProductionBatch batch
+    ) {
+        if (batch.isActive()) {
+            throw new IllegalStateException(
+                    "Cannot handle batch boundary while batch is still active: "
+                            + batch.getId()
+            );
+        }
+
+        /*
+         * 当前阶段：
+         * 还没有 Warehouse / Wage / Accounting settlement。
+         *
+         * 以后正式顺序应该是：
+         *
+         * 1. settle current batch
+         * 2. execute pending reconfiguration
+         * 3. workforce reconciliation
+         * 4. resolve next production state
+         */
+
+        productionEquipmentService
+                .flushPendingOperationsForBuilding(
+                        building.getId()
+                );
     }
 }

@@ -32,7 +32,7 @@ public record ProductionBatchConfiguration(
         /**
          * 批次开始时的设备能力：
          *
-         * e = currentEquipment / maxEquipment
+         * e = installedEquipment / maxEquipment
          */
         double equipmentCapacity,
 

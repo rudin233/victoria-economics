@@ -6,6 +6,9 @@ import com.bbmurloc.victoriaeconomics.server.ServerEconomyRuntime;
 import com.bbmurloc.victoriaeconomics.server.building.EconomicBuilding;
 import com.bbmurloc.victoriaeconomics.server.production.batch.ProductionBatch;
 import com.bbmurloc.victoriaeconomics.server.production.calculation.ResolvedProductionRecipe;
+import com.bbmurloc.victoriaeconomics.server.productionequipment.ProductionEquipmentHolding;
+import com.bbmurloc.victoriaeconomics.server.productionequipment.ProductionEquipmentService;
+import com.bbmurloc.victoriaeconomics.server.productionequipment.operation.ProductionEquipmentOperationSubmission;
 import com.bbmurloc.victoriaeconomics.server.workforce.staffing.StaffingSnapshot;
 
 import net.minecraft.core.BlockPos;
@@ -73,7 +76,6 @@ public class BuildingAnchorBlock
 
                 /*
                  * Anchor 尚未绑定 EconomicBuilding：
-                 *
                  * 第一次右键创建测试建筑。
                  */
                 if (anchor.getBuildingId() == null) {
@@ -86,12 +88,6 @@ public class BuildingAnchorBlock
 
                 } else {
 
-                    /*
-                     * Anchor 已经有 buildingId：
-                     *
-                     * 尝试从运行时 BuildingRegistry
-                     * 找到对应 EconomicBuilding。
-                     */
                     EconomicBuilding building =
                             context.getBuildingRegistry()
                                     .get(
@@ -116,27 +112,21 @@ public class BuildingAnchorBlock
                     );
 
                     /*
-                     * 临时手动测试入口。
+                     * 当前唯一主线回归测试：
                      *
-                     * 后续正式 GUI / debug command 完成后，
-                     * 这些测试代码应从 Anchor 中移除。
+                     * ProductionEquipment
+                     *        ↓
+                     * Staffing
+                     *        ↓
+                     * ProductionBatch
+                     *        ↓
+                     * Deferred Uninstall
+                     *        ↓
+                     * Batch Boundary
+                     *        ↓
+                     * ProductionEquipmentHolding
                      */
-                    runStaffingTest(
-                            context,
-                            building,
-                            player
-                    );
-                    testEquipmentHiringLimit(
-                            context,
-                            building,
-                            player
-                    );
-                    testStaffingPlan(
-                            context,
-                            building,
-                            player
-                    );
-                    runProductionBatchProgressTest(
+                    runProductionEquipmentAuthorityRegressionTest(
                             context,
                             building,
                             player
@@ -182,7 +172,7 @@ public class BuildingAnchorBlock
     }
 
     /**
-     * 显示当前 Anchor 对应的建筑基本信息。
+     * 显示当前 Anchor 对应建筑的基本信息。
      */
     private void showBuildingInfo(
             EconomicBuilding building,
@@ -201,27 +191,54 @@ public class BuildingAnchorBlock
     }
 
     // =========================================================
-    // Temporary Staffing manual tests
+    // Current ProductionEquipment regression test
     // =========================================================
 
     /**
-     * Staffing 手动测试的总入口。
+     * 当前 ProductionEquipment 主线回归测试。
      *
-     * 当前测试顺序：
+     * 预期流程：
      *
-     * 1. 设置测试设备数量
-     * 2. 显示当前解析后的生产配方
-     * 3. 为这栋建筑创建测试员工
-     * 4. 计算并显示 StaffingSnapshot
+     * 1. 初始安装设备 = 50
+     * 2. Staffing equipmentCapacity = 0.5
+     * 3. 创建 Batch，锁定 capacity = 0.5
+     * 4. Active Batch 中请求 uninstall(30)
+     * 5. 请求进入 Queue，Holding 仍保持 installed = 50
+     * 6. Batch 每次右键推进 0.1
+     * 7. Batch COMPLETED 时 ProductionService 自动执行 Boundary flush
+     * 8. Holding installed = 20
+     * 9. 下一次右键 Staffing equipmentCapacity = 0.2
      */
-    private void runStaffingTest(
+    private void runProductionEquipmentAuthorityRegressionTest(
             ServerEconomyContext context,
             EconomicBuilding building,
             Player player
     ) {
-        setTestEquipment(
+        /*
+         * 只有完全没有 Batch 时才准备初始测试状态。
+         *
+         * COMPLETED / ABORTED 但尚未 clear 的 Batch
+         * 也不能偷偷把设备重置回 50。
+         */
+        if (building
+                .getProductionDepartment()
+                .getActiveBatch() == null) {
+
+            ensureTestInstalledEquipment(
+                    context,
+                    building,
+                    50
+            );
+        }
+
+        /*
+         * 显示本次处理前真实 ProductionEquipment 状态。
+         */
+        showProductionEquipmentState(
                 context,
-                building
+                building,
+                player,
+                "LIVE EQUIPMENT BEFORE"
         );
 
         showResolvedRecipe(
@@ -230,48 +247,231 @@ public class BuildingAnchorBlock
                 player
         );
 
+        /*
+         * 初始 capacity=0.5 时：
+         *
+         * laborer   = 5 / 10
+         * machinist = 2 / 4
+         */
         ensureTestEmployees(
                 context,
                 building
         );
 
+        /*
+         * 这里现在已经从 ProductionEquipmentRegistry
+         * 读取真实 installedQuantity。
+         */
         showStaffing(
                 context,
                 building,
                 player
         );
+
+        /*
+         * 如果没有 Batch：
+         *
+         * - 创建 Batch
+         * - 锁定当前 capacity
+         * - 提交 uninstall(30)
+         *
+         * Active Batch 中 uninstall 应进入 Queue。
+         */
         runProductionBatchLockTest(
                 context,
                 building,
                 player
         );
+
+        /*
+         * 每次右键推进一次 Batch。
+         *
+         * 当 ACTIVE -> COMPLETED 时，
+         * ProductionService 会自动执行
+         * handleBatchBoundary()。
+         */
+        runProductionBatchProgressTest(
+                context,
+                building,
+                player
+        );
+
+        /*
+         * 特别重要：
+         *
+         * 在 Batch 完成的那次右键中，
+         * 这里应该已经能够直接观察到
+         * 自动 flush 后的新 Holding。
+         */
+        showProductionEquipmentState(
+                context,
+                building,
+                player,
+                "LIVE EQUIPMENT AFTER"
+        );
     }
 
+    // =========================================================
+    // ProductionEquipment setup / state
+    // =========================================================
+
     /**
-     * Step 1:
+     * 临时确保当前已安装 ProductionEquipment 数量等于 targetInstalled。
      *
-     * 临时把当前设备数量设成 50。
+     * 该 helper 只能在：
      *
-     * 如果 BuildingType.maxEquipment = 100，
-     * 则：
+     * - 没有 Active Batch
+     * - 没有 pending ProductionEquipment operation
      *
-     * equipmentCapacity = 0.5
+     * 时执行。
      */
-    private void setTestEquipment(
+    private static void ensureTestInstalledEquipment(
             ServerEconomyContext context,
-            EconomicBuilding building
+            EconomicBuilding building,
+            int targetInstalled
     ) {
-        context.getBuildingService()
-                .setCurrentEquipment(
-                        building.getId(),
-                        50
+        if (targetInstalled < 0) {
+            throw new IllegalArgumentException(
+                    "targetInstalled cannot be negative"
+            );
+        }
+
+        ProductionEquipmentService service =
+                context.getProductionEquipmentService();
+
+        if (building
+                .getProductionDepartment()
+                .hasActiveBatch()) {
+
+            throw new IllegalStateException(
+                    "Cannot force test equipment while production batch is active"
+            );
+        }
+
+        if (service.hasPendingOperationsForBuilding(
+                building.getId()
+        )) {
+            throw new IllegalStateException(
+                    "Cannot force test equipment while production equipment "
+                            + "operations are pending"
+            );
+        }
+
+        ProductionEquipmentHolding holding =
+                service.getHolding(
+                        building.getId()
                 );
+
+        int installed =
+                holding == null
+                        ? 0
+                        : holding.getInstalledQuantity();
+
+        if (installed == targetInstalled) {
+            return;
+        }
+
+        /*
+         * 当前安装数量不足：
+         *
+         * 先确保仓库内有足够的未安装设备，
+         * 再正式 install。
+         */
+        if (installed < targetInstalled) {
+
+            int needed =
+                    targetInstalled - installed;
+
+            int availableUninstalled =
+                    holding == null
+                            ? 0
+                            : holding.getUninstalledQuantity();
+
+            if (availableUninstalled < needed) {
+                service.addUninstalledEquipment(
+                        building.getId(),
+                        needed - availableUninstalled
+                );
+            }
+
+            service.install(
+                    building.getId(),
+                    needed
+            );
+
+            return;
+        }
+
+        /*
+         * 当前安装数量过多：
+         * 正式走 ProductionEquipmentService.uninstall。
+         */
+        service.uninstall(
+                building.getId(),
+                installed - targetInstalled
+        );
     }
 
     /**
-     * Step 2:
-     *
-     * 显示当前 PM 组合解析得到的最终生产配方。
+     * 显示真实 ProductionEquipment Holding，
+     * 同时显示该建筑当前 pending operation 数量。
+     */
+    private void showProductionEquipmentState(
+            ServerEconomyContext context,
+            EconomicBuilding building,
+            Player player,
+            String label
+    ) {
+        ProductionEquipmentHolding holding =
+                context.getProductionEquipmentService()
+                        .getHolding(
+                                building.getId()
+                        );
+
+        int pending =
+                context.getProductionEquipmentOperationQueue()
+                        .getForBuilding(
+                                building.getId()
+                        )
+                        .size();
+
+        if (holding == null) {
+
+            player.sendSystemMessage(
+                    Component.literal(
+                            "["
+                                    + label
+                                    + "] no holding"
+                                    + " | pending="
+                                    + pending
+                    )
+            );
+
+            return;
+        }
+
+        player.sendSystemMessage(
+                Component.literal(
+                        "["
+                                + label
+                                + "] total="
+                                + holding.getTotalQuantity()
+                                + " | installed="
+                                + holding.getInstalledQuantity()
+                                + " | uninstalled="
+                                + holding.getUninstalledQuantity()
+                                + " | pending="
+                                + pending
+                )
+        );
+    }
+
+    // =========================================================
+    // Recipe / Employment / Staffing
+    // =========================================================
+
+    /**
+     * 显示当前 PM 组合解析得到的生产配方。
      */
     private void showResolvedRecipe(
             ServerEconomyContext context,
@@ -280,7 +480,9 @@ public class BuildingAnchorBlock
     ) {
         ResolvedProductionRecipe recipe =
                 context.getProductionRecipeResolver()
-                        .resolve(building);
+                        .resolve(
+                                building
+                        );
 
         player.sendSystemMessage(
                 Component.literal(
@@ -291,39 +493,12 @@ public class BuildingAnchorBlock
     }
 
     /**
-     * Step 3:
-     *
-     * 为当前建筑准备测试员工，
-     * 并把人数补充到当前测试场景需要的数量。
-     *
-     * 当前测试目标：
+     * 为当前测试建筑准备员工：
      *
      * laborer   = 5
      * machinist = 2
      *
-     * 这些人数正好对应：
-     *
-     * required laborer   = 10
-     * required machinist = 4
-     *
-     * equipmentCapacity = 0.5
-     *
-     * 因此设备允许的最大人数分别为：
-     *
-     * laborer   = floor(10 * 0.5) = 5
-     * machinist = floor(4 * 0.5)  = 2
-     *
-     * 每个测试员工 UUID 都根据：
-     *
-     * buildingId + occupationId + index
-     *
-     * 稳定生成。
-     *
-     * 因此：
-     * 1. 同一栋建筑重复右键不会重复创建同一个测试员工；
-     * 2. 同一职业可以生成多个不同测试员工；
-     * 3. 不同建筑会生成不同的测试员工 UUID；
-     * 4. 不会发生两个测试建筑争用同一个固定测试员工的问题。
+     * 对应初始 equipmentCapacity = 0.5。
      */
     private void ensureTestEmployees(
             ServerEconomyContext context,
@@ -345,34 +520,7 @@ public class BuildingAnchorBlock
     }
 
     /**
-     * 确保某栋建筑拥有指定数量的某职业测试员工。
-     *
-     * 例如：
-     *
-     * occupationId = "laborer"
-     * count = 5
-     *
-     * 会依次生成：
-     *
-     * laborer #1
-     * laborer #2
-     * laborer #3
-     * laborer #4
-     * laborer #5
-     *
-     * 对每一个生成的 employeeId：
-     *
-     * 如果已经存在 EmploymentRecord，
-     * 则跳过；
-     *
-     * 如果尚未就业，
-     * 则通过 EmploymentService.hire()
-     * 建立正式的测试雇佣关系。
-     *
-     * 注意：
-     * 这里仍然经过 EmploymentService，
-     * 因此测试员工必须满足真实的招聘规则，
-     * 包括职业需求和设备人数上限。
+     * 确保指定职业具有指定数量的测试 EmploymentRecord。
      */
     private void ensureTestEmployeeCount(
             ServerEconomyContext context,
@@ -390,7 +538,9 @@ public class BuildingAnchorBlock
                     );
 
             if (!context.getEmploymentService()
-                    .isEmployed(employeeId)) {
+                    .isEmployed(
+                            employeeId
+                    )) {
 
                 context.getEmploymentService()
                         .hire(
@@ -403,44 +553,13 @@ public class BuildingAnchorBlock
     }
 
     /**
-     * 根据建筑 ID、职业 ID 和序号，
-     * 生成一个稳定且可重复的测试员工 UUID。
+     * 根据：
      *
-     * 输入例如：
+     * buildingId
+     * occupationId
+     * index
      *
-     * buildingId   = Building A
-     * occupationId = "laborer"
-     * index        = 1
-     *
-     * 用于生成字符串：
-     *
-     * BuildingA:test:laborer:1
-     *
-     * 再通过 UUID.nameUUIDFromBytes(...)
-     * 得到稳定 UUID。
-     *
-     * 因此：
-     *
-     * Building A + laborer + 1
-     *      -> UUID A-L1
-     *
-     * Building A + laborer + 2
-     *      -> UUID A-L2
-     *
-     * Building A + machinist + 1
-     *      -> UUID A-M1
-     *
-     * Building B + laborer + 1
-     *      -> UUID B-L1
-     *
-     * 对相同的 buildingId、occupationId 和 index，
-     * 每次调用都会得到相同 UUID；
-     *
-     * 只要其中任意一项不同，
-     * 就会得到不同 UUID。
-     *
-     * 这样既能避免重复右键不断产生新员工，
-     * 又能让同一栋建筑拥有多个同职业测试员工。
+     * 创建稳定测试员工 UUID。
      */
     private UUID createTestEmployeeId(
             UUID buildingId,
@@ -462,16 +581,11 @@ public class BuildingAnchorBlock
     }
 
     /**
-     * Step 4:
+     * 显示当前 StaffingSnapshot。
      *
-     * 根据：
-     *
-     * Recipe
-     * StaffingPlan
-     * Employment
-     * Equipment
-     *
-     * 计算当前 StaffingSnapshot。
+     * StaffingCalculator 现在已经以
+     * ProductionEquipmentRegistry.installedQuantity
+     * 作为设备权威数据源。
      */
     private void showStaffing(
             ServerEconomyContext context,
@@ -480,7 +594,9 @@ public class BuildingAnchorBlock
     ) {
         StaffingSnapshot staffing =
                 context.getStaffingCalculator()
-                        .calculate(building);
+                        .calculate(
+                                building
+                        );
 
         player.sendSystemMessage(
                 Component.literal(
@@ -490,132 +606,42 @@ public class BuildingAnchorBlock
         );
     }
 
-    private void testEquipmentHiringLimit(
-            ServerEconomyContext context,
-            EconomicBuilding building,
-            Player player
-    ) {
-        UUID sixthLaborer =
-                createTestEmployeeId(
-                        building.getId(),
-                        "laborer",
-                        6
-                );
-
-        if (context.getEmploymentService()
-                .isEmployed(sixthLaborer)) {
-            return;
-        }
-
-        try {
-            context.getEmploymentService()
-                    .hire(
-                            sixthLaborer,
-                            building.getId(),
-                            "laborer"
-                    );
-
-            player.sendSystemMessage(
-                    Component.literal(
-                            "[TEST ERROR] Sixth laborer was hired"
-                    )
-            );
-
-        } catch (IllegalStateException e) {
-
-            player.sendSystemMessage(
-                    Component.literal(
-                            "[TEST PASS] Equipment limit blocked sixth laborer: "
-                                    + e.getMessage()
-                    )
-            );
-        }
-    }
-
-    private void testStaffingPlan(
-            ServerEconomyContext context,
-            EconomicBuilding building,
-            Player player
-    ) {
-        building
-                .getHumanResourcesDepartment()
-                .setTargetRatio(
-                        "laborer",
-                        0.3
-                );
-
-        StaffingSnapshot staffing =
-                context.getStaffingCalculator()
-                        .calculate(building);
-
-        var laborer =
-                staffing.occupations()
-                        .get("laborer");
-
-        player.sendSystemMessage(
-                Component.literal(
-                        "HR Plan Test: "
-                                + "targetRatio="
-                                + laborer.targetRatio()
-                                + ", targetWorkers="
-                                + laborer.targetWorkers()
-                                + ", hiringTarget="
-                                + laborer.hiringTargetWorkers()
-                                + ", employed="
-                                + laborer.employedWorkers()
-                                + ", effective="
-                                + laborer.effectiveWorkers()
-                                + ", staffingRatio="
-                                + laborer.staffingRatio()
-                                + ", speed="
-                                + staffing.productionSpeed()
-                )
-        );
-    }
+    // =========================================================
+    // ProductionBatch / Batch-Boundary Reconfiguration
+    // =========================================================
 
     /**
-     * 测试 ProductionBatchConfiguration 的批次锁定机制。
+     * 创建 Batch 并测试：
      *
-     * 测试步骤：
+     * Batch 启动以后提交 uninstall(30)。
      *
-     * 1. 使用当前 Live State 创建 ProductionBatch；
+     * 正确行为：
      *
-     *    当前预期：
-     *    equipmentCapacity = 0.5
-     *    productionSpeed = 0.5
+     * installed = 50
+     * Active Batch
+     * uninstall(30)
      *
-     * 2. Batch 创建后，
-     *    把建筑实时设备数量从 50 改成 20；
+     *         ↓
      *
-     * 3. 重新计算当前 Live Staffing；
+     * Submission = QUEUED
+     * Holding installed 仍然 = 50
+     * pending = 1
      *
-     * 4. 比较：
-     *
-     *    Live State：
-     *    equipmentCapacity 应变成 0.2
-     *
-     *    Locked Batch：
-     *    equipmentCapacity 仍然应为 0.5
-     *    productionSpeed 仍然应为 0.5
-     *
-     * 如果结果如此，
-     * 说明 ProductionBatchConfiguration 已经真正与
-     * 建筑后续实时状态变化解耦。
+     * 当前 Batch 继续使用锁定的 capacity = 0.5。
      */
     private void runProductionBatchLockTest(
             ServerEconomyContext context,
             EconomicBuilding building,
             Player player
     ) {
-        /*
-         * 如果已经有 Batch，
-         * 不重复创建。
-         */
         ProductionBatch existingBatch =
                 building
                         .getProductionDepartment()
                         .getActiveBatch();
 
+        /*
+         * 已经存在 Batch 时不重复创建。
+         */
         if (existingBatch != null) {
 
             player.sendSystemMessage(
@@ -642,17 +668,16 @@ public class BuildingAnchorBlock
         }
 
         /*
-         * 根据当前 Live State 创建 Batch。
+         * 此时预期：
          *
-         * 当前测试环境中：
-         *
-         * equipment = 50 / 100
-         * laborer = 5 / 10
-         * machinist = 2 / 4
-         *
-         * 因此预期：
+         * installedProductionEquipment = 50
+         * maxProductionEquipment       = 100
          *
          * equipmentCapacity = 0.5
+         *
+         * laborer   = 5 / 10
+         * machinist = 2 / 4
+         *
          * productionSpeed = 0.5
          */
         ProductionBatch batch =
@@ -682,24 +707,50 @@ public class BuildingAnchorBlock
         );
 
         /*
-         * Batch 已经开始。
+         * Batch ACTIVE 后请求：
          *
-         * 现在故意改变建筑的实时设备状态：
+         * installed 50 -> 20
          *
-         * 50 -> 20
+         * 但这只是 Deferred Operation，
+         * 当前 Holding 不应该立即变化。
          */
-        context.getBuildingService()
-                .setCurrentEquipment(
-                        building.getId(),
-                        20
-                );
+        ProductionEquipmentOperationSubmission submission =
+                context.getProductionEquipmentService()
+                        .uninstall(
+                                building.getId(),
+                                30
+                        );
+
+        ProductionEquipmentHolding holding =
+                context.getProductionEquipmentService()
+                        .getHolding(
+                                building.getId()
+                        );
+
+        int pending =
+                context.getProductionEquipmentOperationQueue()
+                        .getForBuilding(
+                                building.getId()
+                        )
+                        .size();
+
+        player.sendSystemMessage(
+                Component.literal(
+                        "[BATCH RECONFIG REQUEST] "
+                                + "status="
+                                + submission.status()
+                                + " | holdingInstalled="
+                                + holding.getInstalledQuantity()
+                                + " | pending="
+                                + pending
+                )
+        );
 
         /*
-         * 重新计算 Live Staffing。
+         * 再算一次 Live Staffing。
          *
-         * 注意：
-         * 这是新的实时状态，
-         * 不是 Batch 中锁定的 StaffingSnapshot。
+         * 因为 uninstall(30) 仍然 pending，
+         * 所以 Live capacity 应仍为 0.5。
          */
         StaffingSnapshot liveStaffing =
                 context.getStaffingCalculator()
@@ -709,7 +760,7 @@ public class BuildingAnchorBlock
 
         player.sendSystemMessage(
                 Component.literal(
-                        "[LIVE AFTER CHANGE] "
+                        "[LIVE AFTER QUEUED CHANGE] "
                                 + "equipment="
                                 + liveStaffing.equipmentCapacity()
                                 + " | canStart="
@@ -719,12 +770,6 @@ public class BuildingAnchorBlock
                 )
         );
 
-        /*
-         * 再次读取 Batch Configuration。
-         *
-         * 如果批次锁定正确，
-         * 这里仍然必须保持创建 Batch 时的值。
-         */
         player.sendSystemMessage(
                 Component.literal(
                         "[LOCKED BATCH] "
@@ -741,25 +786,23 @@ public class BuildingAnchorBlock
     }
 
     /**
-     * 测试 ProductionBatch 使用锁定的 productionSpeed 推进进度。
+     * 每次右键推进一次当前 ProductionBatch。
      *
-     * 当前 Batch 启动时锁定：
+     * 当前测试：
      *
-     * productionSpeed = 0.5
-     *
-     * 每次调用：
-     *
+     * locked productionSpeed = 0.5
      * fullSpeedProgressDelta = 0.2
      *
-     * 因此实际应推进：
+     * 所以实际：
      *
-     * 0.2 * 0.5 = 0.1
+     * +0.1 / click
      *
-     * 即每调用一次，本批进度增加 10%。
+     * 当 Batch 从 ACTIVE -> COMPLETED 时，
+     * ProductionService 应自动：
      *
-     * 注意：
-     * 即使建筑当前 Live Staffing 已经变成 speed = 0，
-     * 当前 Batch 仍然必须使用启动时锁定的 speed = 0.5。
+     * handleBatchBoundary()
+     *      ↓
+     * flush pending ProductionEquipment operations
      */
     private void runProductionBatchProgressTest(
             ServerEconomyContext context,
@@ -772,18 +815,18 @@ public class BuildingAnchorBlock
                         .getActiveBatch();
 
         if (batch == null) {
+
             player.sendSystemMessage(
                     Component.literal(
                             "[TEST ERROR] No production batch exists"
                     )
             );
+
             return;
         }
 
-        /*
-         * 已结束的 Batch 不再继续 advance。
-         */
         if (!batch.isActive()) {
+
             player.sendSystemMessage(
                     Component.literal(
                             "[BATCH FINISHED] "
@@ -793,18 +836,13 @@ public class BuildingAnchorBlock
                                     + batch.getProgress()
                     )
             );
+
             return;
         }
 
         double progressBefore =
                 batch.getProgress();
 
-        /*
-         * 满速情况下，本次推进 20%。
-         *
-         * Batch 锁定速度为 0.5，
-         * 所以实际只推进 10%。
-         */
         context.getProductionService()
                 .advanceBatch(
                         building.getId(),

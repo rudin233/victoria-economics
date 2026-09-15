@@ -22,15 +22,6 @@ public final class ProductionDepartment {
             new HashMap<>();
 
     /**
-     * 当前建筑安装的设备数量。
-     *
-     * BuildingService 负责保证：
-     *
-     * 0 <= currentEquipment <= maxEquipment
-     */
-    private int currentEquipment;
-
-    /**
      * 当前正在执行的生产批次。
      *
      * null 表示当前没有 active batch。
@@ -38,7 +29,6 @@ public final class ProductionDepartment {
     private ProductionBatch activeBatch;
 
     public ProductionDepartment() {
-        this.currentEquipment = 0;
         this.activeBatch = null;
     }
 
@@ -74,23 +64,6 @@ public final class ProductionDepartment {
                 groupId,
                 methodId
         );
-    }
-
-    public int getCurrentEquipment() {
-        return currentEquipment;
-    }
-
-    public void setCurrentEquipment(
-            int currentEquipment
-    ) {
-        if (currentEquipment < 0) {
-            throw new IllegalArgumentException(
-                    "currentEquipment cannot be negative"
-            );
-        }
-
-        this.currentEquipment =
-                currentEquipment;
     }
 
     public ProductionBatch getActiveBatch() {

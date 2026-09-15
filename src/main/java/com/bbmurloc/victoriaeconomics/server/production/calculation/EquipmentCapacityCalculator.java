@@ -6,7 +6,7 @@ public final class EquipmentCapacityCalculator {
     }
 
     public static double calculate(
-            int currentEquipment,
+            int installedEquipment,
             int maxEquipment
     ) {
         if (maxEquipment <= 0) {
@@ -15,12 +15,12 @@ public final class EquipmentCapacityCalculator {
             );
         }
 
-        if (currentEquipment <= 0) {
+        if (installedEquipment <= 0) {
             return 0.0;
         }
 
         double capacity =
-                (double) currentEquipment
+                (double) installedEquipment
                         / maxEquipment;
 
         return Math.min(capacity, 1.0);

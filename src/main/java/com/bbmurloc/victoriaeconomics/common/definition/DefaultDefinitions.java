@@ -10,6 +10,8 @@ import com.bbmurloc.victoriaeconomics.common.definition.industry.IndustryRegistr
 import com.bbmurloc.victoriaeconomics.common.definition.occupation.OccupationDefinition;
 import com.bbmurloc.victoriaeconomics.common.definition.occupation.OccupationRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.production.*;
+import com.bbmurloc.victoriaeconomics.common.definition.productionequipment.ProductionEquipmentDefinition;
+import com.bbmurloc.victoriaeconomics.common.definition.productionequipment.ProductionEquipmentDefinitionRegistry;
 
 import java.util.List;
 import java.util.Map;
@@ -183,6 +185,28 @@ public final class DefaultDefinitions {
                 new OccupationDefinition(
                         "engineer",
                         3.0
+                )
+        );
+    }
+
+    public static void registerProductionEquipmentDefinitions(
+            ProductionEquipmentDefinitionRegistry registry
+    ) {
+        registry.register(
+                new ProductionEquipmentDefinition(
+                        "iron_mine_equipment"
+                )
+        );
+
+        registry.register(
+                new ProductionEquipmentDefinition(
+                        "logging_camp_equipment"
+                )
+        );
+
+        registry.register(
+                new ProductionEquipmentDefinition(
+                        "tooling_workshop_equipment"
                 )
         );
     }

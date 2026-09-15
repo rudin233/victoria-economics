@@ -77,14 +77,12 @@ public final class SqliteBuildingRepository
                 INSERT INTO economic_buildings (
                     id,
                     building_type_id,
-                    status,
-                    current_equipment
+                    status
                 )
-                VALUES (?, ?, ?, ?)
+                VALUES (?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     building_type_id = excluded.building_type_id,
-                    status = excluded.status,
-                    current_equipment = excluded.current_equipment
+                    status = excluded.status
                 """;
 
         try (PreparedStatement statement =
@@ -103,13 +101,6 @@ public final class SqliteBuildingRepository
             statement.setString(
                     3,
                     building.getStatus().name()
-            );
-
-            statement.setInt(
-                    4,
-                    building
-                            .getProductionDepartment()
-                            .getCurrentEquipment()
             );
 
             statement.executeUpdate();
@@ -303,7 +294,6 @@ public final class SqliteBuildingRepository
      * id
      * buildingTypeId
      * status
-     * currentEquipment
      */
     private void loadBuildingRows(
             Map<UUID, EconomicBuilding> buildings
@@ -313,8 +303,7 @@ public final class SqliteBuildingRepository
                 SELECT
                     id,
                     building_type_id,
-                    status,
-                    current_equipment
+                    status
                 FROM economic_buildings
                 """;
 
@@ -345,11 +334,6 @@ public final class SqliteBuildingRepository
                                 )
                         );
 
-                int currentEquipment =
-                        resultSet.getInt(
-                                "current_equipment"
-                        );
-
                 /*
                  * 沿用你现在已有的两参数构造器。
                  */
@@ -363,11 +347,6 @@ public final class SqliteBuildingRepository
                         status
                 );
 
-                building
-                        .getProductionDepartment()
-                        .setCurrentEquipment(
-                                currentEquipment
-                        );
                 buildings.put(
                         id,
                         building

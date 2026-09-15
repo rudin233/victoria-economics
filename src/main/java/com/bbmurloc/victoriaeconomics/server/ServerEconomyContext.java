@@ -8,9 +8,13 @@ import com.bbmurloc.victoriaeconomics.common.definition.industry.IndustryRegistr
 import com.bbmurloc.victoriaeconomics.common.definition.occupation.OccupationRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMethodGroupRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMethodRegistry;
+import com.bbmurloc.victoriaeconomics.common.definition.productionequipment.ProductionEquipmentDefinitionRegistry;
 import com.bbmurloc.victoriaeconomics.server.building.BuildingRegistry;
 import com.bbmurloc.victoriaeconomics.server.building.BuildingRepository;
 import com.bbmurloc.victoriaeconomics.server.building.BuildingService;
+import com.bbmurloc.victoriaeconomics.server.productionequipment.ProductionEquipmentRegistry;
+import com.bbmurloc.victoriaeconomics.server.productionequipment.ProductionEquipmentService;
+import com.bbmurloc.victoriaeconomics.server.productionequipment.operation.ProductionEquipmentOperationQueue;
 import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentRegistry;
 import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentService;
 import com.bbmurloc.victoriaeconomics.server.production.calculation.ProductionRecipeResolver;
@@ -38,7 +42,12 @@ public final class ServerEconomyContext implements AutoCloseable{
     private final ProductionService productionService;
     private final EmploymentService employmentService;
     private final BuildingTypeRegistry buildingTypeRegistry;
+    private final ProductionEquipmentRegistry productionEquipmentRegistry;
+    private final ProductionEquipmentService productionEquipmentService;
+    private final ProductionEquipmentOperationQueue productionEquipmentOperationQueue;
 
+    private final ProductionEquipmentDefinitionRegistry
+            productionEquipmentDefinitionRegistry;
 
 
     public ServerEconomyContext(
@@ -69,6 +78,11 @@ public final class ServerEconomyContext implements AutoCloseable{
         this.employmentRegistry =
                 new EmploymentRegistry();
 
+        this.productionEquipmentDefinitionRegistry =
+                new ProductionEquipmentDefinitionRegistry();
+
+        this.productionEquipmentRegistry =
+                new ProductionEquipmentRegistry();
 
         DefaultDefinitions.registerIndustries(
                 industryRegistry
@@ -81,6 +95,11 @@ public final class ServerEconomyContext implements AutoCloseable{
         DefaultDefinitions.registerOccupations(
                 occupationRegistry
         );
+
+        DefaultDefinitions.registerProductionEquipmentDefinitions(
+                productionEquipmentDefinitionRegistry
+        );
+
 
         DefaultDefinitions.registerProductionMethods(
                 productionMethodRegistry
@@ -98,6 +117,7 @@ public final class ServerEconomyContext implements AutoCloseable{
                 industryRegistry,
                 goodRegistry,
                 occupationRegistry,
+                productionEquipmentDefinitionRegistry,
                 buildingTypeRegistry,
                 productionMethodGroupRegistry,
                 productionMethodRegistry
@@ -105,6 +125,17 @@ public final class ServerEconomyContext implements AutoCloseable{
 
         this.buildingRegistry =
                 new BuildingRegistry();
+
+        this.productionEquipmentOperationQueue =
+                new ProductionEquipmentOperationQueue();
+
+        this.productionEquipmentService =
+                new ProductionEquipmentService(
+                        buildingRegistry,
+                        buildingTypeRegistry,
+                        productionEquipmentRegistry,
+                        productionEquipmentOperationQueue
+                );
 
         this.buildingRepository =
                 new SqliteBuildingRepository(
@@ -134,7 +165,8 @@ public final class ServerEconomyContext implements AutoCloseable{
                 new StaffingCalculator(
                         employmentRegistry,
                         buildingTypeRegistry,
-                        productionRecipeResolver
+                        productionRecipeResolver,
+                        productionEquipmentRegistry
                 );
 
         this.productionService =
@@ -142,7 +174,8 @@ public final class ServerEconomyContext implements AutoCloseable{
                         buildingRegistry,
                         productionRecipeResolver,
                         staffingCalculator,
-                        employmentRegistry
+                        employmentRegistry,
+                        productionEquipmentService
                 );
 
         this.employmentService =
@@ -151,8 +184,10 @@ public final class ServerEconomyContext implements AutoCloseable{
                         buildingRegistry,
                         buildingTypeRegistry,
                         occupationRegistry,
-                        productionRecipeResolver
+                        productionRecipeResolver,
+                        productionEquipmentRegistry
                 );
+
 
     }
 
@@ -200,5 +235,26 @@ public final class ServerEconomyContext implements AutoCloseable{
 
     public ProductionService getProductionService() {
         return productionService;
+    }
+
+    public ProductionEquipmentDefinitionRegistry
+    getProductionEquipmentDefinitionRegistry() {
+
+        return productionEquipmentDefinitionRegistry;
+    }
+
+    public ProductionEquipmentRegistry
+    getProductionEquipmentRegistry() {
+        return productionEquipmentRegistry;
+    }
+
+    public ProductionEquipmentService
+    getProductionEquipmentService() {
+        return productionEquipmentService;
+    }
+
+    public ProductionEquipmentOperationQueue
+    getProductionEquipmentOperationQueue() {
+        return productionEquipmentOperationQueue;
     }
 }

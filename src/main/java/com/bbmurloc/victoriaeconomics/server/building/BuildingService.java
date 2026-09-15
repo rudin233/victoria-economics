@@ -135,51 +135,6 @@ public final class BuildingService {
     }
 
     /**
-     * 修改建筑当前设备数量。
-     */
-    public void setCurrentEquipment(
-            UUID buildingId,
-            int equipmentAmount
-    ) {
-        EconomicBuilding building =
-                requireBuilding(
-                        buildingId
-                );
-
-        BuildingTypeDefinition buildingType =
-                requireBuildingType(
-                        building
-                );
-
-        if (equipmentAmount < 0) {
-            throw new IllegalArgumentException(
-                    "Equipment amount cannot be negative"
-            );
-        }
-
-        if (equipmentAmount
-                > buildingType.maxEquipment()) {
-
-            throw new IllegalArgumentException(
-                    "Equipment amount exceeds max equipment: "
-                            + equipmentAmount
-                            + " > "
-                            + buildingType.maxEquipment()
-            );
-        }
-
-        building
-                .getProductionDepartment()
-                .setCurrentEquipment(
-                        equipmentAmount
-                );
-
-        buildingRepository.save(
-                building
-        );
-    }
-
-    /**
      * 修改某个 PMG 当前选择的 PM。
      *
      * Victoria Economics 当前规则：
