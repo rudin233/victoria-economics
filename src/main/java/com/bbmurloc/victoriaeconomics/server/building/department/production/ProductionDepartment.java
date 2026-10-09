@@ -1,118 +1,90 @@
 package com.bbmurloc.victoriaeconomics.server.building.department.production;
 
+import com.bbmurloc.victoriaeconomics.server.production.ProductionExecution;
 import com.bbmurloc.victoriaeconomics.server.production.batch.ProductionBatch;
+import com.bbmurloc.victoriaeconomics.server.production.calculation.ResolvedProductionRecipe;
+import com.bbmurloc.victoriaeconomics.server.production.method.*;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
 public final class ProductionDepartment {
+    private ProductionMethodConfiguration methods;
+    private final ProductionExecution execution;
 
-    /**
-     * 当前生产部门选择的 PM。
-     *
-     * groupId -> methodId
-     *
-     * 表示“下一批生产准备采用的生产方式配置”。
-     *
-     * 如果当前已经有 active batch，
-     * 修改这里不会影响已经开始的批次。
-     */
-    private final Map<String, String> selectedProductionMethods =
-            new HashMap<>();
-
-    /**
-     * 当前正在执行的生产批次。
-     *
-     * null 表示当前没有 active batch。
-     */
-    private ProductionBatch activeBatch;
-
-    public ProductionDepartment() {
-        this.activeBatch = null;
+    public ProductionDepartment(UUID buildingId) {
+        execution = new ProductionExecution(buildingId);
     }
 
-    public String getSelectedProductionMethodId(
-            String groupId
-    ) {
-        return selectedProductionMethods.get(
-                groupId
-        );
+    public void initializeMethods(ProductionMethodRules rules, Map<String, String> effective, Map<String, String> pending) {
+        if (methods != null) throw new IllegalStateException("Production methods already initialized");
+        methods = new ProductionMethodConfiguration(rules, effective, pending);
+    }
+
+    private ProductionMethodConfiguration methods() {
+        if (methods == null) throw new IllegalStateException("Production methods have not been initialized");
+        return methods;
     }
 
     public Map<String, String> getSelectedProductionMethods() {
-        return Map.copyOf(
-                selectedProductionMethods
-        );
+        return methods().effective().methods();
     }
 
-    public void setSelectedProductionMethod(
-            String groupId,
-            String methodId
-    ) {
-        Objects.requireNonNull(
-                groupId,
-                "groupId cannot be null"
-        );
+    public String getSelectedProductionMethodId(String group) {
+        return getSelectedProductionMethods().get(group);
+    }
 
-        Objects.requireNonNull(
-                methodId,
-                "methodId cannot be null"
-        );
+    public Optional<ProductionMethodSelections> getPendingProductionMethods() {
+        return methods().pending();
+    }
 
-        selectedProductionMethods.put(
-                groupId,
-                methodId
-        );
+    public ResolvedProductionRecipe getRecipe() {
+        return methods().recipe();
+    }
+
+    public void selectProductionMethod(String group, String method) {
+        methods().requestSelection(group, method, execution.blocksConfiguration());
+        revisitBoundary();
+    }
+
+    public void requestProductionMethods(Map<String, String> target) {
+        methods().requestTarget(target, execution.blocksConfiguration());
+        revisitBoundary();
+    }
+
+    private void revisitBoundary() {
+        if (methods().pending().isPresent() && execution.boundary() != ProductionExecution.Boundary.NONE)
+            execution.revisitMethods();
+    }
+
+    public void cancelPendingProductionMethods() {
+        methods().cancelPending();
+    }
+
+    public ProductionMethodConfiguration.State methodState() {
+        return methods().state();
+    }
+
+    public void restoreMethodState(ProductionMethodConfiguration.State state) {
+        methods().restore(state);
+    }
+
+    public boolean applyPendingProductionMethods() {
+        if (execution.hasUnfinishedBatch()) throw new IllegalStateException("Cannot change methods before settlement");
+        return methods().applyPending();
+    }
+
+    public ProductionExecution getExecution() {
+        return execution;
     }
 
     public ProductionBatch getActiveBatch() {
-        return activeBatch;
+        return execution.batch();
     }
 
+    /**
+     * Includes paused and settling batches so equipment and employees remain protected.
+     */
     public boolean hasActiveBatch() {
-        return activeBatch != null
-                && activeBatch.isActive();
-    }
-
-    /**
-     * 开始一个新的批次。
-     *
-     * 一栋建筑同一时刻最多有一个 active batch。
-     */
-    public void startBatch(
-            ProductionBatch batch
-    ) {
-        Objects.requireNonNull(
-                batch,
-                "batch cannot be null"
-        );
-
-        if (activeBatch != null) {
-            throw new IllegalStateException(
-                    "Production department already contains a production batch"
-            );
-        }
-
-        this.activeBatch = batch;
-    }
-
-    /**
-     * 清除已经结束的批次。
-     *
-     * active batch 不能直接清除。
-     */
-    public void clearFinishedBatch() {
-        if (activeBatch == null) {
-            return;
-        }
-
-        if (activeBatch.isActive()) {
-            throw new IllegalStateException(
-                    "Cannot clear an active production batch"
-            );
-        }
-
-        activeBatch = null;
+        return execution.hasUnfinishedBatch();
     }
 }

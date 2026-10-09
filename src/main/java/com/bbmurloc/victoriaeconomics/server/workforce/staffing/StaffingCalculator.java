@@ -8,7 +8,7 @@ import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentRegi
 import com.bbmurloc.victoriaeconomics.server.production.calculation.EquipmentCapacityCalculator;
 import com.bbmurloc.victoriaeconomics.server.production.calculation.ProductionRecipeResolver;
 import com.bbmurloc.victoriaeconomics.server.production.calculation.ResolvedProductionRecipe;
-import com.bbmurloc.victoriaeconomics.server.productionequipment.ProductionEquipmentRegistry;
+import com.bbmurloc.victoriaeconomics.server.inventory.equipment.ProductionEquipmentRegistry;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -189,15 +189,10 @@ public final class StaffingCalculator {
                     );
 
             /*
-             * HR想招80，
-             * 但设备现在只能容纳50，
-             * 当前实际招聘目标就是50。
+             * 招聘目标不受设备限制。设备上限仅用于本批实际参产人数。
              */
             int hiringTargetWorkers =
-                    Math.min(
-                            targetWorkers,
-                            equipmentLimitedMaximum
-                    );
+                    targetWorkers;
 
             /*
              * 实际劳动关系中有多少员工。

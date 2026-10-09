@@ -1,429 +1,136 @@
 package com.bbmurloc.victoriaeconomics.server.storage.sqlite;
 
-import com.bbmurloc.victoriaeconomics.server.building.BuildingRepository;
-import com.bbmurloc.victoriaeconomics.server.building.BuildingStatus;
-import com.bbmurloc.victoriaeconomics.server.building.EconomicBuilding;
+import com.bbmurloc.victoriaeconomics.server.building.*;
+import com.bbmurloc.victoriaeconomics.server.production.batch.ProductionBatch;
+import com.bbmurloc.victoriaeconomics.server.production.calculation.ProductionRecipeResolver;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.sql.*;
+import java.util.*;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-
-public final class SqliteBuildingRepository
-        implements BuildingRepository {
-
+/**
+ * A building checkpoint atomically includes effective/pending methods, execution and batch history.
+ */
+public final class SqliteBuildingRepository implements BuildingRepository {
     private final Connection connection;
+    private final ProductionRecipeResolver recipes;
+    private final Object lock;
+    private final ProductionStateCodec codec = new ProductionStateCodec();
 
-    public SqliteBuildingRepository(Connection connection) {
+    public SqliteBuildingRepository(Connection connection, ProductionRecipeResolver recipes, Object lock) {
         this.connection = connection;
+        this.recipes = recipes;
+        this.lock = lock;
     }
 
     @Override
     public void save(EconomicBuilding building) {
-        boolean oldAutoCommit;
-
-        try {
-            oldAutoCommit =
-                    connection.getAutoCommit();
-
-            connection.setAutoCommit(false);
-
+        synchronized (lock) {
             try {
-                /*
-                 * EconomicBuilding 主体和 PM selections
-                 * 必须作为同一次事务保存。
-                 */
-                saveBuildingRow(building);
-                saveProductionMethodSelections(building);
-
-                connection.commit();
-
+                boolean auto = connection.getAutoCommit();
+                Savepoint point = null;
+                if (auto) connection.setAutoCommit(false);
+                else point = connection.setSavepoint();
+                try {
+                    try (var statement = connection.prepareStatement("INSERT INTO economic_buildings(id, building_type_id, status) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET building_type_id=excluded.building_type_id, status=excluded.status")) {
+                        statement.setString(1, building.getId().toString());
+                        statement.setString(2, building.getBuildingTypeId());
+                        statement.setString(3, building.getStatus().name());
+                        statement.executeUpdate();
+                    }
+                    var department = building.getProductionDepartment();
+                    saveSelections("building_production_method_selections", building.getId(), department.getSelectedProductionMethods());
+                    saveSelections("building_pending_production_methods", building.getId(), department.getPendingProductionMethods().map(p -> p.methods()).orElse(Map.of()));
+                    try (var statement = connection.prepareStatement("INSERT INTO building_production_execution(building_id, state_json) VALUES (?, ?) ON CONFLICT(building_id) DO UPDATE SET state_json=excluded.state_json")) {
+                        statement.setString(1, building.getId().toString());
+                        statement.setString(2, codec.encode(department.getExecution()));
+                        statement.executeUpdate();
+                    }
+                    saveBatch(department.getExecution().batch());
+                    saveBatch(department.getExecution().lastBatch());
+                    if (auto) connection.commit();
+                    else connection.releaseSavepoint(point);
+                } catch (SQLException | RuntimeException failure) {
+                    if (auto) connection.rollback();
+                    else connection.rollback(point);
+                    throw failure;
+                } finally {
+                    if (auto) connection.setAutoCommit(true);
+                }
             } catch (SQLException e) {
-
-                connection.rollback();
-
-                throw e;
-
-            } finally {
-
-                connection.setAutoCommit(
-                        oldAutoCommit
-                );
+                throw new IllegalStateException("Failed to checkpoint building: " + building.getId(), e);
             }
-
-        } catch (SQLException e) {
-            throw new RuntimeException(
-                    "Failed to save economic building: "
-                            + building.getId(),
-                    e
-            );
         }
     }
 
-    /**
-     * 保存 EconomicBuilding 主体。
-     */
-    private void saveBuildingRow(
-            EconomicBuilding building
-    ) throws SQLException {
-
-        String sql = """
-                INSERT INTO economic_buildings (
-                    id,
-                    building_type_id,
-                    status
-                )
-                VALUES (?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    building_type_id = excluded.building_type_id,
-                    status = excluded.status
-                """;
-
-        try (PreparedStatement statement =
-                     connection.prepareStatement(sql)) {
-
-            statement.setString(
-                    1,
-                    building.getId().toString()
-            );
-
-            statement.setString(
-                    2,
-                    building.getBuildingTypeId()
-            );
-
-            statement.setString(
-                    3,
-                    building.getStatus().name()
-            );
-
+    private void saveBatch(ProductionBatch batch) throws SQLException {
+        if (batch == null) return;
+        try (var statement = connection.prepareStatement("INSERT INTO production_batches(batch_id, building_id, state_json) VALUES (?, ?, ?) ON CONFLICT(batch_id) DO UPDATE SET state_json=excluded.state_json")) {
+            statement.setString(1, batch.getId().toString());
+            statement.setString(2, batch.getBuildingId().toString());
+            statement.setString(3, codec.encodeBatch(batch));
             statement.executeUpdate();
         }
     }
 
-    /**
-     * 保存：
-     *
-     * PMG ID -> 当前选中的 PM ID
-     */
-    private void saveProductionMethodSelections(
-            EconomicBuilding building
-    ) throws SQLException {
-
-        String deleteSql = """
-                DELETE FROM building_production_method_selections
-                WHERE building_id = ?
-                """;
-
-        try (PreparedStatement statement =
-                     connection.prepareStatement(deleteSql)) {
-
-            statement.setString(
-                    1,
-                    building.getId().toString()
-            );
-
+    private void saveSelections(String table, UUID building, Map<String, String> selections) throws SQLException {
+        try (var statement = connection.prepareStatement("DELETE FROM " + table + " WHERE building_id = ?")) {
+            statement.setString(1, building.toString());
             statement.executeUpdate();
         }
-
-        Map<String, String> selections =
-                building
-                        .getProductionDepartment()
-                        .getSelectedProductionMethods();
-
-        if (selections.isEmpty()) {
-            return;
-        }
-
-        String insertSql = """
-                INSERT INTO building_production_method_selections (
-                    building_id,
-                    group_id,
-                    method_id
-                )
-                VALUES (?, ?, ?)
-                """;
-
-        try (PreparedStatement statement =
-                     connection.prepareStatement(insertSql)) {
-
-            for (Map.Entry<String, String> entry
-                    : selections.entrySet()) {
-
-                statement.setString(
-                        1,
-                        building.getId().toString()
-                );
-
-                statement.setString(
-                        2,
-                        entry.getKey()
-                );
-
-                statement.setString(
-                        3,
-                        entry.getValue()
-                );
-
+        try (var statement = connection.prepareStatement("INSERT INTO " + table + "(building_id, group_id, method_id) VALUES (?, ?, ?)")) {
+            for (var entry : selections.entrySet()) {
+                statement.setString(1, building.toString());
+                statement.setString(2, entry.getKey());
+                statement.setString(3, entry.getValue());
                 statement.addBatch();
             }
-
             statement.executeBatch();
         }
     }
 
     @Override
-    public void delete(UUID buildingId) {
-        boolean oldAutoCommit;
-
-        try {
-            oldAutoCommit =
-                    connection.getAutoCommit();
-
-            connection.setAutoCommit(false);
-
-            try {
-                deleteProductionMethodSelections(
-                        buildingId
-                );
-
-                deleteBuildingRow(
-                        buildingId
-                );
-
-                connection.commit();
-
+    public List<EconomicBuilding> loadAll() {
+        synchronized (lock) {
+            List<EconomicBuilding> result = new ArrayList<>();
+            try (var statement = connection.prepareStatement("SELECT id, building_type_id, status FROM economic_buildings"); var rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    UUID id = UUID.fromString(rows.getString(1));
+                    String type = rows.getString(2);
+                    EconomicBuilding building = new EconomicBuilding(id, type);
+                    building.setStatus(BuildingStatus.valueOf(rows.getString(3)));
+                    Map<String, String> effective = loadSelections("building_production_method_selections", id);
+                    Map<String, String> pending = loadSelections("building_pending_production_methods", id);
+                    building.getProductionDepartment().initializeMethods(recipes.rulesFor(type), effective, pending.isEmpty() ? null : pending);
+                    try (var execution = connection.prepareStatement("SELECT state_json FROM building_production_execution WHERE building_id = ?")) {
+                        execution.setString(1, id.toString());
+                        try (var saved = execution.executeQuery()) {
+                            if (saved.next())
+                                codec.restore(saved.getString(1), building.getProductionDepartment().getExecution());
+                        }
+                    }
+                    result.add(building);
+                }
+                return List.copyOf(result);
             } catch (SQLException e) {
-
-                connection.rollback();
-
-                throw e;
-
-            } finally {
-
-                connection.setAutoCommit(
-                        oldAutoCommit
-                );
+                throw new IllegalStateException("Failed to restore buildings", e);
             }
-
-        } catch (SQLException e) {
-            throw new RuntimeException(
-                    "Failed to delete economic building: "
-                            + buildingId,
-                    e
-            );
         }
     }
 
-    private void deleteProductionMethodSelections(
-            UUID buildingId
-    ) throws SQLException {
-
-        String sql = """
-                DELETE FROM building_production_method_selections
-                WHERE building_id = ?
-                """;
-
-        try (PreparedStatement statement =
-                     connection.prepareStatement(sql)) {
-
-            statement.setString(
-                    1,
-                    buildingId.toString()
-            );
-
-            statement.executeUpdate();
+    private Map<String, String> loadSelections(String table, UUID building) throws SQLException {
+        Map<String, String> result = new HashMap<>();
+        try (var statement = connection.prepareStatement("SELECT group_id, method_id FROM " + table + " WHERE building_id = ?")) {
+            statement.setString(1, building.toString());
+            try (var rows = statement.executeQuery()) {
+                while (rows.next()) result.put(rows.getString(1), rows.getString(2));
+            }
         }
-    }
-
-    private void deleteBuildingRow(
-            UUID buildingId
-    ) throws SQLException {
-
-        String sql = """
-                DELETE FROM economic_buildings
-                WHERE id = ?
-                """;
-
-        try (PreparedStatement statement =
-                     connection.prepareStatement(sql)) {
-
-            statement.setString(
-                    1,
-                    buildingId.toString()
-            );
-
-            statement.executeUpdate();
-        }
+        return Map.copyOf(result);
     }
 
     @Override
-    public List<EconomicBuilding> loadAll() {
-
-        Map<UUID, EconomicBuilding> buildings =
-                new LinkedHashMap<>();
-
-        /*
-         * 第一阶段：
-         * 恢复建筑主体。
-         */
-        loadBuildingRows(buildings);
-
-        /*
-         * 第二阶段：
-         * 恢复 PM selections。
-         */
-        loadProductionMethodSelections(
-                buildings
-        );
-
-        return new ArrayList<>(
-                buildings.values()
-        );
-    }
-
-    /**
-     * 恢复：
-     *
-     * id
-     * buildingTypeId
-     * status
-     */
-    private void loadBuildingRows(
-            Map<UUID, EconomicBuilding> buildings
-    ) {
-
-        String sql = """
-                SELECT
-                    id,
-                    building_type_id,
-                    status
-                FROM economic_buildings
-                """;
-
-        try (PreparedStatement statement =
-                     connection.prepareStatement(sql);
-
-             ResultSet resultSet =
-                     statement.executeQuery()) {
-
-            while (resultSet.next()) {
-
-                UUID id =
-                        UUID.fromString(
-                                resultSet.getString(
-                                        "id"
-                                )
-                        );
-
-                String buildingTypeId =
-                        resultSet.getString(
-                                "building_type_id"
-                        );
-
-                BuildingStatus status =
-                        BuildingStatus.valueOf(
-                                resultSet.getString(
-                                        "status"
-                                )
-                        );
-
-                /*
-                 * 沿用你现在已有的两参数构造器。
-                 */
-                EconomicBuilding building =
-                        new EconomicBuilding(
-                                id,
-                                buildingTypeId
-                        );
-
-                building.setStatus(
-                        status
-                );
-
-                buildings.put(
-                        id,
-                        building
-                );
-            }
-
-        } catch (SQLException e) {
-            throw new RuntimeException(
-                    "Failed to load economic buildings",
-                    e
-            );
-        }
-    }
-
-    /**
-     * 恢复：
-     *
-     * PMG ID -> selected PM ID
-     */
-    private void loadProductionMethodSelections(
-            Map<UUID, EconomicBuilding> buildings
-    ) {
-
-        String sql = """
-                SELECT
-                    building_id,
-                    group_id,
-                    method_id
-                FROM building_production_method_selections
-                """;
-
-        try (PreparedStatement statement =
-                     connection.prepareStatement(sql);
-
-             ResultSet resultSet =
-                     statement.executeQuery()) {
-
-            while (resultSet.next()) {
-
-                UUID buildingId =
-                        UUID.fromString(
-                                resultSet.getString(
-                                        "building_id"
-                                )
-                        );
-
-                String groupId =
-                        resultSet.getString(
-                                "group_id"
-                        );
-
-                String methodId =
-                        resultSet.getString(
-                                "method_id"
-                        );
-
-                EconomicBuilding building =
-                        buildings.get(
-                                buildingId
-                        );
-
-                if (building != null) {
-
-                    building
-                            .getProductionDepartment()
-                            .setSelectedProductionMethod(
-                                    groupId,
-                                    methodId
-                            );
-                }
-            }
-
-        } catch (SQLException e) {
-            throw new RuntimeException(
-                    "Failed to load building production method selections",
-                    e
-            );
-        }
+    public void delete(UUID buildingId) {
+        // Deletion of an economic building needs a separate asset/liability closeout process.
+        throw new UnsupportedOperationException("Building deletion requires inventory, employment and liability closeout");
     }
 }

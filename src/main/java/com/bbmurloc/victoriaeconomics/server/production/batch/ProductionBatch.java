@@ -3,63 +3,34 @@ package com.bbmurloc.victoriaeconomics.server.production.batch;
 import java.util.Objects;
 import java.util.UUID;
 
+/**
+ * Immutable entity snapshot. Only ProductionExecution performs lifecycle transitions.
+ */
 public final class ProductionBatch {
+    public enum Status {ACTIVE, PAUSED, SETTLING_COMPLETED, SETTLING_ABORTED, COMPLETED, ABORTED}
 
-    public enum Status {
-        ACTIVE,
-        COMPLETED,
-        ABORTED
-    }
-
-    private static final double EPSILON =
-            1.0E-9;
-
+    public static final int FULL_SPEED_TICKS = 1200;
     private final UUID id;
-
     private final UUID buildingId;
-
     private final ProductionBatchConfiguration configuration;
+    private final long progressUnits;
+    private final Status status;
 
-    /**
-     * 生产进度：
-     *
-     * 0.0 ~ 1.0
-     */
-    private double progress;
-
-    private Status status;
-
-    public ProductionBatch(
-            UUID id,
-            UUID buildingId,
-            ProductionBatchConfiguration configuration
-    ) {
-        this.id =
-                Objects.requireNonNull(
-                        id
-                );
-
-        this.buildingId =
-                Objects.requireNonNull(
-                        buildingId
-                );
-
-        this.configuration =
-                Objects.requireNonNull(
-                        configuration
-                );
-
-        if (!configuration
-                .staffingSnapshot()
-                .canStart()) {
-
-            throw new IllegalArgumentException(
-                    "Cannot create production batch from staffing configuration that cannot start"
-            );
+    public ProductionBatch(UUID id, UUID buildingId, ProductionBatchConfiguration configuration, long progressUnits, Status status) {
+        this.id = Objects.requireNonNull(id);
+        this.buildingId = Objects.requireNonNull(buildingId);
+        this.configuration = Objects.requireNonNull(configuration);
+        this.status = Objects.requireNonNull(status);
+        long maximum = (long) FULL_SPEED_TICKS * configuration.workforcePlan().speedDenominator();
+        if (progressUnits < 0 || progressUnits > maximum)
+            throw new IllegalArgumentException("Invalid production progress");
+        if ((status == Status.COMPLETED || status == Status.SETTLING_COMPLETED) && progressUnits != maximum) {
+            throw new IllegalArgumentException("Completed production needs full progress");
         }
-
-        this.progress = 0.0;
-        this.status = Status.ACTIVE;
+        if ((status == Status.ACTIVE || status == Status.PAUSED) && progressUnits == maximum) {
+            throw new IllegalArgumentException("Full progress must enter settlement");
+        }
+        this.progressUnits = progressUnits;
     }
 
     public UUID getId() {
@@ -70,13 +41,20 @@ public final class ProductionBatch {
         return buildingId;
     }
 
-    public ProductionBatchConfiguration
-    getConfiguration() {
+    public ProductionBatchConfiguration getConfiguration() {
         return configuration;
     }
 
+    public long getProgressUnits() {
+        return progressUnits;
+    }
+
+    public long getMaximumProgressUnits() {
+        return (long) FULL_SPEED_TICKS * configuration.workforcePlan().speedDenominator();
+    }
+
     public double getProgress() {
-        return progress;
+        return (double) progressUnits / getMaximumProgressUnits();
     }
 
     public Status getStatus() {
@@ -95,77 +73,11 @@ public final class ProductionBatch {
         return status == Status.ABORTED;
     }
 
-    /**
-     * 推进生产进度。
-     *
-     * fullSpeedProgressDelta 表示：
-     *
-     * 如果生产速度为 100%，
-     * 本次应推进多少标准进度。
-     *
-     * 实际推进：
-     *
-     * delta
-     * = fullSpeedProgressDelta
-     *   * locked productionSpeed
-     *
-     * EconomicClock 接入后，
-     * 会负责计算 fullSpeedProgressDelta。
-     */
-    public void advance(
-            double fullSpeedProgressDelta
-    ) {
-        if (!isActive()) {
-            throw new IllegalStateException(
-                    "Production batch is not active"
-            );
-        }
-
-        if (fullSpeedProgressDelta < 0.0) {
-            throw new IllegalArgumentException(
-                    "Progress delta cannot be negative"
-            );
-        }
-
-        double actualProgressDelta =
-                fullSpeedProgressDelta
-                        * configuration
-                        .productionSpeed();
-
-        progress =
-                Math.min(
-                        1.0,
-                        progress
-                                + actualProgressDelta
-                );
-
-        if (progress
-                + EPSILON
-                >= 1.0) {
-
-            progress = 1.0;
-            status = Status.COMPLETED;
-        }
+    public boolean isEnded() {
+        return isCompleted() || isAborted();
     }
 
-    /**
-     * 中止当前批次。
-     *
-     * 当前阶段只改变状态。
-     *
-     * 以后会在 ProductionService 中增加：
-     * - 返还 reserved inputs
-     * - 计算实际劳动量
-     * - 结算工资
-     * - 不产生产品
-     */
-    public void abort() {
-        if (!isActive()) {
-            throw new IllegalStateException(
-                    "Production batch is not active"
-            );
-        }
-
-        status = Status.ABORTED;
+    public boolean needsSettlement() {
+        return status == Status.SETTLING_COMPLETED || status == Status.SETTLING_ABORTED;
     }
 }

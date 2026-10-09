@@ -1,1084 +1,262 @@
 package com.bbmurloc.victoriaeconomics.server.productionequipment;
 
-import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeDefinition;
 import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeRegistry;
-import com.bbmurloc.victoriaeconomics.server.building.BuildingRegistry;
-import com.bbmurloc.victoriaeconomics.server.building.EconomicBuilding;
-import com.bbmurloc.victoriaeconomics.server.productionequipment.operation.ProductionEquipmentOperation;
-import com.bbmurloc.victoriaeconomics.server.productionequipment.operation.ProductionEquipmentOperationQueue;
-import com.bbmurloc.victoriaeconomics.server.productionequipment.operation.ProductionEquipmentOperationSubmission;
+import com.bbmurloc.victoriaeconomics.server.building.*;
+import com.bbmurloc.victoriaeconomics.server.inventory.equipment.*;
 
-import java.util.HashSet;
-import java.util.Objects;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
+import java.util.function.*;
 
+/**
+ * 生产设备的应用服务，协调建筑查询、设备领域行为、持久化和运行时索引更新。
+ *
+ * <p>设备的真实持有数量、统一容量、批次保护和请求状态由
+ * {@link ProductionEquipmentHolding} 所属的库存上下文保护。
+ * 本服务负责安排这些领域行为的执行顺序，不另存一份设备余额。
+ *
+ * <p>修改流程统一为：取得独立副本 → 执行领域行为 → 持久化 → 更新索引。
+ * 所有入口与生产、PM 配置和人事操作共用经济写锁，避免并发检查与提交相互穿插。
+ */
 public final class ProductionEquipmentService {
+    /**
+     * 查询建筑身份，用于为尚无持有记录的建筑取得设备类型定义。
+     */
+    private final BuildingRegistry buildings;
+    /**
+     * 建筑类型提供固定设备类型和统一设备容量。
+     */
+    private final BuildingTypeRegistry types;
+    /**
+     * 已持久化设备聚合的运行时查询索引。
+     */
+    private final ProductionEquipmentRegistry holdings;
+    /**
+     * 保存一组设备聚合；涉及两栋建筑的调拨必须在同一事务中提交。
+     */
+    private final Consumer<List<ProductionEquipmentHolding>> save;
+    /**
+     * 与其他经济应用服务共享的写锁，不能为每个服务各建一把独立锁。
+     */
+    private final Object lock;
 
-    private final BuildingRegistry buildingRegistry;
-    private final BuildingTypeRegistry buildingTypeRegistry;
-    private final ProductionEquipmentRegistry productionEquipmentRegistry;
-    private final ProductionEquipmentOperationQueue operationQueue;
-
-
-    public ProductionEquipmentService(
-            BuildingRegistry buildingRegistry,
-            BuildingTypeRegistry buildingTypeRegistry,
-            ProductionEquipmentRegistry productionEquipmentRegistry,
-            ProductionEquipmentOperationQueue operationQueue
-    ) {
-        this.buildingRegistry =
-                Objects.requireNonNull(
-                        buildingRegistry,
-                        "buildingRegistry cannot be null"
-                );
-
-        this.buildingTypeRegistry =
-                Objects.requireNonNull(
-                        buildingTypeRegistry,
-                        "buildingTypeRegistry cannot be null"
-                );
-
-        this.productionEquipmentRegistry =
-                Objects.requireNonNull(
-                        productionEquipmentRegistry,
-                        "productionEquipmentRegistry cannot be null"
-                );
-
-        this.operationQueue =
-                Objects.requireNonNull(
-                        operationQueue,
-                        "operationQueue cannot be null"
-                );
+    /**
+     * 装配设备应用服务。
+     *
+     * @param save 持久化回调，必须原子保存传入列表中的全部设备持有记录
+     * @param lock 服务器经济上下文共享的写锁
+     */
+    public ProductionEquipmentService(BuildingRegistry buildings, BuildingTypeRegistry types, ProductionEquipmentRegistry holdings,
+                                      Consumer<List<ProductionEquipmentHolding>> save, Object lock) {
+        this.buildings = buildings;
+        this.types = types;
+        this.holdings = holdings;
+        this.save = save;
+        this.lock = lock;
     }
 
     /**
-     * 向某栋建筑增加未安装设备。
+     * 返回建筑设备状态的独立副本，修改返回对象不会改变索引中的权威状态。
      *
-     * 适用于：
-     * - 建造公司生产出设备；
-     * - 设备被运输到某栋建筑；
-     * - 未来其他“进入仓库”的场景。
+     * <p>尚无持有记录时，按建筑定义构造零数量状态供查询；
+     * 单纯查询不会写数据库，也不会把这份空状态注册到索引中。
      *
-     * 此方法不会自动安装设备。
+     * @param building 经济建筑 ID
      */
-    public ProductionEquipmentHolding addUninstalledEquipment(
-            UUID buildingId,
-            int amount
-    ) {
-        requirePositiveAmount(
-                amount,
-                "addUninstalledEquipment"
-        );
-
-        EconomicBuilding building =
-                requireBuilding(buildingId);
-
-        BuildingTypeDefinition buildingType =
-                requireBuildingType(building);
-
-        ProductionEquipmentHolding holding =
-                getOrCreateHolding(
-                        building,
-                        buildingType
-                );
-
-        holding.addQuantity(amount);
-
-        return holding;
-    }
-
-    /**
-     * 增加设备，并尽可能自动安装。
-     *
-     * 第一版购买设备时可以使用这个入口。
-     *
-     * 超出安装上限的部分自动保持为 uninstalled。
-     */
-    public ProductionEquipmentHolding addEquipmentAndAutoInstall(
-            UUID buildingId,
-            int amount
-    ) {
-        requirePositiveAmount(
-                amount,
-                "addEquipmentAndAutoInstall"
-        );
-
-        EconomicBuilding building =
-                requireBuilding(buildingId);
-
-        BuildingTypeDefinition buildingType =
-                requireBuildingType(building);
-
-        ProductionEquipmentHolding holding =
-                getOrCreateHolding(
-                        building,
-                        buildingType
-                );
-
-        /*
-         * 设备先真正进入建筑。
-         * 因此无论当前是否有 active batch，
-         * totalQuantity 都立即增加。
-         */
-        holding.addQuantity(amount);
-
-        int availableSlots =
-                buildingType.maxProductionEquipment()
-                        - holding.getInstalledQuantity();
-
-        int installAmount =
-                Math.min(
-                        amount,
-                        Math.max(
-                                availableSlots,
-                                0
-                        )
-                );
-
-        /*
-         * 不再直接 holding.install()。
-         *
-         * 统一通过 install()：
-         *
-         * 无 active batch -> EXECUTED
-         * 有 active batch -> QUEUED
-         */
-        if (installAmount > 0) {
-            install(
-                    buildingId,
-                    installAmount
-            );
-        }
-
-        return holding;
-    }
-
-    public ProductionEquipmentOperationSubmission install(
-            UUID buildingId,
-            int amount
-    ) {
-        requirePositiveAmount(
-                amount,
-                "install"
-        );
-
-        EconomicBuilding building =
-                requireBuilding(
-                        buildingId
-                );
-
-        BuildingTypeDefinition buildingType =
-                requireBuildingType(
-                        building
-                );
-
-        /*
-         * 提交阶段先确认 Holding 存在，
-         * 并确认 Holding 与 BuildingType 一致。
-         */
-        requireHolding(
-                building,
-                buildingType
-        );
-
-        ProductionEquipmentOperation.Install operation =
-                new ProductionEquipmentOperation.Install(
-                        buildingId,
-                        amount
-                );
-
-        /*
-         * Active Batch：
-         * 不修改 Holding，只进入 Queue。
-         */
-        if (building.getProductionDepartment()
-                .hasActiveBatch()) {
-
-            operationQueue.enqueue(
-                    operation
-            );
-
-            return ProductionEquipmentOperationSubmission.queued(
-                    operation
-            );
-        }
-
-        /*
-         * 没有 Active Batch：
-         * 统一通过 executeOperation 真正执行。
-         */
-        executeOperation(
-                operation
-        );
-
-        return ProductionEquipmentOperationSubmission.executed(
-                operation
-        );
-    }
-
-    private void executeInstall(
-            UUID buildingId,
-            BuildingTypeDefinition buildingType,
-            ProductionEquipmentHolding holding,
-            int amount
-    ) {
-        if ((long) holding.getInstalledQuantity() + amount
-                > buildingType.maxProductionEquipment()) {
-
-            throw new IllegalArgumentException(
-                    "Cannot install "
-                            + amount
-                            + " production equipment for building "
-                            + buildingId
-                            + ": installation would exceed maxProductionEquipment="
-                            + buildingType.maxProductionEquipment()
-            );
-        }
-
-        holding.install(
-                amount
-        );
-    }
-
-    /**
-     * 将已安装设备卸载回当前建筑仓库。
-     *
-     * totalQuantity 不变。
-     */
-    public ProductionEquipmentOperationSubmission uninstall(
-            UUID buildingId,
-            int amount
-    ) {
-        requirePositiveAmount(
-                amount,
-                "uninstall"
-        );
-
-        EconomicBuilding building =
-                requireBuilding(
-                        buildingId
-                );
-
-        BuildingTypeDefinition buildingType =
-                requireBuildingType(
-                        building
-                );
-
-        requireHolding(
-                building,
-                buildingType
-        );
-
-        ProductionEquipmentOperation.Uninstall operation =
-                new ProductionEquipmentOperation.Uninstall(
-                        buildingId,
-                        amount
-                );
-
-        if (building.getProductionDepartment()
-                .hasActiveBatch()) {
-
-            operationQueue.enqueue(
-                    operation
-            );
-
-            return ProductionEquipmentOperationSubmission.queued(
-                    operation
-            );
-        }
-
-        executeOperation(
-                operation
-        );
-
-        return ProductionEquipmentOperationSubmission.executed(
-                operation
-        );
-    }
-
-    /**
-     * 从建筑中移除未安装设备。
-     *
-     * 可以作为未来：
-     * - 出售
-     * - scrap
-     * - 其他资产移出
-     *
-     * 的底层操作。
-     *
-     * 这里只允许移除 uninstalled equipment。
-     */
-    public ProductionEquipmentOperationSubmission removeUninstalledEquipment(
-            UUID buildingId,
-            int amount
-    ) {
-        requirePositiveAmount(
-                amount,
-                "removeUninstalledEquipment"
-        );
-
-        EconomicBuilding building =
-                requireBuilding(
-                        buildingId
-                );
-
-        BuildingTypeDefinition buildingType =
-                requireBuildingType(
-                        building
-                );
-
-        requireHolding(
-                building,
-                buildingType
-        );
-
-        ProductionEquipmentOperation.RemoveUninstalled operation =
-                new ProductionEquipmentOperation.RemoveUninstalled(
-                        buildingId,
-                        amount
-                );
-
-        if (building.getProductionDepartment()
-                .hasActiveBatch()) {
-
-            operationQueue.enqueue(
-                    operation
-            );
-
-            return ProductionEquipmentOperationSubmission.queued(
-                    operation
-            );
-        }
-
-        executeOperation(
-                operation
-        );
-
-        return ProductionEquipmentOperationSubmission.executed(
-                operation
-        );
-    }
-
-    private void executeRemoveUninstalled(
-            UUID buildingId,
-            ProductionEquipmentHolding holding,
-            int amount
-    ) {
-        holding.removeUninstalledQuantity(
-                amount
-        );
-
-        if (holding.getTotalQuantity() == 0) {
-            productionEquipmentRegistry.remove(
-                    buildingId
-            );
-        }
-    }
-
-
-    /**
-     * 在两栋建筑之间转移未安装设备。
-     *
-     * 第一版：
-     * - 只允许转移 uninstalled equipment；
-     * - 两栋建筑必须使用同一种 ProductionEquipmentType；
-     * - 暂时不处理公司 ownership 和物流费用。
-     */
-    public ProductionEquipmentOperationSubmission transferUninstalledEquipment(
-            UUID sourceBuildingId,
-            UUID destinationBuildingId,
-            int amount
-    ) {
-        requirePositiveAmount(
-                amount,
-                "transferUninstalledEquipment"
-        );
-
-        ProductionEquipmentOperation.Transfer operation =
-                new ProductionEquipmentOperation.Transfer(
-                        sourceBuildingId,
-                        destinationBuildingId,
-                        amount
-                );
-
-        EconomicBuilding sourceBuilding =
-                requireBuilding(
-                        sourceBuildingId
-                );
-
-        EconomicBuilding destinationBuilding =
-                requireBuilding(
-                        destinationBuildingId
-                );
-
-        BuildingTypeDefinition sourceType =
-                requireBuildingType(
-                        sourceBuilding
-                );
-
-        BuildingTypeDefinition destinationType =
-                requireBuildingType(
-                        destinationBuilding
-                );
-
-        /*
-         * 设备类型兼容性属于比较稳定的提交阶段规则，
-         * 可以现在就检查。
-         */
-        if (!sourceType.productionEquipmentTypeId()
-                .equals(
-                        destinationType.productionEquipmentTypeId()
-                )) {
-
-            throw new IllegalArgumentException(
-                    "Cannot transfer production equipment from building "
-                            + sourceBuildingId
-                            + " to building "
-                            + destinationBuildingId
-                            + ": incompatible production equipment types"
-            );
-        }
-
-        /*
-         * Source 必须确实存在 Holding。
-         *
-         * 当前具体还有多少 uninstalled，
-         * 不在这里检查，
-         * 留到 executeTransfer() 真正执行时检查。
-         */
-        requireHolding(
-                sourceBuilding,
-                sourceType
-        );
-
-        /*
-         * Transfer 同时涉及两栋建筑。
-         *
-         * 任意一栋有 Active Batch，
-         * 都不能立即改变设备关系。
-         */
-        if (sourceBuilding.getProductionDepartment()
-                .hasActiveBatch()
-                || destinationBuilding.getProductionDepartment()
-                .hasActiveBatch()) {
-
-            operationQueue.enqueue(
-                    operation
-            );
-
-            return ProductionEquipmentOperationSubmission.queued(
-                    operation
-            );
-        }
-
-        executeOperation(
-                operation
-        );
-
-        return ProductionEquipmentOperationSubmission.executed(
-                operation
-        );
-    }
-
-    private void executeTransfer(
-            EconomicBuilding sourceBuilding,
-            EconomicBuilding destinationBuilding,
-            BuildingTypeDefinition sourceType,
-            BuildingTypeDefinition destinationType,
-            int amount
-    ) {
-        ProductionEquipmentHolding sourceHolding =
-                requireHolding(
-                        sourceBuilding,
-                        sourceType
-                );
-
-        if (amount
-                > sourceHolding.getUninstalledQuantity()) {
-
-            throw new IllegalArgumentException(
-                    "Cannot transfer "
-                            + amount
-                            + " production equipment because source building only has "
-                            + sourceHolding.getUninstalledQuantity()
-                            + " uninstalled equipment"
-            );
-        }
-
-        ProductionEquipmentHolding destinationHolding =
-                getOrCreateHolding(
-                        destinationBuilding,
-                        destinationType
-                );
-
-        sourceHolding.removeUninstalledQuantity(
-                amount
-        );
-
-        destinationHolding.addQuantity(
-                amount
-        );
-
-        if (sourceHolding.getTotalQuantity() == 0) {
-            productionEquipmentRegistry.remove(
-                    sourceBuilding.getId()
-            );
+    public ProductionEquipmentHolding getHolding(UUID building) {
+        synchronized (lock) {
+            var holding = holdings.get(building);
+            if (holding == null) {
+                var b = buildings.get(building);
+                if (b == null) throw new IllegalArgumentException("Unknown building: " + building);
+                var type = types.get(b.getBuildingTypeId());
+                holding = new ProductionEquipmentHolding(building, type.productionEquipmentTypeId(), type.maxProductionEquipment());
+            }
+            // 返回脱离索引的副本，防止调用方绕过本服务的持久化流程修改实际持有状态。
+            return new ProductionEquipmentHolding(holding.state());
         }
     }
 
     /**
-     * 获取建筑当前 Holding。
+     * 单栋建筑的统一修改流程。
      *
-     * 没有设备时返回 null。
+     * <p>领域校验和修改都发生在副本上；只有保存成功才替换查询索引。
+     * 校验或保存抛出异常时，索引仍保留本次操作前的对象。
+     * 回调返回值仅在完成持久化后交给调用方。
      */
-    public ProductionEquipmentHolding getHolding(
-            UUID buildingId
-    ) {
-        return productionEquipmentRegistry.get(
-                buildingId
-        );
-    }
-
-    private EconomicBuilding requireBuilding(
-            UUID buildingId
-    ) {
-        Objects.requireNonNull(
-                buildingId,
-                "buildingId cannot be null"
-        );
-
-        EconomicBuilding building =
-                buildingRegistry.get(
-                        buildingId
-                );
-
-        if (building == null) {
-            throw new IllegalArgumentException(
-                    "Unknown building: "
-                            + buildingId
-            );
-        }
-
-        return building;
-    }
-
-    private BuildingTypeDefinition requireBuildingType(
-            EconomicBuilding building
-    ) {
-        BuildingTypeDefinition buildingType =
-                buildingTypeRegistry.get(
-                        building.getBuildingTypeId()
-                );
-
-        if (buildingType == null) {
-            throw new IllegalStateException(
-                    "Building "
-                            + building.getId()
-                            + " references unknown building type: "
-                            + building.getBuildingTypeId()
-            );
-        }
-
-        return buildingType;
-    }
-
-    private ProductionEquipmentHolding getOrCreateHolding(
-            EconomicBuilding building,
-            BuildingTypeDefinition buildingType
-    ) {
-        ProductionEquipmentHolding holding =
-                productionEquipmentRegistry.get(
-                        building.getId()
-                );
-
-        if (holding == null) {
-            holding =
-                    new ProductionEquipmentHolding(
-                            building.getId(),
-                            buildingType.productionEquipmentTypeId()
-                    );
-
-            productionEquipmentRegistry.register(
-                    holding
-            );
-
-            return holding;
-        }
-
-        validateHolding(
-                holding,
-                buildingType
-        );
-
-        return holding;
-    }
-
-    private ProductionEquipmentHolding requireHolding(
-            EconomicBuilding building,
-            BuildingTypeDefinition buildingType
-    ) {
-        ProductionEquipmentHolding holding =
-                productionEquipmentRegistry.get(
-                        building.getId()
-                );
-
-        if (holding == null) {
-            throw new IllegalStateException(
-                    "Building "
-                            + building.getId()
-                            + " has no production equipment"
-            );
-        }
-
-        validateHolding(
-                holding,
-                buildingType
-        );
-
-        return holding;
-    }
-
-    private void validateHolding(
-            ProductionEquipmentHolding holding,
-            BuildingTypeDefinition buildingType
-    ) {
-        if (!holding.getProductionEquipmentTypeId()
-                .equals(buildingType.productionEquipmentTypeId())) {
-
-            throw new IllegalStateException(
-                    "Production equipment holding type '"
-                            + holding.getProductionEquipmentTypeId()
-                            + "' does not match building type equipment '"
-                            + buildingType.productionEquipmentTypeId()
-                            + "'"
-            );
-        }
-
-        if (holding.getInstalledQuantity()
-                > buildingType.maxProductionEquipment()) {
-
-            throw new IllegalStateException(
-                    "Production equipment holding has "
-                            + holding.getInstalledQuantity()
-                            + " installed equipment, exceeding building maximum "
-                            + buildingType.maxProductionEquipment()
-            );
+    private <T> T mutate(UUID building, Function<ProductionEquipmentHolding, T> action) {
+        synchronized (lock) {
+            ProductionEquipmentHolding next = getHolding(building);
+            T result = action.apply(next);
+            // 必须先保存再更新索引，避免其他查询看到尚未持久化的设备变化。
+            save.accept(List.of(next));
+            holdings.replace(next);
+            return result;
         }
     }
 
+    /**
+     * 增加未安装设备；由设备聚合检查数量为正以及统一总容量。
+     * 新增设备不会直接提升生产能力，只有安装后的数量才计入设备能力。
+     */
+    public ProductionEquipmentHolding addUninstalledEquipment(UUID building, int amount) {
+        return mutate(building, h -> {
+            h.addQuantity(amount);
+            return new ProductionEquipmentHolding(h.state());
+        });
+    }
 
+    /**
+     * 增加设备，并在同一次持久化中提交对应数量的安装请求。
+     *
+     * <p>没有批次保护时立即安装；受批次保护时，新设备先作为未安装设备持有，
+     * 安装请求锁定全部所需数量并等待批次边界，不提前改变本批生产能力。
+     * 如果新增或请求受理失败，副本不会保存，新增数量也不会进入实际库存。
+     */
+    public ProductionEquipmentHolding addEquipmentAndAutoInstall(UUID building, int amount) {
+        return mutate(building, h -> {
+            h.addQuantity(amount);
+            h.request(UUID.randomUUID(), EquipmentConfigurationRequest.Kind.INSTALL, amount);
+            return new ProductionEquipmentHolding(h.state());
+        });
+    }
 
-    private static void requirePositiveAmount(
-            int amount,
-            String operation
-    ) {
-        if (amount <= 0) {
-            throw new IllegalArgumentException(
-                    operation
-                            + " amount must be positive"
-            );
+    /**
+     * 将可用的未安装设备调拨到另一栋设备类型相同的建筑。
+     *
+     * <p>源建筑不能调出已安装设备或被安装请求锁定的设备；
+     * 目标建筑必须有足够的统一总容量。
+     * 两边都先在副本上完成领域校验，再一次性保存，防止只扣减来源而未增加目标。
+     * 调拨不改变已安装数量，因此不需要解除活动批次的设备保护。
+     */
+    public void transferUninstalledEquipment(UUID source, UUID destination, int amount) {
+        synchronized (lock) {
+            if (source.equals(destination))
+                throw new IllegalArgumentException("Equipment transfer locations must differ");
+            var from = getHolding(source);
+            var to = getHolding(destination);
+            if (!from.getProductionEquipmentTypeId().equals(to.getProductionEquipmentTypeId()))
+                throw new IllegalArgumentException("Equipment types differ");
+            from.removeUninstalledQuantity(amount);
+            to.addQuantity(amount);
+            // 持久化回调必须使用同一事务保存两边；成功后才同步更新两个查询索引。
+            save.accept(List.of(from, to));
+            holdings.replace(from);
+            holdings.replace(to);
         }
     }
 
-    private void executeOperation(
-            ProductionEquipmentOperation operation
-    ) {
-        switch (operation) {
+    /**
+     * 使用新请求 ID 提交安装请求。
+     * 每次调用表示一个新控制请求；重试已有请求应使用带 request 参数的重载。
+     */
+    public EquipmentConfigurationRequest install(UUID building, int amount) {
+        return install(building, UUID.randomUUID(), amount);
+    }
 
-            case ProductionEquipmentOperation.Install install -> {
+    /**
+     * 受理指定 ID 的安装请求，并返回当前请求状态。
+     *
+     * <p>受理时必须有全部所需的可用未安装设备，数量不足直接拒绝；
+     * 延期请求会排他锁定这部分设备，但不预留未来安装空间。
+     * 是否立即执行由设备聚合的批次保护状态决定。
+     * 重复提交相同 ID 和参数返回原请求，不重复安装；同一 ID 的不同参数会被拒绝。
+     */
+    public EquipmentConfigurationRequest install(UUID building, UUID request, int amount) {
+        return mutate(building, h -> h.request(request, EquipmentConfigurationRequest.Kind.INSTALL, amount));
+    }
 
-                EconomicBuilding building =
-                        requireBuilding(
-                                install.buildingId()
-                        );
+    /**
+     * 使用新请求 ID 提交卸载请求。
+     * 重试同一个请求时应保留原 ID，并使用下面的重载。
+     */
+    public EquipmentConfigurationRequest uninstall(UUID building, int amount) {
+        return uninstall(building, UUID.randomUUID(), amount);
+    }
 
-                BuildingTypeDefinition buildingType =
-                        requireBuildingType(
-                                building
-                        );
+    /**
+     * 受理指定 ID 的卸载请求；受批次保护时按受理顺序等待执行。
+     *
+     * <p>执行时按实际已安装数量确定可卸载数量，允许合法的部分执行。
+     * 安装和卸载只改变设备形态，不改变总持有数量；
+     * 同一请求 ID 的重试规则与安装请求一致。
+     */
+    public EquipmentConfigurationRequest uninstall(UUID building, UUID request, int amount) {
+        return mutate(building, h -> h.request(request, EquipmentConfigurationRequest.Kind.UNINSTALL, amount));
+    }
 
-                ProductionEquipmentHolding holding =
-                        requireHolding(
-                                building,
-                                buildingType
-                        );
+    /**
+     * 取消尚未执行的设备请求；取消安装请求同时释放其未安装设备锁定。
+     *
+     * @return 待执行请求取消成功或原请求已取消时为 true；
+     * 请求已执行或部分执行时为 false，不能通过取消反转真实设备变化
+     * @throws IllegalArgumentException 请求 ID 不存在
+     */
+    public boolean cancel(UUID building, UUID request) {
+        return mutate(building, h -> h.cancel(request));
+    }
 
-                executeInstall(
-                        install.buildingId(),
-                        buildingType,
-                        holding,
-                        install.amount()
-                );
-            }
+    /**
+     * 从实际持有中移除可用未安装设备，供出售或报废等上层业务调用。
+     * 本方法只处理设备数量，不处理资金结算，也不能移除被安装请求锁定的设备。
+     */
+    public void removeUninstalledEquipment(UUID building, int amount) {
+        mutate(building, h -> {
+            h.removeUninstalledQuantity(amount);
+            return null;
+        });
+    }
 
-            case ProductionEquipmentOperation.Uninstall uninstall -> {
+    /**
+     * 为即将提交的批次建立设备保护，阻止安装或卸载改变本批的设备能力。
+     * 保护的所有者是批次 ID；有其他批次保护或未处理配置请求时由聚合拒绝。
+     * 暂停和等待结算期间继续保留这份保护。
+     */
+    public void protectForBatch(UUID building, UUID batch) {
+        mutate(building, h -> {
+            h.protectForBatch(batch);
+            return null;
+        });
+    }
 
-                EconomicBuilding building =
-                        requireBuilding(
-                                uninstall.buildingId()
-                        );
+    /**
+     * 释放指定批次的设备保护，主要用于开工未提交时的失败补偿。
+     *
+     * <p>保护已经释放时可以重复调用；仍持有保护时必须匹配批次所有者。
+     * 此方法不执行延期请求；正常批次结束时由批次边界入口统一处理。
+     */
+    public void releaseBatchProtection(UUID building, UUID batch) {
+        mutate(building, h -> {
+            h.releaseBatchProtection(batch);
+            return null;
+        });
+    }
 
-                BuildingTypeDefinition buildingType =
-                        requireBuildingType(
-                                building
-                        );
-
-                ProductionEquipmentHolding holding =
-                        requireHolding(
-                                building,
-                                buildingType
-                        );
-
-                holding.uninstall(
-                        uninstall.amount()
-                );
-            }
-
-            case ProductionEquipmentOperation.RemoveUninstalled remove -> {
-
-                EconomicBuilding building =
-                        requireBuilding(
-                                remove.buildingId()
-                        );
-
-                BuildingTypeDefinition buildingType =
-                        requireBuildingType(
-                                building
-                        );
-
-                ProductionEquipmentHolding holding =
-                        requireHolding(
-                                building,
-                                buildingType
-                        );
-
-                executeRemoveUninstalled(
-                        remove.buildingId(),
-                        holding,
-                        remove.amount()
-                );
-            }
-
-            case ProductionEquipmentOperation.Transfer transfer -> {
-
-                EconomicBuilding sourceBuilding =
-                        requireBuilding(
-                                transfer.sourceBuildingId()
-                        );
-
-                EconomicBuilding destinationBuilding =
-                        requireBuilding(
-                                transfer.destinationBuildingId()
-                        );
-
-                BuildingTypeDefinition sourceType =
-                        requireBuildingType(
-                                sourceBuilding
-                        );
-
-                BuildingTypeDefinition destinationType =
-                        requireBuildingType(
-                                destinationBuilding
-                        );
-
-                if (!sourceType.productionEquipmentTypeId()
-                        .equals(
-                                destinationType.productionEquipmentTypeId()
-                        )) {
-
-                    throw new IllegalStateException(
-                            "Queued production equipment transfer "
-                                    + "is no longer compatible"
-                    );
-                }
-
-                executeTransfer(
-                        sourceBuilding,
-                        destinationBuilding,
-                        sourceType,
-                        destinationType,
-                        transfer.amount()
-                );
-            }
+    /**
+     * 在批次真正结束后释放设备保护，并按统一受理顺序处理延期安装和卸载。
+     *
+     * <p>生产协调器应先完成原料/产出结算和待变更 PM 生效，再调用本阶段；
+     * 活动、暂停或待结算批次仍会阻止执行。之后的人事再配置和下一批评估由协调器负责。
+     * 释放保护、实际数量变化及请求结果在同一次持久化中保存，
+     * 重试时不会再次执行已经执行、部分执行或已取消的请求。
+     *
+     * @param endedBatch 已完成结算的批次 ID，用于核验仍存在的设备保护所有者
+     * @return 本次处理的待执行请求数，包含部分执行的请求，不代表设备变化数量
+     */
+    public int flushPendingOperationsForBuilding(UUID building, UUID endedBatch) {
+        synchronized (lock) {
+            if (buildings.get(building).getProductionDepartment().hasActiveBatch())
+                throw new IllegalStateException("Batch has not settled");
+            return mutate(building, h -> {
+                h.releaseBatchProtection(endedBatch);
+                return h.processRequests();
+            });
         }
     }
 
-    private boolean canExecuteNow(
-            ProductionEquipmentOperation operation
-    ) {
-        return switch (operation) {
-
-            case ProductionEquipmentOperation.Install install ->
-
-                    !requireBuilding(
-                            install.buildingId()
-                    )
-                            .getProductionDepartment()
-                            .hasActiveBatch();
-
-            case ProductionEquipmentOperation.Uninstall uninstall ->
-
-                    !requireBuilding(
-                            uninstall.buildingId()
-                    )
-                            .getProductionDepartment()
-                            .hasActiveBatch();
-
-            case ProductionEquipmentOperation.RemoveUninstalled remove ->
-
-                    !requireBuilding(
-                            remove.buildingId()
-                    )
-                            .getProductionDepartment()
-                            .hasActiveBatch();
-
-            case ProductionEquipmentOperation.Transfer transfer -> {
-
-                EconomicBuilding sourceBuilding =
-                        requireBuilding(
-                                transfer.sourceBuildingId()
-                        );
-
-                EconomicBuilding destinationBuilding =
-                        requireBuilding(
-                                transfer.destinationBuildingId()
-                        );
-
-                yield !sourceBuilding
-                        .getProductionDepartment()
-                        .hasActiveBatch()
-                        && !destinationBuilding
-                        .getProductionDepartment()
-                        .hasActiveBatch();
-            }
-        };
-    }
-
-    private Set<UUID> getInvolvedBuildingIds(
-            ProductionEquipmentOperation operation
-    ) {
-        return switch (operation) {
-
-            case ProductionEquipmentOperation.Install install ->
-                    Set.of(
-                            install.buildingId()
-                    );
-
-            case ProductionEquipmentOperation.Uninstall uninstall ->
-                    Set.of(
-                            uninstall.buildingId()
-                    );
-
-            case ProductionEquipmentOperation.RemoveUninstalled remove ->
-                    Set.of(
-                            remove.buildingId()
-                    );
-
-            case ProductionEquipmentOperation.Transfer transfer ->
-                    Set.of(
-                            transfer.sourceBuildingId(),
-                            transfer.destinationBuildingId()
-                    );
-        };
-    }
-
-    public int flushPendingOperations() {
-
-        int executedCount = 0;
-
-        /*
-         * 如果某栋建筑前面有一个暂时不能执行的操作，
-         * 后面涉及同一建筑的操作不能越过它。
-         */
-        Set<UUID> blockedBuildings =
-                new HashSet<>();
-
-        /*
-         * getAll() 返回的是 Queue 的快照，
-         * 所以遍历过程中可以安全地从真正 Queue 中 remove。
-         */
-        for (ProductionEquipmentOperation operation
-                : operationQueue.getAll()) {
-
-            Set<UUID> involvedBuildingIds =
-                    getInvolvedBuildingIds(
-                            operation
-                    );
-
-            boolean blockedByEarlierOperation =
-                    involvedBuildingIds.stream()
-                            .anyMatch(
-                                    blockedBuildings::contains
-                            );
-
-            if (blockedByEarlierOperation) {
-
-                /*
-                 * 当前操作也成为这些建筑前面的 pending operation。
-                 */
-                blockedBuildings.addAll(
-                        involvedBuildingIds
-                );
-
-                continue;
-            }
-
-            /*
-             * 例如对应 Building 仍然有 Active Batch。
-             */
-            if (!canExecuteNow(operation)) {
-
-                blockedBuildings.addAll(
-                        involvedBuildingIds
-                );
-
-                continue;
-            }
-
-            /*
-             * 真正执行。
-             *
-             * 这里还会重新检查：
-             * - installed 上限
-             * - uninstalled 数量
-             * - Holding
-             * - equipment compatibility
-             * 等运行时规则。
-             */
-            executeOperation(
-                    operation
-            );
-
-            /*
-             * 只有成功执行以后才从 Queue 删除。
-             */
-            operationQueue.remove(
-                    operation
-            );
-
-            executedCount++;
-        }
-
-        return executedCount;
-    }
-
-    public boolean hasPendingOperationsForBuilding(
-            UUID buildingId
-    ) {
-        Objects.requireNonNull(
-                buildingId,
-                "buildingId cannot be null"
-        );
-
-        return operationQueue.hasPendingForBuilding(
-                buildingId
-        );
-    }
-
-    public int flushPendingOperationsForBuilding(
-            UUID boundaryBuildingId
-    ) {
-        Objects.requireNonNull(
-                boundaryBuildingId,
-                "boundaryBuildingId cannot be null"
-        );
-
-        int executedCount = 0;
-
-        /*
-         * 某栋建筑如果前面已经存在一个还不能执行的 Operation，
-         * 后面涉及这栋建筑的 Operation 不能越过去。
-         */
-        Set<UUID> blockedBuildings =
-                new HashSet<>();
-
-        /*
-         * getAll() 是快照，所以遍历过程中可以安全地
-         * 从真正的 Queue 中 remove。
-         */
-        for (ProductionEquipmentOperation operation
-                : operationQueue.getAll()) {
-
-            Set<UUID> involvedBuildingIds =
-                    getInvolvedBuildingIds(
-                            operation
-                    );
-
-            boolean involvesBoundaryBuilding =
-                    involvedBuildingIds.contains(
-                            boundaryBuildingId
-                    );
-
-            /*
-             * 当前是 boundaryBuilding 到达了 Batch Boundary。
-             *
-             * 与它完全无关的 Operation 本轮不主动执行。
-             *
-             * 但是它仍然是一条更早的 pending operation，
-             * 所以应该阻塞它所涉及建筑的后续操作。
-             *
-             * 例如：
-             *
-             * 1. Uninstall(B)
-             * 2. Transfer(A -> B)
-             *
-             * A 到边界时不能越过 #1 直接执行 #2。
-             */
-            if (!involvesBoundaryBuilding) {
-                blockedBuildings.addAll(
-                        involvedBuildingIds
-                );
-
-                continue;
-            }
-
-            boolean blockedByEarlierOperation =
-                    involvedBuildingIds.stream()
-                            .anyMatch(
-                                    blockedBuildings::contains
-                            );
-
-            if (blockedByEarlierOperation) {
-                blockedBuildings.addAll(
-                        involvedBuildingIds
-                );
-
-                continue;
-            }
-
-            /*
-             * 当前 Operation 自身的执行条件仍未满足。
-             *
-             * 例如 Transfer(A -> B)，
-             * 虽然 A 到边界了，
-             * 但是 B 仍有 Active Batch。
-             */
-            if (!canExecuteNow(operation)) {
-                blockedBuildings.addAll(
-                        involvedBuildingIds
-                );
-
-                continue;
-            }
-
-            /*
-             * 真正执行领域操作。
-             */
-            executeOperation(
-                    operation
-            );
-
-            /*
-             * 只有成功以后才删除。
-             */
-            operationQueue.remove(
-                    operation
-            );
-
-            executedCount++;
-        }
-
-        return executedCount;
+    /**
+     * 查询是否仍有待执行设备请求；已执行、部分执行和已取消的历史请求不计入。
+     */
+    public boolean hasPendingOperationsForBuilding(UUID building) {
+        return getHolding(building).hasPendingRequests();
     }
 }

@@ -11,7 +11,6 @@ import java.util.UUID;
 import static com.bbmurloc.victoriaeconomics.common.registry.ModBlockEntities.BUILDING_ANCHOR_BLOCK_ENTITY;
 
 public class BuildingAnchorBlockEntity extends BlockEntity {
-    private int testValue = 0;
     private UUID buildingId;
 
     public BuildingAnchorBlockEntity(BlockPos pos, BlockState state) {

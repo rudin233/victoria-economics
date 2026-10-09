@@ -1,288 +1,160 @@
 package com.bbmurloc.victoriaeconomics.server.workforce.employment;
 
-import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeDefinition;
-import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.occupation.OccupationRegistry;
-import com.bbmurloc.victoriaeconomics.server.building.BuildingRegistry;
-import com.bbmurloc.victoriaeconomics.server.building.EconomicBuilding;
-import com.bbmurloc.victoriaeconomics.server.production.calculation.EquipmentCapacityCalculator;
-import com.bbmurloc.victoriaeconomics.server.production.calculation.ProductionRecipeResolver;
-import com.bbmurloc.victoriaeconomics.server.production.calculation.ResolvedProductionRecipe;
-import com.bbmurloc.victoriaeconomics.server.productionequipment.ProductionEquipmentRegistry;
+import com.bbmurloc.victoriaeconomics.server.building.*;
+import com.bbmurloc.victoriaeconomics.server.production.port.WorkforcePort;
 
-import java.util.Objects;
-import java.util.UUID;
+import java.util.*;
+import java.util.function.*;
 
-public final class EmploymentService {
+/**
+ * Employment owns position admission/reservations. Equipment only limits participation.
+ */
+public final class EmploymentService implements WorkforcePort {
+    private final EmploymentRegistry employment;
+    private final BuildingRegistry buildings;
+    private final OccupationRegistry occupations;
+    private final BiPredicate<UUID, String> qualification;
+    private final Consumer<EmploymentRegistry.State> save;
+    private final Object lock;
 
-    private final EmploymentRegistry employmentRegistry;
-
-    private final BuildingRegistry buildingRegistry;
-
-    private final BuildingTypeRegistry buildingTypeRegistry;
-
-    private final OccupationRegistry occupationRegistry;
-
-    private final ProductionRecipeResolver productionRecipeResolver;
-
-    private final ProductionEquipmentRegistry productionEquipmentRegistry;
-
-    public EmploymentService(
-            EmploymentRegistry employmentRegistry,
-            BuildingRegistry buildingRegistry,
-            BuildingTypeRegistry buildingTypeRegistry,
-            OccupationRegistry occupationRegistry,
-            ProductionRecipeResolver productionRecipeResolver,
-            ProductionEquipmentRegistry productionEquipmentRegistry
-    ) {
-        this.employmentRegistry =
-                Objects.requireNonNull(
-                        employmentRegistry
-                );
-
-        this.buildingRegistry =
-                Objects.requireNonNull(
-                        buildingRegistry
-                );
-
-        this.buildingTypeRegistry =
-                Objects.requireNonNull(
-                        buildingTypeRegistry
-                );
-
-        this.occupationRegistry =
-                Objects.requireNonNull(
-                        occupationRegistry
-                );
-
-        this.productionRecipeResolver =
-                Objects.requireNonNull(
-                        productionRecipeResolver
-                );
-
-        this.productionEquipmentRegistry =
-                Objects.requireNonNull(
-                        productionEquipmentRegistry,
-                        "productionEquipmentRegistry cannot be null"
-                );
+    public EmploymentService(EmploymentRegistry employment, BuildingRegistry buildings, OccupationRegistry occupations,
+                             BiPredicate<UUID, String> qualification, Consumer<EmploymentRegistry.State> save, Object lock) {
+        this.employment = employment;
+        this.buildings = buildings;
+        this.occupations = occupations;
+        this.qualification = qualification;
+        this.save = save;
+        this.lock = lock;
     }
 
-    /**
-     * 招聘一名员工。
-     *
-     * 当前规则：
-     *
-     * 1. occupation 必须存在；
-     * 2. NPC 不能已经有工作；
-     * 3. Building 必须存在；
-     * 4. 当前生产配方必须需要该职业；
-     * 5. 当前设备能力必须允许继续招聘。
-     */
-    public EmploymentRecord hire(
-            UUID employeeId,
-            UUID buildingId,
-            String occupationId
-    ) {
-        Objects.requireNonNull(
-                employeeId,
-                "employeeId cannot be null"
-        );
-
-        Objects.requireNonNull(
-                buildingId,
-                "buildingId cannot be null"
-        );
-
-        Objects.requireNonNull(
-                occupationId,
-                "occupationId cannot be null"
-        );
-
-        /*
-         * 1. 职业是否合法。
-         */
-        if (!occupationRegistry.contains(
-                occupationId
-        )) {
-            throw new IllegalArgumentException(
-                    "Unknown occupation: "
-                            + occupationId
-            );
-        }
-
-        /*
-         * 2. 一个 NPC 当前最多有一份工作。
-         */
-        if (employmentRegistry.isEmployed(
-                employeeId
-        )) {
-            throw new IllegalStateException(
-                    "Employee is already employed: "
-                            + employeeId
-            );
-        }
-
-        /*
-         * 3. 找实际经济建筑。
-         */
-        EconomicBuilding building =
-                buildingRegistry.get(
-                        buildingId
-                );
-
-        if (building == null) {
-            throw new IllegalArgumentException(
-                    "Unknown building: "
-                            + buildingId
-            );
-        }
-
-        /*
-         * 4. 根据这栋建筑当前选择的 PM，
-         *    得到最终生产配方。
-         */
-        ResolvedProductionRecipe recipe =
-                productionRecipeResolver.resolve(
-                        building
-                );
-
-        Integer requiredWorkers =
-                recipe.requiredWorkers()
-                        .get(
-                                occupationId
-                        );
-
-        /*
-         * 当前配方根本不需要这种职业，
-         * 不允许招聘。
-         */
-        if (requiredWorkers == null
-                || requiredWorkers <= 0) {
-
-            throw new IllegalStateException(
-                    "Building does not currently require occupation '"
-                            + occupationId
-                            + "'"
-            );
-        }
-
-        /*
-         * 5. 找 BuildingType，
-         *    获取 maxEquipment。
-         */
-        BuildingTypeDefinition buildingType =
-                buildingTypeRegistry.get(
-                        building.getBuildingTypeId()
-                );
-
-        if (buildingType == null) {
-            throw new IllegalStateException(
-                    "Unknown building type: "
-                            + building.getBuildingTypeId()
-            );
-        }
-
-        /*
-         * e = installedProductionEquipment / maxEquipment
-         */
-        int installedProductionEquipment =
-                productionEquipmentRegistry
-                        .getInstalledQuantity(
-                                building.getId()
-                        );
-
-        double equipmentCapacity =
-                EquipmentCapacityCalculator.calculate(
-                        installedProductionEquipment,
-                        buildingType.maxProductionEquipment()
-                );
-
-        /*
-         * 每种职业可雇佣人数上限：
-         *
-         * floor(e * N_i)
-         */
-        int equipmentLimitedMaximum =
-                (int) Math.floor(
-                        equipmentCapacity
-                                * requiredWorkers
-                );
-
-        int currentWorkers =
-                employmentRegistry.count(
-                        buildingId,
-                        occupationId
-                );
-
-        if (currentWorkers
-                >= equipmentLimitedMaximum) {
-
-            throw new IllegalStateException(
-                    "Cannot hire more workers for occupation '"
-                            + occupationId
-                            + "'. Current="
-                            + currentWorkers
-                            + ", equipment-limited maximum="
-                            + equipmentLimitedMaximum
-            );
-        }
-
-        EmploymentRecord record =
-                new EmploymentRecord(
-                        employeeId,
-                        buildingId,
-                        occupationId
-                );
-
-        employmentRegistry.add(
-                record
-        );
-
-        return record;
+    private EconomicBuilding require(UUID id) {
+        var b = buildings.get(id);
+        if (b == null) throw new IllegalArgumentException("Unknown building: " + id);
+        return b;
     }
 
-    /**
-     * 解雇。
-     *
-     * 当前只是删除 active EmploymentRecord。
-     * 工资结算、欠薪等以后再接。
-     */
-    public EmploymentRecord fire(
-            UUID employeeId
-    ) {
-        Objects.requireNonNull(
-                employeeId,
-                "employeeId cannot be null"
-        );
-
-        return employmentRegistry.remove(
-                employeeId
-        );
+    private <T> T mutate(Function<EmploymentRegistry, T> action) {
+        synchronized (lock) {
+            EmploymentRegistry next = new EmploymentRegistry();
+            next.replace(employment.state());
+            T result = action.apply(next);
+            if (!next.state().equals(employment.state())) {
+                save.accept(next.state());
+                employment.replace(next.state());
+            }
+            return result;
+        }
     }
 
-    public EmploymentRecord getEmployment(
-            UUID employeeId
-    ) {
-        return employmentRegistry.getByEmployee(
-                employeeId
-        );
+    public JobReservation reservePosition(UUID employee, UUID building, String occupation) {
+        return mutate(next -> {
+            admit(next, employee, building, occupation);
+            var reservation = new JobReservation(UUID.randomUUID(), employee, building, occupation);
+            next.reserve(reservation);
+            return reservation;
+        });
     }
 
-    public boolean isEmployed(
-            UUID employeeId
-    ) {
-        return employmentRegistry.isEmployed(
-                employeeId
-        );
+    public void cancelPositionReservation(UUID reservation) {
+        mutate(next -> {
+            next.cancelReservation(reservation);
+            return null;
+        });
     }
 
-    public int countWorkers(
-            UUID buildingId,
-            String occupationId
-    ) {
-        return employmentRegistry.count(
-                buildingId,
-                occupationId
-        );
+    public EmploymentRecord hire(UUID employee, UUID building, String occupation) {
+        return mutate(next -> {
+            admit(next, employee, building, occupation);
+            var record = new EmploymentRecord(employee, building, occupation);
+            next.add(record);
+            return record;
+        });
+    }
+
+    public EmploymentRecord acceptPosition(UUID reservationId) {
+        return mutate(next -> {
+            var reservation = next.reservation(reservationId);
+            if (reservation == null) throw new IllegalArgumentException("Unknown job reservation");
+            next.cancelReservation(reservationId);
+            admit(next, reservation.employeeId(), reservation.buildingId(), reservation.occupationId());
+            var record = new EmploymentRecord(reservation.employeeId(), reservation.buildingId(), reservation.occupationId());
+            next.add(record);
+            return record;
+        });
+    }
+
+    private void admit(EmploymentRegistry next, UUID employee, UUID building, String occupation) {
+        if (occupations.get(occupation) == null)
+            throw new IllegalArgumentException("Unknown occupation: " + occupation);
+        if (!qualification.test(employee, occupation))
+            throw new IllegalStateException("NPC qualification unavailable or insufficient");
+        if (next.isEmployed(employee) || next.reservations().stream().anyMatch(r -> r.employeeId().equals(employee))) {
+            throw new IllegalStateException("Employee already employed or reserved");
+        }
+        EconomicBuilding b = require(building);
+        if (b.getStatus() != BuildingStatus.ACTIVE) throw new IllegalStateException("Building is stopped");
+        int capacity = b.getProductionDepartment().getRecipe().requiredWorkers().getOrDefault(occupation, 0);
+        if (next.count(building, occupation) + next.reservedPositions(building, occupation) >= capacity) {
+            throw new IllegalStateException("Effective PM position capacity exhausted: " + occupation);
+        }
+    }
+
+    public EmploymentRecord fire(UUID employee) {
+        return mutate(next -> {
+            var record = next.getByEmployee(employee);
+            if (record == null) return null;
+            var batch = require(record.buildingId()).getProductionDepartment().getActiveBatch();
+            if (batch != null && !batch.isEnded() && batch.getConfiguration().activeEmployeesByOccupation().values().stream().anyMatch(ids -> ids.contains(employee))) {
+                next.requestDismissal(employee);
+            } else next.remove(employee);
+            return record;
+        });
+    }
+
+    @Override
+    public Collection<EmploymentRecord> effectiveEmployment(UUID building) {
+        synchronized (lock) {
+            return employment.getAll().stream().filter(e -> e.buildingId().equals(building) && !employment.dismissalPending(e.employeeId())).toList();
+        }
+    }
+
+    @Override
+    public boolean qualified(UUID employee, String occupation) {
+        return qualification.test(employee, occupation);
+    }
+
+    @Override
+    public boolean reconcile(UUID building, Map<String, Integer> demand) {
+        return mutate(next -> {
+            if (require(building).getProductionDepartment().hasActiveBatch())
+                throw new IllegalStateException("Cannot reconcile protected participation");
+            // Reservation order is acceptance order; cancel excess reservations before employee reconciliation.
+            Map<String, Integer> retained = new HashMap<>();
+            for (var reservation : next.reservations()) {
+                if (!reservation.buildingId().equals(building)) continue;
+                int free = Math.max(0, demand.getOrDefault(reservation.occupationId(), 0) - next.count(building, reservation.occupationId()));
+                int count = retained.merge(reservation.occupationId(), 1, Integer::sum);
+                if (count > free) next.cancelReservation(reservation.id());
+            }
+            for (UUID employee : next.pendingDismissals()) {
+                if (next.getByEmployee(employee).buildingId().equals(building)) next.remove(employee);
+            }
+            // Company identity and NPC consent are not implemented. Never silently transfer or auto-fire.
+            return next.getStaffingCounts(building).entrySet().stream()
+                    .allMatch(e -> e.getValue() <= demand.getOrDefault(e.getKey(), 0));
+        });
+    }
+
+    public EmploymentRecord getEmployment(UUID employee) {
+        synchronized (lock) {
+            return employment.getByEmployee(employee);
+        }
+    }
+
+    public int countWorkers(UUID building, String occupation) {
+        synchronized (lock) {
+            return employment.count(building, occupation);
+        }
     }
 }

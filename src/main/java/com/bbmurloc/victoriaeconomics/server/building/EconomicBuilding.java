@@ -30,9 +30,9 @@ public final class EconomicBuilding {
 
     /**
      * 生产部门。
-     *
-     * 生产方式、设备、当前生产批次等生产领域状态
-     * 均由该部门负责。
+     * <p>
+     * 生产方式和批次执行由该部门负责。
+     * 设备实际数量、材料数量和锁定属于 Inventory & Storage。
      */
     private final ProductionDepartment productionDepartment;
 
@@ -59,7 +59,7 @@ public final class EconomicBuilding {
                 new HumanResourcesDepartment();
 
         this.productionDepartment =
-                new ProductionDepartment();
+                new ProductionDepartment(id);
     }
 
     public UUID getId() {

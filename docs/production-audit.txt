@@ -1,0 +1,242 @@
+Victoria Economics 生产重构交付记录
+日期：2026-10-09
+
+1. 本地及远程基线
+
+工作区：C:/Users/A103-2/IdeaProjects/victoria-economics
+起始分支：main；工作区干净；没有覆盖已有未提交代码。
+origin：https://github.com/rudin233/victoria-economics.git
+起始 HEAD 和完成前再次查询的远程 main：
+f94642b04b34685ffe6d72700d22e2843afbfda7
+标题：Refactor production equipment and add batch-boundary reconfiguration
+日期：2026-09-15 14:50:04 +0800。
+没有更晚的本地实现，也没有已有 ProductionMethodSelections、商品库存、工资或公司上下文。
+只访问了用户指定的 NSUK fork：https://github.com/rudin233/New-Simukraft-1.21.1；
+本次实现依据 VE 业务规则，没有引入 NSUK 游戏机制。
+初次 Git 远程查询因本机 127.0.0.1:7890 代理未启动而失败；
+随后仅对该条 Git 命令关闭代理，实时查询成功，没有修改全局 Git 配置。
+改动留在本地工作区；未 push，未创建、提交或合并 PR，未修改现有世界数据库。
+
+2. 阶段结果和实现文件
+
+下列 Java 路径均相对于 src/main/java/com/bbmurloc/victoriaeconomics/。
+
+Phase 1：生产领域核心已实现。
+- server/production/method/ProductionMethodSelections.java：不可变完整 PM 目标。
+- server/production/method/ProductionMethodConfiguration.java：有效配置、唯一 Pending、
+  完整目标替换、取消、组合校验和生效。
+- server/production/method/ProductionMethodRules.java：运行期固定的定义快照；
+  建筑/分组归属、完整选择、later tier <= base tier、最终配方合法性。
+- server/production/calculation/ProductionRecipeResolver.java：复用上述规则，消除分散校验。
+- server/building/department/production/ProductionDepartment.java：依据未结束批次/边界
+  延迟 PM，并保护领域入口；不再暴露直接修改有效选择的 setter。
+- server/workforce/staffing/WorkforcePlanningService.java、WorkforcePlan.java：
+  正式任职及资格筛选、设备上限、整数 10% 门槛、精确瓶颈比例和最少整数选人。
+- server/production/ProductionExecution.java：单栋执行聚合，唯一未结束批次，
+  暂停/恢复/比例终止、不可伪造的失败回滚检查点、可恢复边界状态。
+- server/production/batch/ProductionBatch.java、ProductionBatchConfiguration.java：
+  只读实体快照、固定人员/设备/配方、整数进度累计，无任意进度或状态 setter。
+
+Phase 2：最小真实库存与设备支撑已实现。
+- server/inventory/GoodsInventory.java：单地点真实数量、排他预留、可用数量、
+  普通入库/出库、整批结算、比例结算、剩余释放、幂等回执及超容保护。
+- server/inventory/ProductionInventoryPort.java：生产依赖的库存契约。
+- server/storage/sqlite/SqliteInventoryStore.java：真实 SQLite 地点状态；
+  每次领域变更以一条原子 UPDATE 保存，结算各步骤不会留下半次扣料/入库。
+- server/inventory/equipment/ProductionEquipmentHolding.java：
+  从原 productionequipment 包迁移并重构的设备权威；installed + uninstalled <= capacity；
+  total 派生；批次保护；延期安装的全量排他锁。
+- server/inventory/equipment/EquipmentConfigurationRequest.java：
+  统一受理顺序、待执行/已执行/部分执行/已取消、执行数量结果。
+- server/inventory/equipment/ProductionEquipmentRegistry.java：
+  设备聚合查询索引，复用旧索引职责，没有第二份设备权威。
+- server/productionequipment/ProductionEquipmentService.java：
+  跨聚合应用协调；延期安装/卸载；取消；保留未安装设备移除、原子地点调拨、
+  新增后自动安装能力；已锁设备不能移除或调拨。
+  原通用 OperationQueue 和 Operation/Submission 已移除。
+- server/storage/sqlite/SqliteEquipmentRepository.java：
+  数量、设备批次保护和请求结果持久化；跨两地点调拨使用单次数据库事务。
+
+Phase 3：时钟和生产协调已实现；正式服是否可开工受真实外部事实约束。
+- server/production/EconomicClock.java：只计实际逻辑 tick。
+- server/production/ProductionService.java：重新校验权威条件 -> 整批材料预留
+  -> 设备保护 -> 最终校验 -> 创建并持久化 Batch -> 自动推进 -> 原子库存结算
+  -> 结束批次 -> PM -> 设备 -> 人事 -> 下一 tick 评估下一批。
+  开工失败、释放失败、提交回执丢失以及每个边界保存失败都有重试路径。
+  库存地点固定为该建筑 ID，不会读取别栋建筑的材料作为本批原料。
+- server/event/ServerLifecycleEvents.java：ServerTickEvent.Post 接入，无区块或 GUI 依赖。
+
+Phase 4：用工协作和工资限制契约已实现；真实工资/公司人员安置尚阻塞。
+- server/workforce/employment/EmploymentService.java、EmploymentRegistry.java、
+  JobReservation.java：岗位容量来自有效 PM；任职与岗位 Reservation 接纳、
+  Reservation 取消、参产员工的解雇请求延期、边界人员检查。
+  设备不限制雇佣数量，也不会自动解雇未选中的员工。
+- server/production/port/WorkforcePort.java：正式任职、资格、人事再配置契约。
+- server/production/port/BuildingPayrollPort.java：
+  CURRENT 允许开工/恢复；RECOVERY 暂停；ARREARS 视为补救失败并比例终止；
+  UNAVAILABLE 或缺失事实阻止开工并暂停已有批次。原料与快照不变。
+  Production 不支付工资、不复制债务账本，也不声称实际付款已经发生。
+- server/ServerEconomyContext.java：允许注入真实工资和资格端口；
+  默认使用 UNAVAILABLE 和无法证明资格的事实，不能通过调试命令伪造已付款。
+
+Phase 5：持久化和 Minecraft 编译接入已实现；真实 Minecraft 运行验收尚未执行。
+- server/storage/sqlite/EconomySchema.java：追加式、可重复迁移，保留旧表、旧行及
+  current_equipment 列，没有 DROP/TRUNCATE/世界数据重置。
+- server/storage/sqlite/SqliteBuildingRepository.java、ProductionStateCodec.java：
+  建筑、有效/Pending PM、当前/最近批次、所有批次历史和边界检查点；
+  经领域构造器验证重新加载。旧设备列中的非零数量在启动时保留迁入设备持有。
+- server/storage/sqlite/SqliteProductionJournal.java、
+  server/production/port/ProductionJournal.java：
+  开工意图先持久化；根据真实已提交 Batch 决定补偿或恢复；
+  释放失败时保留可重试记录，不能误释放已提交 Batch 的材料。
+- server/storage/sqlite/SqliteEmploymentRepository.java：
+  任职、岗位 Reservation、延期解雇请求恢复。
+- server/storage/EconomyDatabase.java、server/ServerEconomyContext.java、
+  server/ServerEconomyRuntime.java：数据库生命周期、重新加载、启动补偿。
+- server/command/ProductionCommands.java：服务端状态、开工、停止、重试、自动生产、
+  PM 与设备管理。修改和调试资产命令要求权限等级 4；状态查询等级 2。
+- common/block/BuildingAnchorBlock.java、common/blockentity/BuildingAnchorBlockEntity.java：
+  保留锚点 UUID 保存/绑定能力；普通右键只查询，不创建测试建筑、不修改资产。
+
+3. 业务规则及必须测试的对应
+
+测试目录：src/test/java/com/bbmurloc/victoriaeconomics/server/production/
+ProductionDomainTest：11 项。
+InventoryAndEquipmentTest：6 项。
+ProductionIntegrationTest：18 项。
+RecoveryAndControlsTest：11 项。
+TestEconomy：真实临时文件 SQLite 测试装配，仅工资事实和 NPC 资格采用明确替身；
+原料真实入库、锁定、扣减及产品入库，不存在“总是有原料”的实现。
+
+要求 01 PM 合法组合/基础降级拒绝：
+  ProductionMethodRules；ProductionDomainTest.loweringBaseTierIsRejectedAgainstWholeCombination。
+要求 02 活动期间 PM 固定/真正结束才生效：
+  ProductionDepartment、ProductionExecution；pmIsDeferredThroughPauseAndSettlementThenAppliedBeforeEquipment。
+要求 03 Pending 替换/取消：
+  ProductionMethodConfiguration；pendingTargetCanBeReplacedCompletelyAndCancelled，
+  pendingReplacementAndCancellationPersistWithoutChangingRunningBatch。
+要求 04 10% 和整数边界：
+  WorkforcePlanningService；tenPercentThresholdUsesIntegerBoundaries。
+要求 05 瓶颈最少选人：
+  WorkforcePlanningService；choosesBottleneckSupportingMinimumWithCeiling。
+要求 06 设备不限制雇佣、只限制参产：
+  EmploymentService、WorkforcePlanningService；hiringIsLimitedByPmPositionsAndReservationsRatherThanEquipment，
+  equipmentCapsParticipationWithoutAnExtraSpeedMultiplier。
+要求 07 原料不足：
+  GoodsInventory.reserve；insufficientMaterialDoesNotConsumeOrLeaveLocks。
+要求 08 多材料部分失败/释放补偿：
+  库存本体原子预留 + 开工意图协调；
+  partialMultiMaterialPortFailureIsCompensatedAndRetryCanStart，
+  failedReleaseIsDurableAndRecoveredAfterRestart。
+要求 09 最终创建失败没有无主锁：
+  ProductionService、SqliteProductionJournal；
+  failedFinalCommitReleasesMaterialsAndEquipmentProtection，
+  lostStartCommitAcknowledgementRetainsTheCommittedBatchAndReservation。
+要求 10 不并行开始第二批：
+  ProductionExecution；exactTickProgressAndSettlementOccupyTheBuilding，
+  concurrentStartsAreSerializedAndCannotCreateTwoBatchesOrOrphanLocks。
+要求 11 正常结算恰好一次：
+  GoodsInventory.settle、SQLite 原子地点状态；
+  normalCompletionConsumesAndDepositsExactlyOnceAndEvaluatesNextBatch。
+要求 12 比例终止：
+  ProductionExecution.terminate、GoodsInventory.settle；
+  normalAndProportionalSettlementsAreExactlyOnce，
+  recoveryFailureTerminatesProportionallyAndReleasesParticipants。
+要求 13 工资暂停/恢复/终止：
+  BuildingPayrollPort、ProductionService；
+  recoveryPausesThenResumesOriginalCommitmentWithoutRelockingOrReselecting，
+  recoveryFailureTerminatesProportionallyAndReleasesParticipants，
+  unavailablePayrollBlocksNewBatchAndPausesRestoredProduction，
+  missingPayrollFactCannotResumeProtectedProduction。
+  上述验证的是端口联动，不是实际工资支付或债务补救。
+要求 14 PM -> 设备 -> 人事顺序：
+  ProductionExecution.Boundary、ProductionService；
+  pendingPmSurvivesCheckpointFailureAndEquipmentWaitsForIt，
+  equipmentBoundaryReplayCannotExecuteAnAlreadyExecutedRequestTwice，
+  pmArrivingDuringBlockedPersonnelBoundaryIsAppliedBeforeNextStart。
+要求 15 重启恢复/不重复结算：
+  SQLite repositories + ProductionStateCodec；
+  restartAfterInventorySettledBeforeCheckpointDoesNotDuplicateProducts，
+  restartPreservesProgressMethodsEquipmentRequestsAndMaterialLocks。
+  测试关闭并重新打开真实 SQLite 及重建全部相关领域/应用对象；
+  没有启动 MinecraftServer 进行真实服务器重启测试。
+要求 16 未加载区块仍可推进：
+  EconomicClock、ProductionService 不接收 Level/Chunk/BlockEntity，也不读取区块；
+  clockHasNoMinecraftOrChunkDependency 及全部无 Minecraft 运行时的 SQL 闭环测试。
+  NeoForge tick 适配器已编译；真实 Minecraft 卸载区块场景尚未做 GameTest。
+要求 17 生产首次超容特殊入库：
+  GoodsInventory.settle/deposit/reserve；
+  committedProductionMayFirstOverflowButNewIntakeAndStartsAreBlocked，
+  overfullOutputBlocksNextBatchAndOrdinaryDepositButAllowsWithdrawal。
+要求 18 同栋并发控制：
+  生产、PM、设备、任职、库存共用经济写锁；
+  concurrentStartsAreSerializedAndCannotCreateTwoBatchesOrOrphanLocks，
+  mixedConcurrentControlRequestsNeverLoseTheBatchOrDuplicateItsSettlement。
+  含启动、终止、PM、设备和重试，不仅是成功路径。
+
+其他已验证：资格/正式职业/地点筛选、设备请求取消/排他/部分执行、
+设备调拨数据库回滚、无主开工意图恢复、旧 schema 数据保留、超容后合法出库。
+最终提交会重新读取 PM、配方、设备、任职/资格、工资状态、库存锁和活动批次；
+就绪快照不作为长期授权。
+满速一批 1200 tick；速度只取人员瓶颈，没有再次乘设备系数。
+暂停不累计进度，原 Batch/人员/设备/原料锁保留；
+没有墙上时钟补算，没有客户端推进接口，也没有管理员直接写进度接口。
+
+4. 实际执行的验证
+
+基线 .\gradlew.bat compileJava --console=plain：成功。
+阶段 .\gradlew.bat test --tests '*ProductionDomainTest' --tests '*InventoryAndEquipmentTest' --console=plain：
+  17 项通过。首轮修正了一处测试误用内部进度单位的断言。
+阶段 .\gradlew.bat test --console=plain：
+  35 项通过。初次 SQLite 测试缺少纯 JVM Gson 运行时，增加与 Minecraft
+  一致的 Gson 2.10.1 testRuntimeOnly 后重新执行成功。
+阶段 .\gradlew.bat test --tests '*RecoveryAndControlsTest' --console=plain：10 项通过。
+最后 .\gradlew.bat build --console=plain：
+  BUILD SUCCESSFUL；46 项，0 failures、0 errors、0 skipped。
+  最后一轮完整构建 1m 14s；包括 compileJava、compileTestJava、test、check、jar、assemble。
+git diff --check：通过。
+Java：21.0.12；Gradle：9.2.1；NeoForge：21.1.248；Minecraft：1.21.1。
+构建仍存在项目已有的 Gradle 10 弃用提示，未升级构建插件。
+测试报告：build/reports/tests/test/index.html
+产物：build/libs/victoria_economics-0.0.1-1.21.1.jar
+没有实际启动 Minecraft 服务器/客户端；本次不是 GUI 或游戏内端到端验收。
+
+5. 未完成的真实跨上下文依赖
+
+- BuildingPayroll / Finance 尚无真实工资债务、实际发薪、比例分配、付款幂等、
+  待遇累计及补救截止事实。默认 UNAVAILABLE，阻止非法开工。
+- NPC 资格和真实有效任职来源尚未接入实体/NPC 经济身份上下文；
+  默认不能证明资格，禁止创建虚假的合格员工。
+- Building 缺少 Company 身份；同公司调任、NPC 同意及完整解雇/待遇结算上下文
+  尚缺。PM 降低岗位容量时先取消多余岗位 Reservation；仍超员则阻塞边界，
+  不会凭空调任或自动解雇，下一批不能开始。
+- 普通市场采购/销售和商品物流路由未实现，不属于本次最小生产闭环。
+  其未来出库必须使用 Inventory 可用量约束，不能直接修改持有余额或调用预留材料。
+- 建筑删除现在拒绝执行，等待真实库存、设备、任职和债务清算流程，
+  防止保留资产时删除唯一建筑身份。
+- 真实 Minecraft 生命周期、卸载区块和命令交互仍需游戏内验收；GUI 未实现。
+
+6. 需要策划确认的具体场景
+
+- 现有商品配方用 double，没有已确认的固定小数位/按件取整规则。
+  本次沿用连续 double，不添加 floor/ceil/按件损耗规则。
+  提前完成 25% 的 30 单位木材/工具，结算为 7.5；
+  20 单位在 1/3 进度时存在 double 表示的循环小数近似。
+  连续数量是否作为正式规则、是否需要有界小数及其结算算法仍待确认。
+- 商品库存暂以显式配置容量、所有商品数量之和计占用；未硬编码建筑默认商品容量。
+  后续是否按体积/重量及不同商品占用系数定义容量，需要策划给出定义。
+  设备容量完全独立，不与商品库存共用。
+- 默认 pig_iron_tools 的 workerChanges 本来为空，切换后配方不需要员工；
+  本次保留现有定义，没有猜测其应当继承 crude_tools 的岗位需求。
+  需确认它是无员工配方还是数据缺漏。
+
+7. 当前生产闭环结论
+
+领域和真实 SQLite Inventory 支撑已具备并实际验证：
+整批锁料 -> 创建批次 -> 1200 逻辑 tick/人员瓶颈推进 -> 恰好一次扣料
+-> 真实地点产品入库 -> 释放剩余承诺 -> 可恢复批次边界 -> 下一批评估。
+比例终止、暂停/恢复、设备请求和服务器数据库重载恢复也已验证。
+
+正式服务器尚不能宣布完整可用：默认工资/资格事实未接入，会明确拒绝开工；
+岗位缩减后缺失公司人员安置流程时，停在可恢复的人事边界。
+这不是用伪工资或无限原料得到的“生产系统完成”。

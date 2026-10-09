@@ -68,16 +68,8 @@ public record OccupationStaffingSnapshot(
         int equipmentLimitedMaximum,
 
         /**
-         * 当前实际可执行的招聘目标人数。
-         *
-         * 计算：
-         * min(targetWorkers, equipmentLimitedMaximum)
-         *
-         * 例如：
-         * HR 想要 80 人，
-         * 但设备最多只允许 50 人，
-         *
-         * hiringTargetWorkers = 50
+         * HR 的招聘目标人数，来自有效 PM 的满配岗位容量和目标比例。
+         * 设备只限制实际参产人数，不缩减已建立的任职或招聘目标。
          */
         int hiringTargetWorkers,
 
@@ -180,7 +172,7 @@ public record OccupationStaffingSnapshot(
 
     /**
      * 当前人数是否高于 HR 的实际招聘目标。
-     *
+     * <p>
      * 这里只返回数字；
      * 是否真的裁员由以后 HR policy 决定。
      */

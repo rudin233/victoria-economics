@@ -1,228 +1,134 @@
 package com.bbmurloc.victoriaeconomics.server;
 
-import com.bbmurloc.victoriaeconomics.common.definition.DefaultDefinitions;
-import com.bbmurloc.victoriaeconomics.common.definition.DefinitionValidator;
-import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeRegistry;
-import com.bbmurloc.victoriaeconomics.common.definition.good.GoodRegistry;
-import com.bbmurloc.victoriaeconomics.common.definition.industry.IndustryRegistry;
-import com.bbmurloc.victoriaeconomics.common.definition.occupation.OccupationRegistry;
-import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMethodGroupRegistry;
-import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMethodRegistry;
-import com.bbmurloc.victoriaeconomics.common.definition.productionequipment.ProductionEquipmentDefinitionRegistry;
-import com.bbmurloc.victoriaeconomics.server.building.BuildingRegistry;
-import com.bbmurloc.victoriaeconomics.server.building.BuildingRepository;
-import com.bbmurloc.victoriaeconomics.server.building.BuildingService;
-import com.bbmurloc.victoriaeconomics.server.productionequipment.ProductionEquipmentRegistry;
+import com.bbmurloc.victoriaeconomics.common.definition.*;
+import com.bbmurloc.victoriaeconomics.common.definition.building.*;
+import com.bbmurloc.victoriaeconomics.common.definition.good.*;
+import com.bbmurloc.victoriaeconomics.common.definition.industry.*;
+import com.bbmurloc.victoriaeconomics.common.definition.occupation.*;
+import com.bbmurloc.victoriaeconomics.common.definition.production.*;
+import com.bbmurloc.victoriaeconomics.common.definition.productionequipment.*;
+import com.bbmurloc.victoriaeconomics.server.building.*;
+import com.bbmurloc.victoriaeconomics.server.inventory.equipment.*;
+import com.bbmurloc.victoriaeconomics.server.production.*;
+import com.bbmurloc.victoriaeconomics.server.production.calculation.*;
+import com.bbmurloc.victoriaeconomics.server.production.port.*;
 import com.bbmurloc.victoriaeconomics.server.productionequipment.ProductionEquipmentService;
-import com.bbmurloc.victoriaeconomics.server.productionequipment.operation.ProductionEquipmentOperationQueue;
-import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentRegistry;
-import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentService;
-import com.bbmurloc.victoriaeconomics.server.production.calculation.ProductionRecipeResolver;
-import com.bbmurloc.victoriaeconomics.server.production.ProductionService;
+import com.bbmurloc.victoriaeconomics.server.workforce.employment.*;
 import com.bbmurloc.victoriaeconomics.server.workforce.staffing.StaffingCalculator;
-import com.bbmurloc.victoriaeconomics.server.storage.EconomyDatabase;
-import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteBuildingRepository;
+import com.bbmurloc.victoriaeconomics.server.storage.*;
+import com.bbmurloc.victoriaeconomics.server.storage.sqlite.*;
 import net.minecraft.server.MinecraftServer;
 
-//正在运行的这个经济世界
-public final class ServerEconomyContext implements AutoCloseable{
+import java.sql.*;
+import java.util.UUID;
 
+public final class ServerEconomyContext implements AutoCloseable {
+    private final Object economyLock = new Object();
     private final EconomyDatabase database;
-    private final GoodRegistry goodRegistry;
-    private final IndustryRegistry industryRegistry;
-    private final BuildingRegistry buildingRegistry;
-    private final BuildingRepository buildingRepository;
+    private final GoodRegistry goods = new GoodRegistry();
+    private final IndustryRegistry industries = new IndustryRegistry();
+    private final BuildingTypeRegistry types = new BuildingTypeRegistry();
+    private final ProductionMethodRegistry methods = new ProductionMethodRegistry();
+    private final ProductionMethodGroupRegistry groups = new ProductionMethodGroupRegistry();
+    private final OccupationRegistry occupations = new OccupationRegistry();
+    private final ProductionEquipmentDefinitionRegistry equipmentDefinitions = new ProductionEquipmentDefinitionRegistry();
+    private final BuildingRegistry buildings = new BuildingRegistry();
+    private final EmploymentRegistry employment = new EmploymentRegistry();
+    private final ProductionEquipmentRegistry equipment = new ProductionEquipmentRegistry();
     private final BuildingService buildingService;
-    private final ProductionMethodRegistry productionMethodRegistry;
-    private final ProductionMethodGroupRegistry productionMethodGroupRegistry;
-    private final ProductionRecipeResolver productionRecipeResolver;
-    private final OccupationRegistry occupationRegistry;
-    private final EmploymentRegistry employmentRegistry;
-    private final StaffingCalculator staffingCalculator;
-    private final ProductionService productionService;
+    private final ProductionRecipeResolver recipes;
+    private final ProductionEquipmentService equipmentService;
     private final EmploymentService employmentService;
-    private final BuildingTypeRegistry buildingTypeRegistry;
-    private final ProductionEquipmentRegistry productionEquipmentRegistry;
-    private final ProductionEquipmentService productionEquipmentService;
-    private final ProductionEquipmentOperationQueue productionEquipmentOperationQueue;
+    private final StaffingCalculator staffing;
+    private final ProductionService production;
+    private final SqliteInventoryStore inventory;
+    private final EconomicClock clock;
 
-    private final ProductionEquipmentDefinitionRegistry
-            productionEquipmentDefinitionRegistry;
-
-
-    public ServerEconomyContext(
-            MinecraftServer server
-    ) {
-        this.database =
-                EconomyDatabase.open(server);
-
-        this.industryRegistry =
-                new IndustryRegistry();
-
-        this.goodRegistry =
-                new GoodRegistry();
-
-        this.buildingTypeRegistry =
-                new BuildingTypeRegistry();
-
-        this.productionMethodRegistry =
-                new ProductionMethodRegistry();
-
-        this.productionMethodGroupRegistry =
-                new ProductionMethodGroupRegistry();
-
-        this.occupationRegistry =
-                new OccupationRegistry();
-
-
-        this.employmentRegistry =
-                new EmploymentRegistry();
-
-        this.productionEquipmentDefinitionRegistry =
-                new ProductionEquipmentDefinitionRegistry();
-
-        this.productionEquipmentRegistry =
-                new ProductionEquipmentRegistry();
-
-        DefaultDefinitions.registerIndustries(
-                industryRegistry
-        );
-
-        DefaultDefinitions.registerGoods(
-                goodRegistry
-        );
-
-        DefaultDefinitions.registerOccupations(
-                occupationRegistry
-        );
-
-        DefaultDefinitions.registerProductionEquipmentDefinitions(
-                productionEquipmentDefinitionRegistry
-        );
-
-
-        DefaultDefinitions.registerProductionMethods(
-                productionMethodRegistry
-        );
-
-        DefaultDefinitions.registerProductionMethodGroups(
-                productionMethodGroupRegistry
-        );
-
-        DefaultDefinitions.registerBuildingTypes(
-                buildingTypeRegistry
-        );
-
-        DefinitionValidator.validateAll(
-                industryRegistry,
-                goodRegistry,
-                occupationRegistry,
-                productionEquipmentDefinitionRegistry,
-                buildingTypeRegistry,
-                productionMethodGroupRegistry,
-                productionMethodRegistry
-        );
-
-        this.buildingRegistry =
-                new BuildingRegistry();
-
-        this.productionEquipmentOperationQueue =
-                new ProductionEquipmentOperationQueue();
-
-        this.productionEquipmentService =
-                new ProductionEquipmentService(
-                        buildingRegistry,
-                        buildingTypeRegistry,
-                        productionEquipmentRegistry,
-                        productionEquipmentOperationQueue
-                );
-
-        this.buildingRepository =
-                new SqliteBuildingRepository(
-                        database.getConnection()
-                );
-
-        this.buildingRepository
-                .loadAll()
-                .forEach(buildingRegistry::add);
-
-        this.buildingService =
-                new BuildingService(
-                        buildingRegistry,
-                        buildingRepository,
-                        buildingTypeRegistry,
-                        productionMethodGroupRegistry,
-                        productionMethodRegistry
-                );
-        this.productionRecipeResolver =
-                new ProductionRecipeResolver(
-                        buildingTypeRegistry,
-                        productionMethodGroupRegistry,
-                        productionMethodRegistry
-                );
-
-        this.staffingCalculator =
-                new StaffingCalculator(
-                        employmentRegistry,
-                        buildingTypeRegistry,
-                        productionRecipeResolver,
-                        productionEquipmentRegistry
-                );
-
-        this.productionService =
-                new ProductionService(
-                        buildingRegistry,
-                        productionRecipeResolver,
-                        staffingCalculator,
-                        employmentRegistry,
-                        productionEquipmentService
-                );
-
-        this.employmentService =
-                new EmploymentService(
-                        employmentRegistry,
-                        buildingRegistry,
-                        buildingTypeRegistry,
-                        occupationRegistry,
-                        productionRecipeResolver,
-                        productionEquipmentRegistry
-                );
-
-
+    public ServerEconomyContext(MinecraftServer server) {
+        this(server, BuildingPayrollPort.unavailable(), (npc, occupation) -> false);
     }
 
-    public BuildingTypeRegistry getBuildingTypeRegistry() {
-        return buildingTypeRegistry;
+    public ServerEconomyContext(MinecraftServer server, BuildingPayrollPort payroll,
+                                java.util.function.BiPredicate<UUID, String> qualifications) {
+        DefaultDefinitions.registerIndustries(industries);
+        DefaultDefinitions.registerGoods(goods);
+        DefaultDefinitions.registerOccupations(occupations);
+        DefaultDefinitions.registerProductionEquipmentDefinitions(equipmentDefinitions);
+        DefaultDefinitions.registerProductionMethods(methods);
+        DefaultDefinitions.registerProductionMethodGroups(groups);
+        DefaultDefinitions.registerBuildingTypes(types);
+        DefinitionValidator.validateAll(industries, goods, occupations, equipmentDefinitions, types, groups, methods);
+        recipes = new ProductionRecipeResolver(types, groups, methods);
+        database = EconomyDatabase.open(server);
+        try {
+            var connection = database.getConnection();
+            var repository = new SqliteBuildingRepository(connection, recipes, economyLock);
+            repository.loadAll().forEach(buildings::add);
+            var equipmentRepository = new SqliteEquipmentRepository(connection);
+            equipmentRepository.loadAll().forEach(equipment::register);
+            migrateLegacyEquipment(connection, equipmentRepository);
+            equipmentService = new ProductionEquipmentService(buildings, types, equipment, equipmentRepository::saveAll, economyLock);
+            var employmentRepository = new SqliteEmploymentRepository(connection);
+            employment.replace(employmentRepository.load());
+            // No NPC qualification registry or payroll/finance authority exists yet: production must fail closed.
+            employmentService = new EmploymentService(employment, buildings, occupations, qualifications, employmentRepository::save, economyLock);
+            inventory = new SqliteInventoryStore(connection, economyLock);
+            buildingService = new BuildingService(buildings, repository, recipes, economyLock);
+            staffing = new StaffingCalculator(employment, types, recipes, equipment);
+            production = new ProductionService(buildings, repository, equipmentService, inventory, payroll,
+                    employmentService, new SqliteProductionJournal(connection), economyLock);
+            production.recoverStarts();
+            clock = new EconomicClock(production::onEconomicTick);
+        } catch (RuntimeException failure) {
+            database.close();
+            throw failure;
+        }
+    }
+
+    private void migrateLegacyEquipment(Connection connection, SqliteEquipmentRepository repository) {
+        try (var statement = connection.prepareStatement("SELECT id, current_equipment FROM economic_buildings WHERE current_equipment > 0"); var rows = statement.executeQuery()) {
+            while (rows.next()) {
+                UUID id = UUID.fromString(rows.getString(1));
+                if (equipment.get(id) != null) continue;
+                var type = types.get(buildings.get(id).getBuildingTypeId());
+                var holding = new ProductionEquipmentHolding(new ProductionEquipmentHolding.State(id, type.productionEquipmentTypeId(),
+                        type.maxProductionEquipment(), rows.getInt(2), 0, null, java.util.List.of()));
+                repository.save(holding);
+                equipment.register(holding);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to preserve legacy equipment data", e);
+        }
+    }
+
+    public void onServerTick() {
+        synchronized (economyLock) {
+            clock.onServerTick();
+        }
     }
 
     public BuildingRegistry getBuildingRegistry() {
-        return buildingRegistry;
+        return buildings;
     }
 
     public BuildingService getBuildingService() {
         return buildingService;
     }
 
-    @Override
-    public void close() {
-        database.close();
-    }
-
-
     public GoodRegistry getGoodRegistry() {
-        return goodRegistry;
+        return goods;
     }
 
     public ProductionRecipeResolver getProductionRecipeResolver() {
-        return productionRecipeResolver;
+        return recipes;
     }
 
     public OccupationRegistry getOccupationRegistry() {
-        return occupationRegistry;
+        return occupations;
     }
 
     public EmploymentRegistry getEmploymentRegistry() {
-        return employmentRegistry;
+        return employment;
     }
 
     public EmploymentService getEmploymentService() {
@@ -230,31 +136,33 @@ public final class ServerEconomyContext implements AutoCloseable{
     }
 
     public StaffingCalculator getStaffingCalculator() {
-        return staffingCalculator;
+        return staffing;
     }
 
     public ProductionService getProductionService() {
-        return productionService;
+        return production;
     }
 
-    public ProductionEquipmentDefinitionRegistry
-    getProductionEquipmentDefinitionRegistry() {
-
-        return productionEquipmentDefinitionRegistry;
+    public ProductionEquipmentDefinitionRegistry getProductionEquipmentDefinitionRegistry() {
+        return equipmentDefinitions;
     }
 
-    public ProductionEquipmentRegistry
-    getProductionEquipmentRegistry() {
-        return productionEquipmentRegistry;
+    public ProductionEquipmentRegistry getProductionEquipmentRegistry() {
+        return equipment;
     }
 
-    public ProductionEquipmentService
-    getProductionEquipmentService() {
-        return productionEquipmentService;
+    public ProductionEquipmentService getProductionEquipmentService() {
+        return equipmentService;
     }
 
-    public ProductionEquipmentOperationQueue
-    getProductionEquipmentOperationQueue() {
-        return productionEquipmentOperationQueue;
+    public SqliteInventoryStore getInventoryStore() {
+        return inventory;
+    }
+
+    @Override
+    public void close() {
+        synchronized (economyLock) {
+            database.close();
+        }
     }
 }

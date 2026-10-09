@@ -17,14 +17,19 @@ public final class ServerEconomyRuntime {
     /**
      * 在逻辑服务器启动时创建经济运行上下文。
      */
-    public static void start(MinecraftServer server) {
+    public static synchronized void start(MinecraftServer server) {
         Objects.requireNonNull(server, "server");
+
+        if (CONTEXTS.containsKey(server)) {
+            throw new IllegalStateException("Economy context already exists for this server");
+        }
 
         ServerEconomyContext context = new ServerEconomyContext(server);
 
         ServerEconomyContext existing = CONTEXTS.putIfAbsent(server, context);
 
         if (existing != null) {
+            context.close();
             throw new IllegalStateException(
                     "Economy context already exists for this server"
             );
