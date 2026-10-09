@@ -2,8 +2,7 @@ package com.bbmurloc.victoriaeconomics.server.building;
 
 import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.production.*;
-import com.bbmurloc.victoriaeconomics.server.production.calculation.ProductionRecipeResolver;
-
+import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionRecipeResolver;
 import java.util.*;
 
 /**

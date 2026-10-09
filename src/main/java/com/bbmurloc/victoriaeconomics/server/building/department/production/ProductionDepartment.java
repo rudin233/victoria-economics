@@ -1,10 +1,11 @@
 package com.bbmurloc.victoriaeconomics.server.building.department.production;
 
-import com.bbmurloc.victoriaeconomics.server.production.ProductionExecution;
-import com.bbmurloc.victoriaeconomics.server.production.batch.ProductionBatch;
-import com.bbmurloc.victoriaeconomics.server.production.calculation.ResolvedProductionRecipe;
-import com.bbmurloc.victoriaeconomics.server.production.method.*;
-
+import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionExecution;
+import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionBatch;
+import com.bbmurloc.victoriaeconomics.server.production.domain.ResolvedProductionRecipe;
+import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionMethodSelections;
+import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionMethodRules;
+import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionMethodConfiguration;
 import java.util.*;
 
 public final class ProductionDepartment {

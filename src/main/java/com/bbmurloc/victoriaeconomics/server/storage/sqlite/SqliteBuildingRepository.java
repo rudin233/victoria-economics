@@ -1,9 +1,8 @@
 package com.bbmurloc.victoriaeconomics.server.storage.sqlite;
 
 import com.bbmurloc.victoriaeconomics.server.building.*;
-import com.bbmurloc.victoriaeconomics.server.production.batch.ProductionBatch;
-import com.bbmurloc.victoriaeconomics.server.production.calculation.ProductionRecipeResolver;
-
+import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionBatch;
+import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionRecipeResolver;
 import java.sql.*;
 import java.util.*;
 

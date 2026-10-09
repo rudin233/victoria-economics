@@ -1,9 +1,9 @@
 package com.bbmurloc.victoriaeconomics.server.storage.sqlite;
 
-import com.bbmurloc.victoriaeconomics.server.production.*;
-import com.bbmurloc.victoriaeconomics.server.production.batch.*;
+import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionExecution;
+import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionBatchConfiguration;
+import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionBatch;
 import com.google.gson.Gson;
-
 import java.util.UUID;
 
 /**
