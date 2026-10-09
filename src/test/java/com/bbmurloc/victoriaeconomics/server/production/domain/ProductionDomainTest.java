@@ -2,7 +2,6 @@ package com.bbmurloc.victoriaeconomics.server.production.domain;
 
 import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeDefinition;
 import com.bbmurloc.victoriaeconomics.common.definition.production.*;
-import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentRecord;
 import org.junit.jupiter.api.Test;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -51,10 +50,10 @@ class ProductionDomainTest {
         assertTrue(config.pending().isEmpty());
     }
 
-    private List<EmploymentRecord> workers(UUID building, String occupation, int count, int offset) {
-        List<EmploymentRecord> result = new ArrayList<>();
+    private List<EmploymentFact> workers(UUID building, String occupation, int count, int offset) {
+        List<EmploymentFact> result = new ArrayList<>();
         for (int i = 0; i < count; i++)
-            result.add(new EmploymentRecord(new UUID(0, offset + i + 1), building, occupation));
+            result.add(new EmploymentFact(new UUID(0, offset + i + 1), building, occupation));
         return result;
     }
 
@@ -99,6 +98,27 @@ class ProductionDomainTest {
         assertEquals(3, plan.employees().get("worker").size());
         assertFalse(plan.employees().get("worker").contains(new UUID(0, 1)));
         assertThrows(UnsupportedOperationException.class, () -> plan.employees().get("worker").clear());
+    }
+
+    @Test
+    void duplicateFactsDoNotInflateStaffingAndSelectionRemainsDeterministic() {
+        UUID building = UUID.randomUUID();
+        var employees = new ArrayList<>(workers(building, "worker", 3, 0));
+        employees.addAll(employees.subList(0, 3));
+        Collections.reverse(employees);
+        var plan = new WorkforcePlanningService().plan(building, Map.of("worker", 10), 100, 100,
+                employees, (id, role) -> true);
+        assertEquals(0.3, plan.speed());
+        assertEquals(List.of(new UUID(0, 1), new UUID(0, 2), new UUID(0, 3)), plan.employees().get("worker"));
+    }
+
+    @Test
+    void oneNpcCannotParticipateInTwoFormalOccupations() {
+        UUID building = UUID.randomUUID(), employee = UUID.randomUUID();
+        var facts = List.of(new EmploymentFact(employee, building, "worker"),
+                new EmploymentFact(employee, building, "engineer"));
+        assertThrows(IllegalArgumentException.class, () -> new WorkforcePlanningService().plan(building,
+                Map.of("worker", 10, "engineer", 10), 100, 100, facts, (id, role) -> true));
     }
 
     private ProductionBatchConfiguration configuration(int selected, int demand) {

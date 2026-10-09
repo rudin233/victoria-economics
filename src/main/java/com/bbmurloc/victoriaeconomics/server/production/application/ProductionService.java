@@ -5,7 +5,6 @@ import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionBatchCo
 import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionBatch;
 import com.bbmurloc.victoriaeconomics.server.production.port.*;
 import com.bbmurloc.victoriaeconomics.server.production.port.ProductionInventoryPort;
-import com.bbmurloc.victoriaeconomics.server.inventory.domain.GoodsInventory;
 import com.bbmurloc.victoriaeconomics.server.inventory.application.ProductionEquipmentService;
 import com.bbmurloc.victoriaeconomics.server.production.domain.WorkforcePlanningService;
 import java.util.*;
@@ -115,7 +114,7 @@ public final class ProductionService {
             throw new IllegalStateException("Previous batch or boundary unfinished");
         if (payroll.state(building.getId()) != BuildingPayrollPort.State.CURRENT)
             throw new IllegalStateException("Payroll is not CURRENT (or unavailable)");
-        var stock = new GoodsInventory(inventory.inspect(building.getId()));
+        var stock = inventory.storageStatus(building.getId());
         if (stock.overCapacity()) throw new IllegalStateException("Storage is over capacity");
         var holding = equipment.getHolding(building.getId());
         if (holding.hasPendingRequests()) throw new IllegalStateException("Equipment requests still pending");

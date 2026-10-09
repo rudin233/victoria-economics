@@ -2,6 +2,7 @@ package com.bbmurloc.victoriaeconomics.server.workforce.employment;
 
 import com.bbmurloc.victoriaeconomics.common.definition.occupation.OccupationRegistry;
 import com.bbmurloc.victoriaeconomics.server.building.*;
+import com.bbmurloc.victoriaeconomics.server.production.domain.EmploymentFact;
 import com.bbmurloc.victoriaeconomics.server.production.port.WorkforcePort;
 
 import java.util.*;
@@ -113,9 +114,12 @@ public final class EmploymentService implements WorkforcePort {
     }
 
     @Override
-    public Collection<EmploymentRecord> effectiveEmployment(UUID building) {
+    public Collection<EmploymentFact> effectiveEmployment(UUID building) {
         synchronized (lock) {
-            return employment.getAll().stream().filter(e -> e.buildingId().equals(building) && !employment.dismissalPending(e.employeeId())).toList();
+            return employment.getAll().stream()
+                    .filter(e -> e.buildingId().equals(building) && !employment.dismissalPending(e.employeeId()))
+                    .map(e -> new EmploymentFact(e.employeeId(), e.buildingId(), e.occupationId()))
+                    .toList();
         }
     }
 

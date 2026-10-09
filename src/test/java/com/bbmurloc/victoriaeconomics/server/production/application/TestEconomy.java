@@ -174,8 +174,8 @@ final class TestEconomy implements AutoCloseable {
         }
 
         @Override
-        public GoodsInventory.State inspect(UUID location) {
-            return delegate.inspect(location);
+        public StorageStatus storageStatus(UUID location) {
+            return delegate.storageStatus(location);
         }
 
         @Override
@@ -202,7 +202,7 @@ final class TestEconomy implements AutoCloseable {
         }
 
         @Override
-        public GoodsInventory.Settlement settle(UUID location, UUID batch, Map<String, Double> inputs, Map<String, Double> outputs, double progress) {
+        public SettlementReceipt settle(UUID location, UUID batch, Map<String, Double> inputs, Map<String, Double> outputs, double progress) {
             return delegate.settle(location, batch, inputs, outputs, progress);
         }
     }

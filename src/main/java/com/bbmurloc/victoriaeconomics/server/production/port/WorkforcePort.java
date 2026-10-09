@@ -1,6 +1,6 @@
 package com.bbmurloc.victoriaeconomics.server.production.port;
 
-import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentRecord;
+import com.bbmurloc.victoriaeconomics.server.production.domain.EmploymentFact;
 
 import java.util.*;
 
@@ -8,7 +8,12 @@ import java.util.*;
  * Effective formal employments and qualification facts belong to Employment, not production.
  */
 public interface WorkforcePort {
-    Collection<EmploymentRecord> effectiveEmployment(UUID buildingId);
+    /**
+     * All effective formal employments at this building, including unqualified employees.
+     * Position capacity counts these facts; only participation filters by qualification.
+     * Returned facts are query snapshots, not production-owned employment state.
+     */
+    Collection<EmploymentFact> effectiveEmployment(UUID buildingId);
 
     boolean qualified(UUID employeeId, String occupationId);
 

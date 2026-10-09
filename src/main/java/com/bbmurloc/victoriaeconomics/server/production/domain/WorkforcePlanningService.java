@@ -1,6 +1,5 @@
 package com.bbmurloc.victoriaeconomics.server.production.domain;
 
-import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentRecord;
 import java.util.*;
 import java.util.function.BiPredicate;
 
@@ -9,7 +8,7 @@ import java.util.function.BiPredicate;
  */
 public final class WorkforcePlanningService {
     public WorkforcePlan plan(UUID building, Map<String, Integer> demand, int installed, int capacity,
-                              Collection<EmploymentRecord> employment, BiPredicate<UUID, String> qualified) {
+                              Collection<EmploymentFact> employment, BiPredicate<UUID, String> qualified) {
         if (capacity <= 0 || installed < 0 || installed > capacity)
             throw new IllegalArgumentException("Invalid equipment capability");
         int numerator = 1;
@@ -22,7 +21,7 @@ public final class WorkforcePlanningService {
             List<UUID> eligible = employment.stream()
                     .filter(e -> e.buildingId().equals(building) && e.occupationId().equals(occupation))
                     .filter(e -> qualified.test(e.employeeId(), occupation))
-                    .map(EmploymentRecord::employeeId).distinct().sorted().toList();
+                    .map(EmploymentFact::employeeId).distinct().sorted().toList();
             int available = Math.min(eligible.size(), (int) ((long) installed * required / capacity));
             if ((long) available * 10 < required)
                 throw new IllegalStateException("Minimum 10% staffing not met: " + occupation);

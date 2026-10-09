@@ -48,6 +48,13 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
     }
 
     @Override
+    public StorageStatus storageStatus(UUID location) {
+        synchronized (lock) {
+            return new StorageStatus(load(location).overCapacity());
+        }
+    }
+
+    /** Inventory diagnostics; the production port exposes only storageStatus. */
     public GoodsInventory.State inspect(UUID location) {
         synchronized (lock) {
             return load(location).state();
@@ -78,8 +85,9 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
     }
 
     @Override
-    public GoodsInventory.Settlement settle(UUID location, UUID batch, Map<String, Double> inputs, Map<String, Double> outputs, double progress) {
-        return mutate(location, i -> i.settle(batch, inputs, outputs, progress));
+    public SettlementReceipt settle(UUID location, UUID batch, Map<String, Double> inputs, Map<String, Double> outputs, double progress) {
+        var settlement = mutate(location, i -> i.settle(batch, inputs, outputs, progress));
+        return new SettlementReceipt(settlement.batchId());
     }
 
     private GoodsInventory load(UUID location) {
