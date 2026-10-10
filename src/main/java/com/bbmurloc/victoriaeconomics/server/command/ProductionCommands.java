@@ -37,8 +37,8 @@ public final class ProductionCommands {
                                         .then(argument("enabled", BoolArgumentType.bool()).executes(ctx -> run(ctx, economy -> economy.getProductionService().setAutomatic(id(ctx), BoolArgumentType.getBool(ctx, "enabled"))))))
                                 .then(literal("pm").requires(source -> source.hasPermission(4))
                                         .then(argument("group", StringArgumentType.word()).then(argument("method", StringArgumentType.word())
-                                                .executes(ctx -> run(ctx, economy -> economy.getBuildingService().selectProductionMethod(id(ctx), StringArgumentType.getString(ctx, "group"), StringArgumentType.getString(ctx, "method")))))))
-                                .then(literal("cancel_pm").requires(source -> source.hasPermission(4)).executes(ctx -> run(ctx, economy -> economy.getBuildingService().cancelPendingProductionMethods(id(ctx)))))
+                                                .executes(ctx -> run(ctx, economy -> economy.getProductionService().selectProductionMethod(id(ctx), StringArgumentType.getString(ctx, "group"), StringArgumentType.getString(ctx, "method")))))))
+                                .then(literal("cancel_pm").requires(source -> source.hasPermission(4)).executes(ctx -> run(ctx, economy -> economy.getProductionService().cancelPendingProductionMethods(id(ctx)))))
                                 .then(literal("install").requires(source -> source.hasPermission(4)).then(argument("amount", IntegerArgumentType.integer(1))
                                         .executes(ctx -> run(ctx, economy -> reply(ctx, economy.getProductionEquipmentService().install(id(ctx), IntegerArgumentType.getInteger(ctx, "amount")).toString())))))
                                 .then(literal("uninstall").requires(source -> source.hasPermission(4)).then(argument("amount", IntegerArgumentType.integer(1))
@@ -108,11 +108,13 @@ public final class ProductionCommands {
     private static void status(CommandContext<CommandSourceStack> ctx, ServerEconomyContext economy) {
         var building = economy.getBuildingRegistry().get(id(ctx));
         if (building == null) throw new IllegalArgumentException("Unknown building");
-        var department = building.getProductionDepartment();
-        var execution = department.getExecution();
+        var configuration = economy.getProductionService().methods(id(ctx));
+        var execution = economy.getProductionService().execution(id(ctx));
         var batch = execution.batch() == null ? execution.lastBatch() : execution.batch();
-        reply(ctx, "Building " + id(ctx) + " " + building.getStatus() + "; PM=" + department.getSelectedProductionMethods()
-                + "; pending=" + department.getPendingProductionMethods() + "; boundary=" + execution.boundary()
+        reply(ctx, "Building " + id(ctx) + " " + building.getStatus() + "; PM=" + configuration.effective().methods()
+                + "; configRevision=" + configuration.configurationRevision() + "; effectiveRevision=" + configuration.effectiveRevision()
+                + "; executionRevision=" + execution.executionRevision() + "; reconciledEffectiveRevision=" + execution.methodsEffectiveRevision()
+                + "; pending=" + configuration.pending() + "; boundary=" + execution.boundary()
                 + "; batch=" + (batch == null ? "none" : batch.getId() + " " + batch.getStatus() + " " + batch.getProgress())
                 + "; blocked=" + economy.getProductionService().blockedReason(id(ctx)));
         reply(ctx, "Equipment " + economy.getProductionEquipmentService().getHolding(id(ctx)).state());

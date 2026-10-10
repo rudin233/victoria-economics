@@ -9,8 +9,13 @@ public record ProductionBatchConfiguration(
         Map<String, String> productionMethodSelections,
         ResolvedProductionRecipe resolvedRecipe,
         int installedEquipment, int equipmentCapacity,
-        WorkforcePlan workforcePlan) {
+        WorkforcePlan workforcePlan, long effectiveRevision) {
+    public ProductionBatchConfiguration(Map<String, String> selections, ResolvedProductionRecipe recipe,
+                                        int installed, int capacity, WorkforcePlan plan) {
+        this(selections, recipe, installed, capacity, plan, 0);
+    }
     public ProductionBatchConfiguration {
+        if (effectiveRevision < 0) throw new IllegalArgumentException("Negative effective revision");
         productionMethodSelections = Map.copyOf(productionMethodSelections);
         Objects.requireNonNull(resolvedRecipe);
         Objects.requireNonNull(workforcePlan);

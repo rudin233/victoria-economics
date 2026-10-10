@@ -12,11 +12,12 @@ import com.bbmurloc.victoriaeconomics.server.production.port.*;
 import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionRecipeResolver;
 import com.bbmurloc.victoriaeconomics.server.inventory.application.ProductionEquipmentService;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.EconomySchema;
+import com.bbmurloc.victoriaeconomics.server.storage.sqlite.CommitOutcomeUnknownException;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteEmploymentRepository;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteBuildingRepository;
 import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteEquipmentRepository;
 import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore;
-import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionJournal;
+import com.bbmurloc.victoriaeconomics.server.production.infrastructure.*;
 import com.bbmurloc.victoriaeconomics.server.workforce.employment.*;
 import java.nio.file.Path;
 import java.sql.*;
@@ -38,8 +39,11 @@ final class TestEconomy implements AutoCloseable {
     final ProductionEquipmentRegistry holdings = new ProductionEquipmentRegistry();
     final OccupationRegistry occupations = new OccupationRegistry();
     final AtomicReference<BuildingPayrollPort.State> payroll = new AtomicReference<>(BuildingPayrollPort.State.CURRENT);
-    final FaultRepository repository;
-    final SqliteProductionJournal journal;
+    final BuildingRepository buildingRepository;
+    final FaultExecutionRepository repository;
+    final FaultConfigurations configurations;
+    final RepositoryProductionFacts facts;
+    final FaultJournal journal;
     final FaultInventory inventory;
     final ProductionEquipmentService equipment;
     final EmploymentService employment;
@@ -64,19 +68,23 @@ final class TestEconomy implements AutoCloseable {
         groups.register(new ProductionMethodGroupDefinition("tooling_workshop_base", "tooling_workshop", List.of("crude_tools", "pig_iron_tools", "efficient_tools")));
         groups.register(new ProductionMethodGroupDefinition("tooling_workshop_automation", "tooling_workshop", List.of("hand_assembly")));
         var resolver = new ProductionRecipeResolver(types, groups, methods);
-        repository = new FaultRepository(new SqliteBuildingRepository(connection, resolver, lock));
-        repository.loadAll().forEach(buildings::add);
+        buildingRepository = new SqliteBuildingRepository(connection, lock);
+        configurations = new FaultConfigurations(new SqliteProductionMethodConfigurationRepository(connection, resolver, lock));
+        repository = new FaultExecutionRepository(new SqliteProductionExecutionRepository(connection, lock));
+        facts = new RepositoryProductionFacts(configurations, repository, lock);
+        buildingRepository.loadAll().forEach(buildings::add);
         var equipmentRepository = new SqliteEquipmentRepository(connection);
         equipmentRepository.loadAll().forEach(holdings::register);
-        equipment = new ProductionEquipmentService(buildings, types, holdings, equipmentRepository::saveAll, lock);
+        equipment = new ProductionEquipmentService(buildings, types, holdings, equipmentRepository::saveAll, facts, lock);
         var employmentRepository = new SqliteEmploymentRepository(connection);
         employees.replace(employmentRepository.load());
-        employment = new EmploymentService(employees, buildings, occupations, (npc, occupation) -> true, employmentRepository::save, lock);
+        employment = new EmploymentService(employees, buildings, occupations, (npc, occupation) -> true, employmentRepository::save, facts, lock);
         stock = new SqliteInventoryStore(connection, lock);
         inventory = new FaultInventory(stock);
-        journal = new SqliteProductionJournal(connection);
-        buildingService = new BuildingService(buildings, repository, resolver, lock);
-        production = new ProductionService(buildings, repository, equipment, inventory, (building) -> payroll.get(), employment, journal, lock);
+        journal = new FaultJournal(new SqliteProductionJournal(connection));
+        var initializer = new ProductionBuildingInitializer(connection, lock, buildingRepository, configurations, repository, resolver);
+        buildingService = new BuildingService(buildings, buildingRepository, types, initializer::initialize, lock);
+        production = new ProductionService(buildings, configurations, repository, equipment, inventory, (building) -> payroll.get(), employment, journal, lock);
         clock = new EconomicClock(production::onEconomicTick);
         if (create) {
             id = buildingService.createBuilding("tooling_workshop").getId();
@@ -89,6 +97,7 @@ final class TestEconomy implements AutoCloseable {
         } else {
             id = buildings.getAll().getFirst().getId();
             production.recoverStarts();
+            production.recoverBoundaries();
         }
     }
 
@@ -97,8 +106,10 @@ final class TestEconomy implements AutoCloseable {
     }
 
     ProductionExecution execution() {
-        return building().getProductionDepartment().getExecution();
+        return repository.load(id);
     }
+
+    com.bbmurloc.victoriaeconomics.server.production.domain.ProductionMethodConfiguration methods() { return configurations.load(id); }
 
     GoodsInventory.State stockState() {
         return stock.inspect(id);
@@ -117,55 +128,86 @@ final class TestEconomy implements AutoCloseable {
         connection.close();
     }
 
-    static final class FaultRepository implements BuildingRepository {
-        final BuildingRepository delegate;
-        boolean failNextSave;
-        boolean failCompletedSave;
-        boolean failMethodsSave;
-        boolean failEquipmentBoundarySave;
-        boolean loseStartAcknowledgement;
-
-        FaultRepository(BuildingRepository delegate) {
-            this.delegate = delegate;
+    static final class FaultExecutionRepository implements ProductionExecutionRepository {
+        final ProductionExecutionRepository delegate;
+        boolean failNextSave, failCompletedSave, failMethodsSave, failEquipmentBoundarySave;
+        boolean loseStartAcknowledgement, failLoad, failProgressSave, failReturnMethodsSave;
+        Runnable afterSave = () -> {};
+        FaultExecutionRepository(ProductionExecutionRepository delegate) { this.delegate = delegate; }
+        @Override public ProductionExecution load(UUID id) {
+            if (failLoad) throw new IllegalStateException("Injected unknown execution state");
+            return delegate.load(id);
         }
-
-        @Override
-        public void save(EconomicBuilding building) {
-            var batch = building.getProductionDepartment().getActiveBatch();
+        @Override public void create(ProductionExecution initial) { delegate.create(initial); }
+        @Override public void save(ProductionExecution execution, long expected) {
+            var batch = execution.batch();
             if (failNextSave || (failCompletedSave && batch != null && batch.isEnded())) {
-                failNextSave = false;
-                failCompletedSave = false;
-                throw new IllegalStateException("Injected checkpoint failure");
+                failNextSave = false; failCompletedSave = false;
+                throw new IllegalStateException("Injected execution checkpoint failure");
             }
-            if (failMethodsSave && building.getProductionDepartment().getExecution().boundary() == ProductionExecution.Boundary.EQUIPMENT) {
+            if (failProgressSave && batch != null && batch.isActive() && batch.getProgress() > 0) {
+                failProgressSave = false;
+                throw new IllegalStateException("Injected progress persistence failure");
+            }
+            if (failMethodsSave && execution.boundary() == ProductionExecution.Boundary.EQUIPMENT) {
                 failMethodsSave = false;
-                throw new IllegalStateException("Injected PM boundary failure");
+                throw new IllegalStateException("Injected METHODS checkpoint failure");
             }
-            if (failEquipmentBoundarySave && building.getProductionDepartment().getExecution().boundary() == ProductionExecution.Boundary.WORKFORCE) {
+            if (failEquipmentBoundarySave && execution.boundary() == ProductionExecution.Boundary.WORKFORCE) {
                 failEquipmentBoundarySave = false;
-                throw new IllegalStateException("Injected equipment boundary failure");
+                throw new IllegalStateException("Injected EQUIPMENT checkpoint failure");
             }
-            delegate.save(building);
+            if (failReturnMethodsSave && execution.boundary() == ProductionExecution.Boundary.METHODS) {
+                failReturnMethodsSave = false;
+                throw new IllegalStateException("Injected METHODS reentry failure");
+            }
+            delegate.save(execution, expected);
+            afterSave.run();
             if (loseStartAcknowledgement && batch != null && batch.isActive() && batch.getProgress() == 0) {
                 loseStartAcknowledgement = false;
-                throw new IllegalStateException("Injected lost start commit acknowledgement");
+                throw new CommitOutcomeUnknownException("Injected lost start acknowledgement", null);
             }
-        }
-
-        @Override
-        public List<EconomicBuilding> loadAll() {
-            return delegate.loadAll();
-        }
-
-        @Override
-        public void delete(UUID id) {
-            delegate.delete(id);
         }
     }
 
+    static final class FaultConfigurations implements ProductionMethodConfigurationRepository {
+        final ProductionMethodConfigurationRepository delegate;
+        boolean failNextSave, failLoad;
+        Runnable afterSave = () -> {};
+        FaultConfigurations(ProductionMethodConfigurationRepository delegate) { this.delegate = delegate; }
+        @Override public com.bbmurloc.victoriaeconomics.server.production.domain.ProductionMethodConfiguration load(UUID id) {
+            if (failLoad) throw new IllegalStateException("Injected unknown configuration state");
+            return delegate.load(id);
+        }
+        @Override public void create(com.bbmurloc.victoriaeconomics.server.production.domain.ProductionMethodConfiguration initial) { delegate.create(initial); }
+        @Override public void save(com.bbmurloc.victoriaeconomics.server.production.domain.ProductionMethodConfiguration changed, long expected) {
+            if (failNextSave) { failNextSave = false; throw new IllegalStateException("Injected configuration save failure"); }
+            delegate.save(changed, expected);
+            afterSave.run();
+        }
+    }
+
+    static final class FaultJournal implements ProductionJournal {
+        final ProductionJournal delegate;
+        boolean failContains, failReads, failCleanup;
+        FaultJournal(ProductionJournal delegate) { this.delegate = delegate; }
+        @Override public void recordStart(StartIntent intent) { delegate.recordStart(intent); }
+        @Override public void finishStart(UUID batch) {
+            if (failCleanup) throw new IllegalStateException("Injected journal cleanup failure");
+            delegate.finishStart(batch);
+        }
+        @Override public List<StartIntent> pendingStarts() {
+            if (failReads) throw new IllegalStateException("Injected unknown start intent state");
+            return delegate.pendingStarts();
+        }
+        @Override public boolean containsBatch(UUID batch) {
+            if (failContains) throw new IllegalStateException("Injected unknown start commit evidence");
+            return delegate.containsBatch(batch);
+        }
+    }
     static final class FaultInventory implements ProductionInventoryPort {
         final SqliteInventoryStore delegate;
-        boolean failAfterReserve, failRelease, reserveOnlyFirstMaterial;
+        boolean failAfterReserve, failRelease, reserveOnlyFirstMaterial, failSettlement;
         Runnable afterReserve = () -> {
         };
 
@@ -203,6 +245,7 @@ final class TestEconomy implements AutoCloseable {
 
         @Override
         public SettlementReceipt settle(UUID location, UUID batch, Map<String, Double> inputs, Map<String, Double> outputs, double progress) {
+            if (failSettlement) throw new IllegalStateException("Injected inventory settlement failure");
             return delegate.settle(location, batch, inputs, outputs, progress);
         }
     }

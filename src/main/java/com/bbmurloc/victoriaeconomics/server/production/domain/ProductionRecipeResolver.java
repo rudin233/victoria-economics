@@ -2,7 +2,6 @@ package com.bbmurloc.victoriaeconomics.server.production.domain;
 
 import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.production.*;
-import com.bbmurloc.victoriaeconomics.server.building.EconomicBuilding;
 import java.util.*;
 
 public final class ProductionRecipeResolver {
@@ -20,7 +19,4 @@ public final class ProductionRecipeResolver {
         return value;
     }
 
-    public ResolvedProductionRecipe resolve(EconomicBuilding building) {
-        return building.getProductionDepartment().getRecipe();
-    }
 }

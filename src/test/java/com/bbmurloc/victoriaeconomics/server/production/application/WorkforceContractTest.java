@@ -23,11 +23,11 @@ class WorkforceContractTest {
     private EmploymentService adapter(TestEconomy economy, BiPredicate<UUID, String> qualified) {
         var repository = new SqliteEmploymentRepository(economy.connection);
         return new EmploymentService(economy.employees, economy.buildings, economy.occupations,
-                qualified, repository::save, economy.lock);
+                qualified, repository::save, economy.facts, economy.lock);
     }
 
     private ProductionService production(TestEconomy economy, EmploymentService workforce) {
-        return new ProductionService(economy.buildings, economy.repository, economy.equipment, economy.inventory,
+        return new ProductionService(economy.buildings, economy.configurations, economy.repository, economy.equipment, economy.inventory,
                 building -> economy.payroll.get(), workforce, economy.journal, economy.lock);
     }
 

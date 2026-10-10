@@ -6,8 +6,8 @@ import com.bbmurloc.victoriaeconomics.server.building.EconomicBuilding;
 import com.bbmurloc.victoriaeconomics.server.building.department.hr.StaffingExpectation;
 import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentRegistry;
 import com.bbmurloc.victoriaeconomics.server.production.domain.EquipmentCapacityCalculator;
-import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionRecipeResolver;
 import com.bbmurloc.victoriaeconomics.server.production.domain.ResolvedProductionRecipe;
+import com.bbmurloc.victoriaeconomics.server.production.port.ProductionMethodConfigurationRepository;
 import com.bbmurloc.victoriaeconomics.server.inventory.application.ProductionEquipmentRegistry;
 import java.util.HashMap;
 import java.util.Map;
@@ -31,8 +31,7 @@ public final class StaffingCalculator {
     private final BuildingTypeRegistry
             buildingTypeRegistry;
 
-    private final ProductionRecipeResolver
-            productionRecipeResolver;
+    private final ProductionMethodConfigurationRepository configurations;
 
     private final ProductionEquipmentRegistry
             productionEquipmentRegistry;
@@ -40,7 +39,7 @@ public final class StaffingCalculator {
     public StaffingCalculator(
             EmploymentRegistry employmentRegistry,
             BuildingTypeRegistry buildingTypeRegistry,
-            ProductionRecipeResolver productionRecipeResolver,
+            ProductionMethodConfigurationRepository configurations,
             ProductionEquipmentRegistry productionEquipmentRegistry
     ) {
         this.employmentRegistry =
@@ -53,10 +52,7 @@ public final class StaffingCalculator {
                         buildingTypeRegistry
                 );
 
-        this.productionRecipeResolver =
-                Objects.requireNonNull(
-                        productionRecipeResolver
-                );
+        this.configurations = Objects.requireNonNull(configurations);
 
         this.productionEquipmentRegistry =
                 Objects.requireNonNull(
@@ -68,6 +64,10 @@ public final class StaffingCalculator {
     public StaffingSnapshot calculate(
             EconomicBuilding building
     ) {
+        return calculate(building, StaffingExpectation.fullStaffing());
+    }
+
+    public StaffingSnapshot calculate(EconomicBuilding building, StaffingExpectation staffingExpectation) {
         Objects.requireNonNull(
                 building,
                 "building cannot be null"
@@ -76,10 +76,7 @@ public final class StaffingCalculator {
         /*
          * 当前 Live PM 配置解析出来的 Recipe。
          */
-        ResolvedProductionRecipe recipe =
-                productionRecipeResolver.resolve(
-                        building
-                );
+        ResolvedProductionRecipe recipe = configurations.load(building.getId()).recipe();
 
         BuildingTypeDefinition buildingType =
                 buildingTypeRegistry.get(
@@ -108,10 +105,7 @@ public final class StaffingCalculator {
                         buildingType.maxProductionEquipment()
                 );
 
-        StaffingExpectation staffingExpectation =
-                building
-                        .getHumanResourcesDepartment()
-                        .getStaffingPlan();
+        Objects.requireNonNull(staffingExpectation);
 
         Map<String, OccupationStaffingSnapshot>
                 occupationSnapshots =

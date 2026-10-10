@@ -33,7 +33,7 @@ public final class EconomyDatabase implements AutoCloseable {
             } catch (SQLException close) {
                 failure.addSuppressed(close);
             }
-            throw new IllegalStateException("Failed to open Victoria Economics database", failure);
+            throw new IllegalStateException("Failed to open Victoria Economics database: " + failure.getMessage(), failure);
         }
     }
 

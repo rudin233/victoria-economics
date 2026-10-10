@@ -18,15 +18,18 @@ public final class EmploymentService implements WorkforcePort {
     private final BiPredicate<UUID, String> qualification;
     private final Consumer<EmploymentRegistry.State> save;
     private final Object lock;
+    private final ProductionEmploymentPort production;
 
     public EmploymentService(EmploymentRegistry employment, BuildingRegistry buildings, OccupationRegistry occupations,
-                             BiPredicate<UUID, String> qualification, Consumer<EmploymentRegistry.State> save, Object lock) {
+                             BiPredicate<UUID, String> qualification, Consumer<EmploymentRegistry.State> save,
+                             ProductionEmploymentPort production, Object lock) {
         this.employment = employment;
         this.buildings = buildings;
         this.occupations = occupations;
         this.qualification = qualification;
         this.save = save;
         this.lock = lock;
+        this.production = production;
     }
 
     private EconomicBuilding require(UUID id) {
@@ -95,7 +98,7 @@ public final class EmploymentService implements WorkforcePort {
         }
         EconomicBuilding b = require(building);
         if (b.getStatus() != BuildingStatus.ACTIVE) throw new IllegalStateException("Building is stopped");
-        int capacity = b.getProductionDepartment().getRecipe().requiredWorkers().getOrDefault(occupation, 0);
+        int capacity = production.positionCapacity(building).getOrDefault(occupation, 0);
         if (next.count(building, occupation) + next.reservedPositions(building, occupation) >= capacity) {
             throw new IllegalStateException("Effective PM position capacity exhausted: " + occupation);
         }
@@ -105,8 +108,8 @@ public final class EmploymentService implements WorkforcePort {
         return mutate(next -> {
             var record = next.getByEmployee(employee);
             if (record == null) return null;
-            var batch = require(record.buildingId()).getProductionDepartment().getActiveBatch();
-            if (batch != null && !batch.isEnded() && batch.getConfiguration().activeEmployeesByOccupation().values().stream().anyMatch(ids -> ids.contains(employee))) {
+            require(record.buildingId());
+            if (production.employeeProtected(record.buildingId(), employee)) {
                 next.requestDismissal(employee);
             } else next.remove(employee);
             return record;
@@ -131,7 +134,8 @@ public final class EmploymentService implements WorkforcePort {
     @Override
     public boolean reconcile(UUID building, Map<String, Integer> demand) {
         return mutate(next -> {
-            if (require(building).getProductionDepartment().hasActiveBatch())
+            require(building);
+            if (production.participationProtected(building))
                 throw new IllegalStateException("Cannot reconcile protected participation");
             // Reservation order is acceptance order; cancel excess reservations before employee reconciliation.
             Map<String, Integer> retained = new HashMap<>();

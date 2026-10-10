@@ -9,6 +9,9 @@ public final class ProductionExecution {
     public enum Boundary {NONE, METHODS, EQUIPMENT, WORKFORCE}
 
     private final UUID buildingId;
+    private long executionRevision;
+    // A coordination checkpoint, never a second copy of effective PM selections.
+    private long methodsEffectiveRevision;
     private ProductionBatch batch;
     private ProductionBatch lastBatch;
     private Boundary boundary = Boundary.NONE;
@@ -16,6 +19,31 @@ public final class ProductionExecution {
 
     public ProductionExecution(UUID buildingId) {
         this.buildingId = Objects.requireNonNull(buildingId);
+    }
+
+    public UUID buildingId() { return buildingId; }
+    public long executionRevision() { return executionRevision; }
+    public long methodsEffectiveRevision() { return methodsEffectiveRevision; }
+
+    /** Persistence acknowledgement only; does not change a batch or its lifecycle. */
+    public void acknowledgeCommit(long expectedRevision) {
+        if (executionRevision != expectedRevision) throw new IllegalStateException("Unexpected execution revision");
+        executionRevision = Math.incrementExact(expectedRevision);
+    }
+
+    public static ProductionExecution rehydrate(UUID buildingId, ProductionBatch batch, ProductionBatch lastBatch,
+                                                Boundary boundary, boolean automatic, long revision) {
+        return rehydrate(buildingId, batch, lastBatch, boundary, automatic, revision, 0);
+    }
+
+    public static ProductionExecution rehydrate(UUID buildingId, ProductionBatch batch, ProductionBatch lastBatch,
+                                                Boundary boundary, boolean automatic, long revision, long methodsRevision) {
+        if (revision < 0 || methodsRevision < 0) throw new IllegalArgumentException("Negative production revision");
+        var execution = new ProductionExecution(buildingId);
+        execution.restore(batch, lastBatch, boundary, automatic);
+        execution.executionRevision = revision;
+        execution.methodsEffectiveRevision = methodsRevision;
+        return execution;
     }
 
     public ProductionBatch batch() {
@@ -54,6 +82,8 @@ public final class ProductionExecution {
         private final ProductionBatch batch, lastBatch;
         private final Boundary boundary;
         private final boolean automatic;
+        private final long executionRevision;
+        private final long methodsEffectiveRevision;
 
         private State(ProductionExecution owner) {
             this.owner = owner;
@@ -61,6 +91,8 @@ public final class ProductionExecution {
             lastBatch = owner.lastBatch;
             boundary = owner.boundary;
             automatic = owner.automatic;
+            executionRevision = owner.executionRevision;
+            methodsEffectiveRevision = owner.methodsEffectiveRevision;
         }
 
         public ProductionBatch batch() {
@@ -78,6 +110,8 @@ public final class ProductionExecution {
         public boolean automatic() {
             return automatic;
         }
+
+        public long methodsEffectiveRevision() { return methodsEffectiveRevision; }
     }
 
     public State state() {
@@ -95,6 +129,8 @@ public final class ProductionExecution {
         lastBatch = validated.lastBatch;
         boundary = validated.boundary;
         automatic = validated.automatic;
+        executionRevision = state.executionRevision;
+        methodsEffectiveRevision = state.methodsEffectiveRevision;
     }
 
     public ProductionBatch start(UUID id, ProductionBatchConfiguration configuration) {
@@ -139,8 +175,23 @@ public final class ProductionExecution {
     }
 
     public void methodsApplied() {
+        methodsApplied(methodsEffectiveRevision);
+    }
+
+    public void methodsApplied(long effectiveRevision) {
         requireBoundary(Boundary.METHODS);
+        acknowledgeMethods(effectiveRevision);
         boundary = Boundary.EQUIPMENT;
+    }
+
+    public void idleMethodsReconciled(long effectiveRevision) {
+        if (batch != null || boundary != Boundary.NONE) throw new IllegalStateException("Production is not idle");
+        acknowledgeMethods(effectiveRevision);
+    }
+
+    private void acknowledgeMethods(long revision) {
+        if (revision < methodsEffectiveRevision) throw new IllegalArgumentException("Effective PM revision regressed");
+        methodsEffectiveRevision = revision;
     }
 
     public void revisitMethods() {
@@ -179,6 +230,8 @@ public final class ProductionExecution {
             throw new IllegalArgumentException("Invalid restored boundary");
         if (lastBatch != null && (!lastBatch.isEnded() || !lastBatch.getBuildingId().equals(buildingId)))
             throw new IllegalArgumentException("Invalid batch history");
+        if (batch != null && lastBatch != null && batch.getId().equals(lastBatch.getId()))
+            throw new IllegalArgumentException("Current and last batch must differ");
         this.batch = batch;
         this.lastBatch = lastBatch;
         this.boundary = Objects.requireNonNull(boundary);

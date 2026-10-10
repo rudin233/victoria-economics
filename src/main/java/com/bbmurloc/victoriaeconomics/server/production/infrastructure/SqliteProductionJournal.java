@@ -1,6 +1,7 @@
 package com.bbmurloc.victoriaeconomics.server.production.infrastructure;
 
 import com.bbmurloc.victoriaeconomics.server.production.port.ProductionJournal;
+import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteTransactions;
 import java.sql.*;
 import java.util.*;
 
@@ -34,6 +35,7 @@ public final class SqliteProductionJournal implements ProductionJournal {
 
     @Override
     public List<StartIntent> pendingStarts() {
+        SqliteTransactions.requireCommittedReads(connection);
         List<StartIntent> result = new ArrayList<>();
         try (var statement = connection.prepareStatement("SELECT batch_id, building_id FROM production_start_intents"); var rows = statement.executeQuery()) {
             while (rows.next())
@@ -46,6 +48,7 @@ public final class SqliteProductionJournal implements ProductionJournal {
 
     @Override
     public boolean containsBatch(UUID batch) {
+        SqliteTransactions.requireCommittedReads(connection);
         try (var statement = connection.prepareStatement("SELECT 1 FROM production_batches WHERE batch_id = ?")) {
             statement.setString(1, batch.toString());
             try (var rows = statement.executeQuery()) {

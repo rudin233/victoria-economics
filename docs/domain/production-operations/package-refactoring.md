@@ -1,5 +1,7 @@
 # 第一轮 DDD 包迁移审计
 
+> 历史记录：本文说明第一轮包迁移的范围与验收，当时保留的 Building/生产组合和存档不再是现行实现。用户后续通过 [ADR-PO-02](../../architecture/adr/ADR-PO-02.md) 确认双独立聚合与全新初始 Schema；当前所有权、Repository 和恢复调用链见 [代码阅读地图](code-reading-map.md)。原验证记录和迁移依据保留。
+
 ## 基线与约束
 
 - 本地 HEAD：`465b2ec`（`feat(production): add recoverable production execution and settlement`）。

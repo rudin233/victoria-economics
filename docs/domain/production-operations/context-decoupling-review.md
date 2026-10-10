@@ -1,5 +1,7 @@
 # 第二轮 DDD 审计：Production Operations 跨上下文契约
 
+> 历史记录：本文对应 `ef94beb` 到 `01a8c0a` 的第二轮契约解耦，保留当时证据与 A/B 建议。后续用户已经通过 [ADR-PO-02](../../architecture/adr/ADR-PO-02.md) 确认 B′，当前已实现独立生产 Repository、全新初始 Schema 和生命周期事实 Port。现行入口见 [代码阅读地图](code-reading-map.md)；本文的“本轮不实施”及联合建筑 checkpoint 描述仅指当时任务，不代表当前代码。
+
 2026-10-09。本轮以本地实际源码和 [领域概览](overview.md)、[阅读地图](code-reading-map.md)、[第一轮包迁移审计](package-refactoring.md) 为依据。本文记录实现与建议，不改变概览中已确认的聚合结论。设备协议和 ProductionSite 均为待评审建议，本轮没有实施。
 
 ## 基线与修改范围
@@ -120,7 +122,7 @@ SettlementReceipt settle(UUID location, UUID batch,
 
 ## 设备反向依赖：仅提出方案
 
-证据在 [ProductionEquipmentService.flushPendingOperationsForBuilding](../../../src/main/java/com/bbmurloc/victoriaeconomics/server/inventory/application/ProductionEquipmentService.java) 与 [ProductionDepartment.hasActiveBatch](../../../src/main/java/com/bbmurloc/victoriaeconomics/server/building/department/production/ProductionDepartment.java)。后者委托 `execution.hasUnfinishedBatch()`，覆盖 ACTIVE、PAUSED、SETTLING_COMPLETED、SETTLING_ABORTED。只有库存结算完成并由执行确认结束后才不再保护。暂停不是释放设备的边界。
+当时的证据在 `ProductionEquipmentService.flushPendingOperationsForBuilding` 与旧 `ProductionDepartment.hasActiveBatch`（该部门已由 ADR-PO-02 移除）。后者委托 `execution.hasUnfinishedBatch()`，覆盖 ACTIVE、PAUSED、SETTLING_COMPLETED、SETTLING_ABORTED。只有库存结算完成并由执行确认结束后才不再保护。暂停不是释放设备的边界。
 
 目前有两层保护：设备持有自己的 `protectedByBatch` 防止能力变化，flush 又查询生产是否真正结束。`releaseBatchProtection(batch)` 只核验所有者 UUID，不能证明生产已经结束；保护为空时还允许重复调用。故仅删除 flush 检查、改为接收一个 `endedBatch` 参数或者依赖调用方口头承诺，均不足以替代现有安全条件。
 
@@ -149,7 +151,7 @@ SettlementReceipt settle(UUID location, UUID batch,
 - 部门控制 PM 是否延期、是否允许生效，并在 WORKFORCE 等未完成边界收到新 PM 时调用 `execution.revisitMethods()`。
 - `BuildingService.mutateMethods` 同时取得配置与执行 checkpoint，保存失败时一起回滚。
 - [SqliteBuildingRepository.save](../../../src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/SqliteBuildingRepository.java) 在一个 SQLite 事务/savepoint 中保存建筑、有效与 Pending PM、执行 JSON 和当前/历史批次。名称上的两个根当前没有独立的事务或恢复装配。
-- [ProductionStateCodec](../../../src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/ProductionStateCodec.java) 保留显式 Execution/Batch DTO；ProductionService 按 METHODS → EQUIPMENT → WORKFORCE checkpoint 重试外部聚合步骤。
+- 当时的 `ProductionStateCodec` 保留显式 Execution/Batch DTO；ProductionService 按 METHODS → EQUIPMENT → WORKFORCE checkpoint 重试外部聚合步骤。旧 codec 已由 ADR-PO-02 移除，当前没有重复 Batch JSON 权威。
 
 | 比较维度 | A：每建筑一个 ProductionSite | B：配置与执行两个独立聚合 |
 | --- | --- | --- |

@@ -20,7 +20,7 @@ class ProductionDomainTest {
 
     @Test
     void rejectsIncompleteForeignAndTooHighCombinationsWithoutChangingState() {
-        var config = new ProductionMethodConfiguration(rules(), rules().defaults(), null);
+        var config = new ProductionMethodConfiguration(UUID.randomUUID(), rules(), rules().defaults(), null);
         assertThrows(IllegalArgumentException.class, () -> config.requestTarget(Map.of("base", "base1"), false));
         assertThrows(IllegalArgumentException.class, () -> config.requestSelection("later", "base2", false));
         assertThrows(IllegalArgumentException.class, () -> config.requestSelection("later", "later2", false));
@@ -29,14 +29,14 @@ class ProductionDomainTest {
 
     @Test
     void loweringBaseTierIsRejectedAgainstWholeCombination() {
-        var config = new ProductionMethodConfiguration(rules(), Map.of("base", "base2", "later", "later2"), null);
+        var config = new ProductionMethodConfiguration(UUID.randomUUID(), rules(), Map.of("base", "base2", "later", "later2"), null);
         assertThrows(IllegalArgumentException.class, () -> config.requestSelection("base", "base1", false));
         assertEquals("base2", config.effective().methods().get("base"));
     }
 
     @Test
     void pendingTargetCanBeReplacedCompletelyAndCancelled() {
-        var config = new ProductionMethodConfiguration(rules(), rules().defaults(), null);
+        var config = new ProductionMethodConfiguration(UUID.randomUUID(), rules(), rules().defaults(), null);
         config.requestTarget(Map.of("base", "base2", "later", "later2"), true);
         config.requestTarget(Map.of("base", "base2", "later", "later1"), true);
         assertEquals("later1", config.pending().orElseThrow().methods().get("later"));

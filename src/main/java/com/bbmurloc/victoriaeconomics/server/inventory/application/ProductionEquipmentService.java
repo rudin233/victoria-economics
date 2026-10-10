@@ -4,6 +4,7 @@ import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeReg
 import com.bbmurloc.victoriaeconomics.server.building.*;
 import com.bbmurloc.victoriaeconomics.server.inventory.domain.ProductionEquipmentHolding;
 import com.bbmurloc.victoriaeconomics.server.inventory.domain.EquipmentConfigurationRequest;
+import com.bbmurloc.victoriaeconomics.server.inventory.port.EquipmentBatchLifecyclePort;
 import java.util.*;
 import java.util.function.*;
 
@@ -38,6 +39,7 @@ public final class ProductionEquipmentService {
      * 与其他经济应用服务共享的写锁，不能为每个服务各建一把独立锁。
      */
     private final Object lock;
+    private final EquipmentBatchLifecyclePort lifecycle;
 
     /**
      * 装配设备应用服务。
@@ -46,12 +48,13 @@ public final class ProductionEquipmentService {
      * @param lock 服务器经济上下文共享的写锁
      */
     public ProductionEquipmentService(BuildingRegistry buildings, BuildingTypeRegistry types, ProductionEquipmentRegistry holdings,
-                                      Consumer<List<ProductionEquipmentHolding>> save, Object lock) {
+                                      Consumer<List<ProductionEquipmentHolding>> save, EquipmentBatchLifecyclePort lifecycle, Object lock) {
         this.buildings = buildings;
         this.types = types;
         this.holdings = holdings;
         this.save = save;
         this.lock = lock;
+        this.lifecycle = lifecycle;
     }
 
     /**
@@ -244,8 +247,7 @@ public final class ProductionEquipmentService {
      */
     public int flushPendingOperationsForBuilding(UUID building, UUID endedBatch) {
         synchronized (lock) {
-            if (buildings.get(building).getProductionDepartment().hasActiveBatch())
-                throw new IllegalStateException("Batch has not settled");
+            lifecycle.requireEquipmentBoundary(building, endedBatch);
             return mutate(building, h -> {
                 h.releaseBatchProtection(endedBatch);
                 return h.processRequests();

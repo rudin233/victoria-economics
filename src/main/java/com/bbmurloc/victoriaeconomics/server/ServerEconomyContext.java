@@ -9,7 +9,6 @@ import com.bbmurloc.victoriaeconomics.common.definition.production.*;
 import com.bbmurloc.victoriaeconomics.common.definition.productionequipment.*;
 import com.bbmurloc.victoriaeconomics.server.building.*;
 import com.bbmurloc.victoriaeconomics.server.inventory.application.ProductionEquipmentRegistry;
-import com.bbmurloc.victoriaeconomics.server.inventory.domain.ProductionEquipmentHolding;
 import com.bbmurloc.victoriaeconomics.server.production.application.ProductionService;
 import com.bbmurloc.victoriaeconomics.server.production.application.EconomicClock;
 import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionRecipeResolver;
@@ -23,8 +22,11 @@ import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteBuildingReposi
 import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteEquipmentRepository;
 import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore;
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionJournal;
+import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionMethodConfigurationRepository;
+import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionExecutionRepository;
+import com.bbmurloc.victoriaeconomics.server.production.infrastructure.RepositoryProductionFacts;
+import com.bbmurloc.victoriaeconomics.server.production.application.ProductionBuildingInitializer;
 import net.minecraft.server.MinecraftServer;
-import java.sql.*;
 import java.util.UUID;
 
 public final class ServerEconomyContext implements AutoCloseable {
@@ -67,42 +69,31 @@ public final class ServerEconomyContext implements AutoCloseable {
         database = EconomyDatabase.open(server);
         try {
             var connection = database.getConnection();
-            var repository = new SqliteBuildingRepository(connection, recipes, economyLock);
+            var repository = new SqliteBuildingRepository(connection, economyLock);
+            var methodRepository = new SqliteProductionMethodConfigurationRepository(connection, recipes, economyLock);
+            var executionRepository = new SqliteProductionExecutionRepository(connection, economyLock);
             repository.loadAll().forEach(buildings::add);
+            buildings.getAll().forEach(b -> { methodRepository.load(b.getId()); executionRepository.load(b.getId()); });
+            var productionFacts = new RepositoryProductionFacts(methodRepository, executionRepository, economyLock);
             var equipmentRepository = new SqliteEquipmentRepository(connection);
             equipmentRepository.loadAll().forEach(equipment::register);
-            migrateLegacyEquipment(connection, equipmentRepository);
-            equipmentService = new ProductionEquipmentService(buildings, types, equipment, equipmentRepository::saveAll, economyLock);
+            equipmentService = new ProductionEquipmentService(buildings, types, equipment, equipmentRepository::saveAll, productionFacts, economyLock);
             var employmentRepository = new SqliteEmploymentRepository(connection);
             employment.replace(employmentRepository.load());
             // No NPC qualification registry or payroll/finance authority exists yet: production must fail closed.
-            employmentService = new EmploymentService(employment, buildings, occupations, qualifications, employmentRepository::save, economyLock);
+            employmentService = new EmploymentService(employment, buildings, occupations, qualifications, employmentRepository::save, productionFacts, economyLock);
             inventory = new SqliteInventoryStore(connection, economyLock);
-            buildingService = new BuildingService(buildings, repository, recipes, economyLock);
-            staffing = new StaffingCalculator(employment, types, recipes, equipment);
-            production = new ProductionService(buildings, repository, equipmentService, inventory, payroll,
+            var initializer = new ProductionBuildingInitializer(connection, economyLock, repository, methodRepository, executionRepository, recipes);
+            buildingService = new BuildingService(buildings, repository, types, initializer::initialize, economyLock);
+            staffing = new StaffingCalculator(employment, types, methodRepository, equipment);
+            production = new ProductionService(buildings, methodRepository, executionRepository, equipmentService, inventory, payroll,
                     employmentService, new SqliteProductionJournal(connection), economyLock);
             production.recoverStarts();
+            production.recoverBoundaries();
             clock = new EconomicClock(production::onEconomicTick);
         } catch (RuntimeException failure) {
             database.close();
             throw failure;
-        }
-    }
-
-    private void migrateLegacyEquipment(Connection connection, SqliteEquipmentRepository repository) {
-        try (var statement = connection.prepareStatement("SELECT id, current_equipment FROM economic_buildings WHERE current_equipment > 0"); var rows = statement.executeQuery()) {
-            while (rows.next()) {
-                UUID id = UUID.fromString(rows.getString(1));
-                if (equipment.get(id) != null) continue;
-                var type = types.get(buildings.get(id).getBuildingTypeId());
-                var holding = new ProductionEquipmentHolding(new ProductionEquipmentHolding.State(id, type.productionEquipmentTypeId(),
-                        type.maxProductionEquipment(), rows.getInt(2), 0, null, java.util.List.of()));
-                repository.save(holding);
-                equipment.register(holding);
-            }
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to preserve legacy equipment data", e);
         }
     }
 

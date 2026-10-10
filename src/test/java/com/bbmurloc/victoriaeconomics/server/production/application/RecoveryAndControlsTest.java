@@ -51,23 +51,23 @@ class RecoveryAndControlsTest {
     }
 
     @Test
-    void pendingPmSurvivesCheckpointFailureAndEquipmentWaitsForIt() throws Exception {
+    void effectivePmSurvivesIndependentCheckpointFailureAndEquipmentWaitsForIt() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
             e.production.startBatch(e.id);
-            e.buildingService.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
+            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
             e.equipment.uninstall(e.id, 50);
             e.repository.failMethodsSave = true;
             e.ticks(1200);
             assertEquals(ProductionExecution.Boundary.METHODS, e.execution().boundary());
-            assertEquals("crude_tools", e.building().getProductionDepartment().getSelectedProductionMethodId("tooling_workshop_base"));
-            assertTrue(e.building().getProductionDepartment().getPendingProductionMethods().isPresent());
+            assertEquals("efficient_tools", e.methods().effective().methods().get("tooling_workshop_base"));
+            assertTrue(e.methods().pending().isEmpty());
             assertEquals(100, e.equipment.getHolding(e.id).getInstalledQuantity());
             assertEquals(30, e.quantity("tools"));
         }
         try (var e = new TestEconomy(database(), false)) {
             e.production.retry(e.id);
             e.production.retry(e.id);
-            assertEquals("efficient_tools", e.building().getProductionDepartment().getSelectedProductionMethodId("tooling_workshop_base"));
+            assertEquals("efficient_tools", e.methods().effective().methods().get("tooling_workshop_base"));
             assertEquals(50, e.equipment.getHolding(e.id).getInstalledQuantity());
             assertEquals(30, e.quantity("tools"));
         }
@@ -95,15 +95,15 @@ class RecoveryAndControlsTest {
     void pmArrivingDuringBlockedPersonnelBoundaryIsAppliedBeforeNextStart() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
             e.production.startBatch(e.id);
-            e.buildingService.selectProductionMethod(e.id, "tooling_workshop_base", "pig_iron_tools");
+            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "pig_iron_tools");
             e.ticks(1200);
             assertEquals(ProductionExecution.Boundary.WORKFORCE, e.execution().boundary());
-            e.buildingService.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
+            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
             assertEquals(ProductionExecution.Boundary.METHODS, e.execution().boundary());
             e.production.retry(e.id);
             assertNull(e.execution().batch());
-            assertTrue(e.building().getProductionDepartment().getPendingProductionMethods().isEmpty());
-            assertEquals("efficient_tools", e.building().getProductionDepartment().getSelectedProductionMethodId("tooling_workshop_base"));
+            assertTrue(e.methods().pending().isEmpty());
+            assertEquals("efficient_tools", e.methods().effective().methods().get("tooling_workshop_base"));
             assertEquals(60, e.production.startBatch(e.id).getConfiguration().resolvedRecipe().outputs().get("tools"));
         }
     }
@@ -113,7 +113,7 @@ class RecoveryAndControlsTest {
         try (var e = new TestEconomy(database(), true)) {
             e.employment.fire(new UUID(1, 1));
             e.employment.reservePosition(new UUID(1, 1), e.id, "laborer");
-            e.buildingService.selectProductionMethod(e.id, "tooling_workshop_base", "pig_iron_tools");
+            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "pig_iron_tools");
             assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
             assertTrue(e.employees.reservations().isEmpty());
             assertEquals(13, e.employees.getAll().size());
@@ -156,7 +156,7 @@ class RecoveryAndControlsTest {
             List<Callable<Void>> actions = List.of(
                     () -> {
                         barrier.await();
-                        e.buildingService.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
+                        e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
                         return null;
                     },
                     () -> {
@@ -185,7 +185,7 @@ class RecoveryAndControlsTest {
             assertEquals(1, e.stockState().settlements().size());
             assertTrue(e.stockState().reservations().isEmpty());
             assertEquals(60, e.equipment.getHolding(e.id).getInstalledQuantity());
-            assertEquals("efficient_tools", e.building().getProductionDepartment().getSelectedProductionMethodId("tooling_workshop_base"));
+            assertEquals("efficient_tools", e.methods().effective().methods().get("tooling_workshop_base"));
         }
     }
 
@@ -206,15 +206,15 @@ class RecoveryAndControlsTest {
     }
 
     @Test
-    void schemaMigrationIsRepeatableAndPreservesLegacyRowsAndEquipmentColumn() throws Exception {
+    void incompatibleLegacySchemaIsRejectedWithoutChangingRowsOrEquipment() throws Exception {
         UUID building = UUID.randomUUID();
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database()); var statement = connection.createStatement()) {
             statement.executeUpdate("CREATE TABLE economic_buildings(id TEXT PRIMARY KEY, building_type_id TEXT NOT NULL, status TEXT NOT NULL, current_equipment INTEGER NOT NULL DEFAULT 0)");
             statement.executeUpdate("INSERT INTO economic_buildings VALUES('" + building + "', 'tooling_workshop', 'ACTIVE', 73)");
             statement.executeUpdate("CREATE TABLE building_production_method_selections(building_id TEXT, group_id TEXT, method_id TEXT, PRIMARY KEY(building_id, group_id))");
             statement.executeUpdate("INSERT INTO building_production_method_selections VALUES('" + building + "', 'tooling_workshop_base', 'crude_tools')");
-            EconomySchema.initialize(connection);
-            EconomySchema.initialize(connection);
+            assertTrue(assertThrows(IllegalStateException.class, () -> EconomySchema.initialize(connection)).getMessage().contains("new world"));
+            assertThrows(IllegalStateException.class, () -> EconomySchema.initialize(connection));
             try (var rows = statement.executeQuery("SELECT current_equipment FROM economic_buildings WHERE id='" + building + "'")) {
                 assertTrue(rows.next());
                 assertEquals(73, rows.getInt(1));
