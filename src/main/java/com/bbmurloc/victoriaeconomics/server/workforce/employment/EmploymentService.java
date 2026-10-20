@@ -97,7 +97,7 @@ public final class EmploymentService implements WorkforcePort {
             throw new IllegalStateException("Employee already employed or reserved");
         }
         EconomicBuilding b = require(building);
-        if (b.getStatus() != BuildingStatus.ACTIVE) throw new IllegalStateException("Building is stopped");
+        if (b.lifecycle() != BuildingLifecycle.EXISTING || b.getStatus() != BuildingStatus.ACTIVE) throw new IllegalStateException("Building is stopped or historical");
         int capacity = production.positionCapacity(building).getOrDefault(occupation, 0);
         if (next.count(building, occupation) + next.reservedPositions(building, occupation) >= capacity) {
             throw new IllegalStateException("Effective PM position capacity exhausted: " + occupation);

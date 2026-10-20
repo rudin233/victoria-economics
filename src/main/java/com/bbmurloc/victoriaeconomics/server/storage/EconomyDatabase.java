@@ -10,9 +10,11 @@ import java.sql.*;
 
 public final class EconomyDatabase implements AutoCloseable {
     private final Connection connection;
+    private final Path file;
 
-    private EconomyDatabase(Connection connection) {
+    private EconomyDatabase(Connection connection, Path file) {
         this.connection = connection;
+        this.file = file;
     }
 
     public static EconomyDatabase open(MinecraftServer server) {
@@ -25,7 +27,7 @@ public final class EconomyDatabase implements AutoCloseable {
             Path directory = worldRoot.resolve("victoria_economics");
             Files.createDirectories(directory);
             connection = SqliteEconomyDatabase.open(directory.resolve("economy.sqlite"));
-            return new EconomyDatabase(connection);
+            return new EconomyDatabase(connection, directory.resolve("economy.sqlite"));
         } catch (IOException | RuntimeException failure) {
             if (connection != null) try {
                 connection.close();
@@ -39,6 +41,7 @@ public final class EconomyDatabase implements AutoCloseable {
     public Connection getConnection() {
         return connection;
     }
+    public Connection openVerificationConnection() { return SqliteEconomyDatabase.open(file); }
 
     @Override
     public void close() {

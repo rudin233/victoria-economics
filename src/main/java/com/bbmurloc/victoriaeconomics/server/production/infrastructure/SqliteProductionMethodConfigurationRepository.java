@@ -43,6 +43,11 @@ public final class SqliteProductionMethodConfigurationRepository implements Prod
         };
     }
 
+    public ProductionMethodConfiguration inSnapshot(SqliteTransactions.ReadSession session, UUID id) {
+        session.requireConnection(connection);
+        return read(id);
+    }
+
     private ProductionMethodConfiguration read(UUID id) {
         try (var statement = connection.prepareStatement("SELECT c.*, b.building_type_id FROM production_method_configurations c JOIN economic_buildings b ON b.id=c.building_id WHERE c.building_id=?")) {
             statement.setString(1, id.toString());

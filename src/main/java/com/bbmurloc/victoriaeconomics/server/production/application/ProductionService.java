@@ -139,7 +139,8 @@ public final class ProductionService {
     }
     private ProductionBatchConfiguration prepare(EconomicBuilding building) {
         UUID id = building.getId();
-        if (building.getStatus() != BuildingStatus.ACTIVE) throw new IllegalStateException("Building is stopped");
+        if (building.lifecycle() != BuildingLifecycle.EXISTING || building.getStatus() != BuildingStatus.ACTIVE)
+            throw new IllegalStateException("Building is stopped or historical");
         var execution = executions.load(id);
         if (execution.batch() != null || execution.boundary() != ProductionExecution.Boundary.NONE)
             throw new IllegalStateException("Previous batch or boundary unfinished");

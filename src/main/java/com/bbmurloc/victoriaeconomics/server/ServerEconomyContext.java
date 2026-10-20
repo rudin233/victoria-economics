@@ -16,6 +16,10 @@ import com.bbmurloc.victoriaeconomics.server.production.application.StaffingCalc
 import com.bbmurloc.victoriaeconomics.server.storage.*;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteEmploymentRepository;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteBuildingRepository;
+import com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteBuildingStaffingRepository;
+import com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteOccupationCatalog;
+import com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteStaffingQuery;
+import com.bbmurloc.victoriaeconomics.server.workforce.application.StaffingApplicationService;
 import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore;
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionJournal;
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionMethodConfigurationRepository;
@@ -40,6 +44,7 @@ public final class ServerEconomyContext implements AutoCloseable {
     private final ProductionRecipeResolver recipes;
     private final EmploymentService employmentService;
     private final StaffingCalculator staffing;
+    private final StaffingApplicationService stagedStaffing;
     private final ProductionService production;
     private final SqliteInventoryStore inventory;
     private final EconomicClock clock;
@@ -61,6 +66,7 @@ public final class ServerEconomyContext implements AutoCloseable {
         database = EconomyDatabase.open(server);
         try {
             var connection = database.getConnection();
+            SqliteOccupationCatalog.register(connection, occupations);
             var repository = new SqliteBuildingRepository(connection, economyLock);
             var methodRepository = new SqliteProductionMethodConfigurationRepository(connection, recipes, economyLock);
             var executionRepository = new SqliteProductionExecutionRepository(connection, economyLock);
@@ -72,9 +78,12 @@ public final class ServerEconomyContext implements AutoCloseable {
             // No NPC qualification registry or payroll/finance authority exists yet: production must fail closed.
             employmentService = new EmploymentService(employment, buildings, occupations, qualifications, employmentRepository::save, productionFacts, economyLock);
             inventory = new SqliteInventoryStore(connection, economyLock);
-            var initializer = new ProductionBuildingInitializer(connection, economyLock, repository, methodRepository, executionRepository, recipes);
-            buildingService = new BuildingService(buildings, repository, types, initializer::initialize, economyLock);
-            staffing = new StaffingCalculator(employment, types, methodRepository);
+            var staffingRepository = new SqliteBuildingStaffingRepository(connection, recipes, occupations, economyLock);
+            var initializer = new ProductionBuildingInitializer(connection, economyLock, repository, methodRepository, executionRepository, recipes,
+                    staffingRepository, database::openVerificationConnection);
+            buildingService = new BuildingService(buildings, repository, types, initializer, economyLock);
+            staffing = new StaffingCalculator(new SqliteStaffingQuery(connection, recipes, occupations, economyLock));
+            stagedStaffing = new StaffingApplicationService(connection, recipes, occupations, economyLock);
             production = new ProductionService(buildings, methodRepository, executionRepository, inventory, payroll,
                     employmentService, new SqliteProductionJournal(connection), economyLock);
             production.recoverStarts();
@@ -123,6 +132,7 @@ public final class ServerEconomyContext implements AutoCloseable {
     public StaffingCalculator getStaffingCalculator() {
         return staffing;
     }
+    public StaffingApplicationService getStagedStaffingService() { return stagedStaffing; }
 
     public ProductionService getProductionService() {
         return production;

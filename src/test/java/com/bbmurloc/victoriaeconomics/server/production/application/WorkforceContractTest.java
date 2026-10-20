@@ -36,7 +36,7 @@ class WorkforceContractTest {
         try (var economy = new TestEconomy(directory.resolve("economy.sqlite"), true)) {
             UUID unqualified = new UUID(1, 1), pending = new UUID(1, 2);
             var workforce = adapter(economy, (npc, role) -> !npc.equals(unqualified));
-            var other = economy.buildingService.createBuilding("tooling_workshop");
+            var other = economy.createBuilding();
             economy.employment.hire(UUID.randomUUID(), other.getId(), "laborer");
             economy.employees.requestDismissal(pending);
 

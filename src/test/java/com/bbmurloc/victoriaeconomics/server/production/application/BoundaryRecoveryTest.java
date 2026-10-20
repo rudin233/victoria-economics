@@ -139,7 +139,7 @@ class BoundaryRecoveryTest {
 
     @Test void unrelatedBuildingPersonnelRequestsDoNotBlockThisSitesStart() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
-            UUID other = e.buildingService.createBuilding("tooling_workshop").getId();
+            UUID other = e.createBuilding().getId();
             UUID employee = UUID.randomUUID();
             e.employment.hire(employee, other, "laborer");
             e.employees.requestDismissal(employee);

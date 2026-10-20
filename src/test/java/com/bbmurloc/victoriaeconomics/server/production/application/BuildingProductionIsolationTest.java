@@ -13,7 +13,7 @@ class BuildingProductionIsolationTest {
 
     @Test void buildingHasOnlyIdentityAndStatusAndBothAggregatesHaveBuildingIdentity() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
-            assertEquals(Set.of("id", "buildingTypeId", "status"), new HashSet<>(Arrays.stream(EconomicBuilding.class.getDeclaredFields()).map(f -> f.getName()).toList()));
+            assertEquals(Set.of("id", "buildingTypeId", "status", "ownerCompanyId", "regionId", "lifecycle", "identityRevision"), new HashSet<>(Arrays.stream(EconomicBuilding.class.getDeclaredFields()).map(f -> f.getName()).toList()));
             assertEquals(e.id, e.methods().buildingId());
             assertEquals(e.id, e.execution().buildingId());
             assertEquals(0, e.methods().configurationRevision());
@@ -21,12 +21,12 @@ class BuildingProductionIsolationTest {
         }
     }
 
-    @Test void jointInitializationRollsBackAllThreeRecordsBeforePublishingIdentity() throws Exception {
+    @Test void jointInitializationRollsBackAllFourRecordsBeforePublishingIdentity() throws Exception {
         try (var e = new TestEconomy(database(), true); var statement = e.connection.createStatement()) {
             statement.executeUpdate("CREATE TRIGGER reject_initial_execution BEFORE INSERT ON production_executions BEGIN SELECT RAISE(ABORT,'injected initialization failure'); END");
-            assertThrows(IllegalStateException.class, () -> e.buildingService.createBuilding("tooling_workshop"));
+            assertThrows(IllegalStateException.class, () -> e.createBuilding());
             assertEquals(1, e.buildings.getAll().size());
-            for (String table : List.of("economic_buildings", "production_method_configurations", "production_executions")) {
+            for (String table : List.of("economic_buildings", "production_method_configurations", "production_executions", "building_staffing")) {
                 try (var rows = statement.executeQuery("SELECT COUNT(*) FROM " + table)) { assertTrue(rows.next()); assertEquals(1, rows.getInt(1)); }
             }
         }

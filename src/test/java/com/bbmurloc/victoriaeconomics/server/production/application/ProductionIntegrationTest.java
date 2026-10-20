@@ -288,7 +288,7 @@ class ProductionIntegrationTest {
     @Test
     void anotherBuildingsStockCannotSupplyMissingLocalMaterial() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
-            var other = e.buildingService.createBuilding("tooling_workshop");
+            var other = e.createBuilding();
             e.stock.createLocation(other.getId(), 10000);
             e.stock.deposit(other.getId(), Map.of("wood", 500L));
             e.stock.withdraw(e.id, Map.of("wood", 100L));

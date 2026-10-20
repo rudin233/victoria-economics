@@ -12,11 +12,42 @@ public final class SqliteTransactions {
     @FunctionalInterface
     public interface WriteWork<T> { T run(WriteSession session) throws SQLException; }
 
+    @FunctionalInterface
+    public interface ReadWork<T> { T run(ReadSession session) throws SQLException; }
+
+    /** Explicit snapshot read capability. Cannot be used as a write capability. */
+    public static final class ReadSession {
+        private final Connection connection;
+        private final Thread owner = Thread.currentThread();
+        private boolean active = true;
+        private ReadSession(Connection connection) { this.connection = connection; }
+        public void requireConnection(Connection candidate) {
+            if (!active || Thread.currentThread() != owner || candidate != connection)
+                throw new IllegalStateException("Invalid SQLite read session");
+            SqliteConnectionGuard.requireTrusted(connection);
+        }
+    }
+
+    public static <T> T read(Connection connection, ReadWork<T> work) {
+        requireCommittedReads(connection);
+        var config = SqliteConnectionGuard.transactionConfig(connection);
+        TransactionMode previous = config.getTransactionMode();
+        config.setTransactionMode(TransactionMode.DEFERRED);
+        try {
+            return run(connection, () -> {
+                var session = new ReadSession(connection);
+                try { return work.run(session); }
+                finally { session.active = false; }
+            });
+        } finally { config.setTransactionMode(previous); }
+    }
+
     /** Unforgeable, thread-confined capability for explicit transaction-local repository access. */
     public static final class WriteSession {
         private final Connection connection;
         private final Thread owner = Thread.currentThread();
         private boolean active = true;
+        private Throwable failed;
 
         private WriteSession(Connection connection) { this.connection = connection; }
 
@@ -24,6 +55,14 @@ public final class SqliteTransactions {
             if (!active || owner != Thread.currentThread()) throw new IllegalStateException("SQLite write session is closed or belongs to another thread");
             if (candidate != connection) throw new IllegalArgumentException("Repository belongs to another SQLite connection");
             SqliteConnectionGuard.requireTrusted(connection);
+            if (failed != null) throw new IllegalStateException("SQLite write session has failed", failed);
+        }
+
+        /** A caught repository operation failure still prevents this physical transaction from committing. */
+        public <T> T perform(Work<T> operation) throws SQLException {
+            requireConnection(connection);
+            try { return operation.run(); }
+            catch (SQLException | RuntimeException | Error failure) { failed = failure; throw failure; }
         }
     }
 
@@ -40,7 +79,11 @@ public final class SqliteTransactions {
                 // cleanup cannot acquire a second write lock after the business transaction ends.
                 config.setTransactionMode(TransactionMode.DEFERRED);
                 var session = new WriteSession(connection);
-                try { return work.run(session); }
+                try {
+                    T result = work.run(session);
+                    session.requireConnection(connection);
+                    return result;
+                }
                 finally { session.active = false; }
             });
         } finally {

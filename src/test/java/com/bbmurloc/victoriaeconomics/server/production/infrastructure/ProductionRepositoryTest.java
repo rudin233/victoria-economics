@@ -38,10 +38,7 @@ class ProductionRepositoryTest {
         methods = new SqliteProductionMethodConfigurationRepository(connection, recipes, lock);
         executions = new SqliteProductionExecutionRepository(connection, lock);
         id = UUID.randomUUID();
-        try (var statement = connection.prepareStatement("INSERT INTO economic_buildings VALUES(?, 'factory', 'ACTIVE')")) {
-            statement.setString(1, id.toString());
-            statement.executeUpdate();
-        }
+        com.bbmurloc.victoriaeconomics.server.TestIdentities.building(connection, id, "factory");
         methods.create(new ProductionMethodConfiguration(id, recipes.rulesFor("factory"), Map.of("base", "a"), null));
         executions.create(new ProductionExecution(id));
     }

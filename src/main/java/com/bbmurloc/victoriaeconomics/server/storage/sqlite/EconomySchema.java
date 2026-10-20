@@ -5,14 +5,20 @@ import java.util.*;
 
 /** Fresh B-prime schema. Existing incompatible worlds are rejected, never converted or cleared. */
 public final class EconomySchema {
-    public static final int VERSION = 4;
+    public static final int VERSION = 5;
     private EconomySchema() {}
 
-    // v4 removes dedicated equipment persistence and snapshots; NPC UUID employment remains.
+    // v5 adds explicit identity and staged Staffing/Supply; production still uses NPC employment.
     // Creation and compatibility use the same DDL, with no legacy migration.
     private static final List<String> DDL = List.of(
             "CREATE TABLE economy_schema_migrations(version INTEGER PRIMARY KEY)",
-            "CREATE TABLE economic_buildings(id TEXT PRIMARY KEY, building_type_id TEXT NOT NULL, status TEXT NOT NULL)",
+            "CREATE TABLE companies(id TEXT PRIMARY KEY NOT NULL)",
+            "CREATE TABLE regions(id TEXT PRIMARY KEY NOT NULL)",
+            "CREATE TABLE occupation_catalog(id TEXT PRIMARY KEY NOT NULL CHECK(length(trim(id)) > 0))",
+            "CREATE TABLE economic_buildings(id TEXT PRIMARY KEY NOT NULL, building_type_id TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('ACTIVE','STOPPED','DISABLED')), owner_company_id TEXT NOT NULL REFERENCES companies(id), region_id TEXT NOT NULL REFERENCES regions(id), lifecycle TEXT NOT NULL CHECK(lifecycle IN ('EXISTING','DEMOLISHED')), identity_revision INTEGER NOT NULL CHECK(typeof(identity_revision)='integer' AND identity_revision >= 0))",
+            "CREATE TABLE building_staffing(building_id TEXT PRIMARY KEY NOT NULL REFERENCES economic_buildings(id), revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision >= 0))",
+            "CREATE TABLE building_staffing_roles(building_id TEXT NOT NULL REFERENCES building_staffing(building_id), occupation_id TEXT NOT NULL REFERENCES occupation_catalog(id), employed INTEGER NOT NULL CHECK(typeof(employed)='integer' AND employed >= 0 AND employed <= 2147483647), pending_target INTEGER CHECK(pending_target IS NULL OR (typeof(pending_target)='integer' AND pending_target >= 0 AND pending_target <= 2147483647)), PRIMARY KEY(building_id,occupation_id))",
+            "CREATE TABLE regional_labor_supply(region_id TEXT NOT NULL REFERENCES regions(id), occupation_id TEXT NOT NULL REFERENCES occupation_catalog(id), total_supply INTEGER NOT NULL CHECK(typeof(total_supply)='integer' AND total_supply >= 0), revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision >= 0), PRIMARY KEY(region_id,occupation_id))",
             "CREATE TABLE production_method_configurations(building_id TEXT PRIMARY KEY REFERENCES economic_buildings(id), effective_json TEXT NOT NULL, pending_json TEXT, configuration_revision INTEGER NOT NULL CHECK(configuration_revision >= 0), effective_revision INTEGER NOT NULL CHECK(effective_revision >= 0 AND effective_revision <= configuration_revision))",
             "CREATE TABLE production_batches(batch_id TEXT PRIMARY KEY, building_id TEXT NOT NULL REFERENCES economic_buildings(id), configuration_json TEXT NOT NULL, progress_units INTEGER NOT NULL CHECK(progress_units >= 0), status TEXT NOT NULL CHECK(status IN ('ACTIVE','PAUSED','SETTLING_COMPLETED','SETTLING_ABORTED','COMPLETED','ABORTED')), UNIQUE(batch_id, building_id))",
             "CREATE UNIQUE INDEX one_unfinished_batch_per_building ON production_batches(building_id) WHERE status IN ('ACTIVE','PAUSED','SETTLING_COMPLETED','SETTLING_ABORTED')",
@@ -65,6 +71,25 @@ public final class EconomySchema {
                 }
                 try (var rows = statement.executeQuery("PRAGMA foreign_key_check")) {
                     if (rows.next()) throw incompatible();
+                }
+                for (String table : List.of("companies", "regions")) {
+                    try (var rows = statement.executeQuery("SELECT id FROM " + table)) {
+                        while (rows.next()) storedId(rows.getString(1));
+                    }
+                }
+                try (var rows = statement.executeQuery("SELECT * FROM economic_buildings")) {
+                    while (rows.next()) SqliteBuildingRepository.decode(rows);
+                }
+                try (var rows = statement.executeQuery("SELECT b.id FROM economic_buildings b LEFT JOIN production_method_configurations m ON m.building_id=b.id LEFT JOIN production_executions e ON e.building_id=b.id LEFT JOIN building_staffing s ON s.building_id=b.id WHERE m.building_id IS NULL OR e.building_id IS NULL OR s.building_id IS NULL")) {
+                    if (rows.next()) throw incompatible();
+                }
+                // SUM remains derived. Integer overflow is an error, never a rounded REAL fallback.
+                try (var rows = statement.executeQuery("SELECT b.region_id,r.occupation_id,SUM(r.employed) AS occupied,MAX(l.total_supply) AS total FROM building_staffing_roles r JOIN economic_buildings b ON b.id=r.building_id LEFT JOIN regional_labor_supply l ON l.region_id=b.region_id AND l.occupation_id=r.occupation_id GROUP BY b.region_id,r.occupation_id")) {
+                    while (rows.next()) {
+                        long occupied = rows.getLong("occupied");
+                        long total = rows.getLong("total");
+                        if (occupied < 0 || (rows.wasNull() ? occupied != 0 : occupied > total)) throw incompatible();
+                    }
                 }
                 try (var rows = statement.executeQuery("SELECT *, typeof(progress_units) AS progress_type FROM production_batches")) {
                     while (rows.next()) {

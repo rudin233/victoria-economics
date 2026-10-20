@@ -35,7 +35,7 @@ final class TestEconomy implements AutoCloseable {
     final EmploymentRegistry employees = new EmploymentRegistry();
     final OccupationRegistry occupations = new OccupationRegistry();
     final AtomicReference<BuildingPayrollPort.State> payroll = new AtomicReference<>(BuildingPayrollPort.State.CURRENT);
-    final BuildingRepository buildingRepository;
+    final SqliteBuildingRepository buildingRepository;
     final FaultExecutionRepository repository;
     final FaultConfigurations configurations;
     final RepositoryProductionFacts facts;
@@ -58,6 +58,8 @@ final class TestEconomy implements AutoCloseable {
         DefaultDefinitions.registerBuildingTypes(types);
         DefaultDefinitions.registerProductionMethods(methods);
         DefaultDefinitions.registerOccupations(occupations);
+        com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteOccupationCatalog.register(connection, occupations);
+        com.bbmurloc.victoriaeconomics.server.TestIdentities.seed(connection);
         methods.register(new ProductionMethodDefinition("efficient_tools", "tooling_workshop_base", 2,
                 Map.of("wood", 20L, "iron", 10L), Map.of("tools", 60L), Map.of("laborer", 10, "machinist", 4)));
         // Explicit test-only staffing contraction; never invent jobs for the invalid production pig_iron_tools.
@@ -77,12 +79,14 @@ final class TestEconomy implements AutoCloseable {
         stock = new SqliteInventoryStore(connection, lock);
         inventory = new FaultInventory(stock);
         journal = new FaultJournal(new SqliteProductionJournal(connection));
-        var initializer = new ProductionBuildingInitializer(connection, lock, buildingRepository, configurations, repository, resolver);
-        buildingService = new BuildingService(buildings, buildingRepository, types, initializer::initialize, lock);
+        var staffing = new com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteBuildingStaffingRepository(connection, resolver, occupations, lock);
+        var initializer = new ProductionBuildingInitializer(connection, lock, buildingRepository, configurations, repository, resolver, staffing,
+                () -> com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteEconomyDatabase.open(file));
+        buildingService = new BuildingService(buildings, buildingRepository, types, initializer, lock);
         production = new ProductionService(buildings, configurations, repository, inventory, (building) -> payroll.get(), employment, journal, lock);
         clock = new EconomicClock(production::onEconomicTick);
         if (create) {
-            id = buildingService.createBuilding("tooling_workshop").getId();
+            id = createBuilding().getId();
             stock.createLocation(id, capacity);
             stock.deposit(id, Map.of("wood", 100L, "iron", 100L));
             for (int i = 0; i < 10; i++) employment.hire(new UUID(1, i + 1), id, "laborer");
@@ -96,6 +100,10 @@ final class TestEconomy implements AutoCloseable {
 
     EconomicBuilding building() {
         return buildings.get(id);
+    }
+    EconomicBuilding createBuilding() {
+        return buildingService.createBuilding("tooling_workshop", com.bbmurloc.victoriaeconomics.server.TestIdentities.COMPANY,
+                com.bbmurloc.victoriaeconomics.server.TestIdentities.REGION);
     }
 
     ProductionExecution execution() {
