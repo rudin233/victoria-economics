@@ -126,5 +126,5 @@ final class EconomyFinancialValidation {
         }
     }
     private static void canonical(String value) { require(UUID.fromString(value).toString().equals(value)); }
-    private static void require(boolean valid) { if (!valid) throw new IllegalStateException("Inconsistent v6 economic time, finance ledger or payroll contract; no repair attempted"); }
+    private static void require(boolean valid) { if (!valid) throw new IllegalStateException("Inconsistent v7 economic time, finance ledger or payroll contract; no repair attempted"); }
 }

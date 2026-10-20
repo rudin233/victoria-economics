@@ -10,7 +10,7 @@ import com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicT
 import java.sql.*;
 import java.util.*;
 
-/** Normalized v6 contract. Session methods are foundations for task C, not formal staffing commands. */
+/** Normalized v7 wage segments; explicit sessions participate in payroll-aware production transactions. */
 public final class SqlitePayrollRepository implements PayrollRepository {
     private final Connection connection;
     private final Object lock;
@@ -45,6 +45,23 @@ public final class SqlitePayrollRepository implements PayrollRepository {
         private final SqliteTransactions.WriteSession tx;
         private Session(SqliteTransactions.WriteSession tx) { this.tx = tx; }
         public PayrollAccrual load(UUID id) throws SQLException { return tx.perform(() -> read(id)); }
+        public PayrollAccrual currentForBuilding(UUID building) throws SQLException {return tx.perform(()->{
+            try(var s=connection.prepareStatement("SELECT * FROM payroll_accruals WHERE building_id=? AND closed_tick IS NULL")){
+                s.setString(1,building.toString());try(var r=s.executeQuery()){
+                    if(!r.next())throw new IllegalStateException("Trusted payroll enrollment required");
+                    var p=decode(r);if(r.next())throw new IllegalStateException("Multiple active wage segments");return p;
+                }
+            }
+        });}
+        public CurrencyId currencyForRegion(RegionId region) throws SQLException {return tx.perform(()->{
+            long tick=SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick();
+            try(var s=connection.prepareStatement("SELECT DISTINCT currency_id FROM regional_wage_rates WHERE region_id=? AND effective_tick<=?")){
+                s.setString(1,region.toString());s.setLong(2,tick);try(var r=s.executeQuery()){
+                    if(!r.next())throw new IllegalStateException("Explicit regional currency and effective wage rate required");
+                    var currency=CurrencyId.parse(r.getString(1));if(r.next())throw new IllegalStateException("Ambiguous regional wage currency");return currency;
+                }
+            }
+        });}
         public List<PayrollAccrual> all() throws SQLException { return tx.perform(() -> {
             var result = new ArrayList<PayrollAccrual>();
             try (var s = connection.createStatement(); var r = s.executeQuery("SELECT * FROM payroll_accruals ORDER BY id")) { while (r.next()) result.add(decode(r)); }

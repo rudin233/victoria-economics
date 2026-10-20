@@ -24,7 +24,7 @@ public final class PayrollAccrualService {
             try (var s = connection.createStatement(); var r = s.executeQuery("SELECT b.id FROM economic_buildings b JOIN building_staffing_roles s ON s.building_id=b.id LEFT JOIN payroll_accruals p ON p.building_id=b.id AND p.closed_tick IS NULL WHERE s.employed>0 AND p.id IS NULL")) {
                 if (r.next()) throw new IllegalStateException("Employed Staffing has no trusted payroll enrollment; cursor cannot skip its wage history");
             }
-            // In legacy mode, a caught-up cursor only describes the empty enrolled set, not formal payroll readiness.
+            // A caught-up global cursor alone never establishes a building's enrollment or wage readiness.
             for (var segment : segments) {
                 session.validateEmployees(segment);
                 session.accrue(segment, time.acceptedTick());

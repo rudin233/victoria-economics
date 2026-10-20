@@ -31,12 +31,12 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
         return new ProductionExecutionRepository.Session() {
             @Override public ProductionExecution load(UUID id) {
                 session.requireConnection(connection);
-                try { return read(id); }
+                try { return session.perform(() -> read(id)); }
                 catch (SQLException failure) { throw new IllegalStateException("Cannot read production execution: " + id, failure); }
             }
             @Override public void save(ProductionExecution changed, long expectedRevision) {
                 session.requireConnection(connection);
-                try { persist(changed, expectedRevision); }
+                try { session.perform(() -> {persist(changed, expectedRevision);return null;}); }
                 catch (SQLException failure) { throw new IllegalStateException("Cannot save production execution", failure); }
                 // The owning UoW, not a savepoint, acknowledges the outer commit.
             }
@@ -48,9 +48,10 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
             statement.setString(1, id.toString());
             try (var rows = statement.executeQuery()) {
                 if (!rows.next()) throw new IllegalStateException("Production execution missing: " + id);
+                long tick=rows.getLong("processing_tick");Long processing=rows.wasNull()?null:tick;
                 var execution = ProductionExecution.rehydrate(id, loadBatch(rows.getString("current_batch_id")),
                         loadBatch(rows.getString("last_batch_id")), ProductionExecution.Boundary.valueOf(rows.getString("boundary")),
-                        rows.getInt("automatic") != 0, rows.getLong("execution_revision"), rows.getLong("methods_effective_revision"));
+                        rows.getInt("automatic") != 0, rows.getLong("execution_revision"),rows.getLong("last_completed_tick"),processing,EconomyStateCodec.decodePauseReasons(rows.getString("pause_reasons_json")));
                 try (var active = connection.prepareStatement("SELECT batch_id FROM production_batches WHERE building_id=? AND status IN ('ACTIVE','PAUSED','SETTLING_COMPLETED','SETTLING_ABORTED')")) {
                     active.setString(1, id.toString());
                     try (var batches = active.executeQuery()) {
@@ -62,16 +63,18 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
             }
         }
     }
+    public ProductionExecution inSnapshot(SqliteTransactions.ReadSession tx,UUID id)throws SQLException{tx.requireConnection(connection);return read(id);}
 
     @Override
     public void create(ProductionExecution initial) {
-        if (initial.executionRevision() != 0 || initial.methodsEffectiveRevision() != 0 || initial.batch() != null || initial.lastBatch() != null || initial.boundary() != ProductionExecution.Boundary.NONE)
+        if (initial.executionRevision() != 0 || initial.processingTick()!=null || initial.batch() != null || initial.lastBatch() != null || initial.boundary() != ProductionExecution.Boundary.NONE)
             throw new IllegalArgumentException("Initial execution must be empty with revision zero");
         synchronized (lock) {
             SqliteTransactions.run(connection, () -> {
-                try (var statement = connection.prepareStatement("INSERT INTO production_executions(building_id,current_batch_id,last_batch_id,boundary,automatic,execution_revision,methods_effective_revision) VALUES(?,NULL,NULL,'NONE',?,0,0)")) {
+                try (var statement = connection.prepareStatement("INSERT INTO production_executions(building_id,current_batch_id,last_batch_id,boundary,automatic,execution_revision,last_completed_tick,processing_tick,pause_reasons_json) VALUES(?,NULL,NULL,'NONE',?,0,?,NULL,'[]')")) {
                     statement.setString(1, initial.buildingId().toString());
                     statement.setInt(2, initial.automatic() ? 1 : 0);
+                    statement.setLong(3,initial.lastCompletedTick());
                     statement.executeUpdate();
                 }
                 return null;
@@ -93,15 +96,27 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
 
     private void persist(ProductionExecution changed, long expectedRevision) throws SQLException {
         if (changed.executionRevision() != expectedRevision) throw new ProductionRevisionConflict("Stale execution object");
-        try (var statement = connection.prepareStatement("UPDATE production_executions SET current_batch_id=?,last_batch_id=?,boundary=?,automatic=?,execution_revision=?,methods_effective_revision=? WHERE building_id=? AND execution_revision=?")) {
+        try(var s=connection.prepareStatement("SELECT last_completed_tick,processing_tick FROM production_executions WHERE building_id=?")){
+            s.setString(1,changed.buildingId().toString());try(var r=s.executeQuery()){
+                if(!r.next())throw new ProductionRevisionConflict("Execution missing");
+                long completed=r.getLong(1),value=r.getLong(2);Long pending=r.wasNull()?null:value;
+                boolean unchanged=changed.lastCompletedTick()==completed&&Objects.equals(changed.processingTick(),pending);
+                boolean began=pending==null&&changed.lastCompletedTick()==completed&&changed.processingTick()!=null&&changed.processingTick()==Math.incrementExact(completed);
+                boolean finished=changed.processingTick()==null&&changed.lastCompletedTick()>completed&&changed.lastCompletedTick()==Math.incrementExact(completed)&&(pending==null||pending==changed.lastCompletedTick());
+                if(!unchanged&&!began&&!finished)throw new IllegalStateException("Production Tick checkpoint cannot rewind, skip or lose pending work");
+            }
+        }
+        try (var statement = connection.prepareStatement("UPDATE production_executions SET current_batch_id=?,last_batch_id=?,boundary=?,automatic=?,execution_revision=?,last_completed_tick=?,processing_tick=?,pause_reasons_json=? WHERE building_id=? AND execution_revision=?")) {
             statement.setString(1, batchId(changed.batch()));
             statement.setString(2, batchId(changed.lastBatch()));
             statement.setString(3, changed.boundary().name());
             statement.setInt(4, changed.automatic() ? 1 : 0);
             statement.setLong(5, Math.incrementExact(expectedRevision));
-            statement.setLong(6, changed.methodsEffectiveRevision());
-            statement.setString(7, changed.buildingId().toString());
-            statement.setLong(8, expectedRevision);
+            statement.setLong(6,changed.lastCompletedTick());
+            if(changed.processingTick()==null)statement.setNull(7,Types.INTEGER);else statement.setLong(7,changed.processingTick());
+            statement.setString(8,EconomyStateCodec.encodePauseReasons(changed.pauseReasons()));
+            statement.setString(9, changed.buildingId().toString());
+            statement.setLong(10, expectedRevision);
             if (statement.executeUpdate() != 1) throw new ProductionRevisionConflict("Execution missing or stale: " + changed.buildingId());
         }
         saveBatch(changed.batch());

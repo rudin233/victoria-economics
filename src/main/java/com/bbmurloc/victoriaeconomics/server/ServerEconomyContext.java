@@ -11,10 +11,9 @@ import com.bbmurloc.victoriaeconomics.server.production.application.ProductionSe
 import com.bbmurloc.victoriaeconomics.server.production.application.EconomicClock;
 import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionRecipeResolver;
 import com.bbmurloc.victoriaeconomics.server.production.port.*;
-import com.bbmurloc.victoriaeconomics.server.workforce.employment.*;
+import com.bbmurloc.victoriaeconomics.server.production.application.ProductionBoundaryCoordinator;
 import com.bbmurloc.victoriaeconomics.server.production.application.StaffingCalculator;
 import com.bbmurloc.victoriaeconomics.server.storage.*;
-import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteEmploymentRepository;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteBuildingRepository;
 import com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteBuildingStaffingRepository;
 import com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteOccupationCatalog;
@@ -24,7 +23,6 @@ import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInve
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionJournal;
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionMethodConfigurationRepository;
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionExecutionRepository;
-import com.bbmurloc.victoriaeconomics.server.production.infrastructure.RepositoryProductionFacts;
 import com.bbmurloc.victoriaeconomics.server.production.application.ProductionBuildingInitializer;
 import net.minecraft.server.MinecraftServer;
 import com.bbmurloc.victoriaeconomics.server.finance.application.FinanceService;
@@ -44,25 +42,18 @@ public final class ServerEconomyContext implements AutoCloseable {
     private final ProductionMethodGroupRegistry groups = new ProductionMethodGroupRegistry();
     private final OccupationRegistry occupations = new OccupationRegistry();
     private final BuildingRegistry buildings = new BuildingRegistry();
-    private final EmploymentRegistry employment = new EmploymentRegistry();
     private final BuildingService buildingService;
     private final ProductionRecipeResolver recipes;
-    private final EmploymentService employmentService;
     private final StaffingCalculator staffing;
-    private final StaffingApplicationService stagedStaffing;
+    private final StaffingApplicationService staffingService;
     private final ProductionService production;
     private final SqliteInventoryStore inventory;
     private final EconomicClock clock;
     private final FinanceService finance;
     private final PayrollAccrualService payrollAccrual;
-    private final SqliteBuildingPayrollQuery stagedPayroll;
+    private final SqliteBuildingPayrollQuery payroll;
 
     public ServerEconomyContext(MinecraftServer server) {
-        this(server, BuildingPayrollPort.unavailable(), (npc, occupation) -> false);
-    }
-
-    public ServerEconomyContext(MinecraftServer server, BuildingPayrollPort payroll,
-                                java.util.function.BiPredicate<UUID, String> qualifications) {
         DefaultDefinitions.registerIndustries(industries);
         DefaultDefinitions.registerGoods(goods);
         DefaultDefinitions.registerOccupations(occupations);
@@ -80,27 +71,20 @@ public final class ServerEconomyContext implements AutoCloseable {
             var executionRepository = new SqliteProductionExecutionRepository(connection, economyLock);
             repository.loadAll().forEach(buildings::add);
             buildings.getAll().forEach(b -> { methodRepository.load(b.getId()); executionRepository.load(b.getId()); });
-            var productionFacts = new RepositoryProductionFacts(methodRepository, executionRepository, economyLock);
-            var employmentRepository = new SqliteEmploymentRepository(connection);
-            employment.replace(employmentRepository.load());
-            // Live production remains on legacy NPC/payroll semantics until task C. Never inject the staged adapter here.
-            employmentService = new EmploymentService(employment, buildings, occupations, qualifications, employmentRepository::save, productionFacts, economyLock);
             inventory = new SqliteInventoryStore(connection, economyLock);
             var staffingRepository = new SqliteBuildingStaffingRepository(connection, recipes, occupations, economyLock);
             var initializer = new ProductionBuildingInitializer(connection, economyLock, repository, methodRepository, executionRepository, recipes,
                     staffingRepository, database::openVerificationConnection);
             buildingService = new BuildingService(buildings, repository, types, initializer, economyLock);
             staffing = new StaffingCalculator(new SqliteStaffingQuery(connection, recipes, occupations, economyLock));
-            stagedStaffing = new StaffingApplicationService(connection, recipes, occupations, economyLock);
-            production = new ProductionService(buildings, methodRepository, executionRepository, inventory, payroll,
-                    employmentService, new SqliteProductionJournal(connection), economyLock);
-            production.recoverStarts();
-            production.recoverBoundaries();
+            var coordinator=new ProductionBoundaryCoordinator(connection,recipes,occupations,economyLock);
+            production = new ProductionService(coordinator,inventory,new SqliteProductionJournal(connection),economyLock);
+            staffingService=new StaffingApplicationService(coordinator,production::retry);
             finance = new FinanceService(connection, economyLock);
             payrollAccrual = new PayrollAccrualService(connection, economyLock);
-            stagedPayroll = new SqliteBuildingPayrollQuery(connection, economyLock);
+            payroll = new SqliteBuildingPayrollQuery(connection, economyLock);
             clock = new EconomicClock(new SqliteEconomicTimeRepository(connection, economyLock),
-                    payrollAccrual::recoverAcceptedTime, production::onEconomicTick);
+                    payrollAccrual::recoverAcceptedTime, production::onEconomicTick,production::recoverAcceptedTick);
         } catch (RuntimeException failure) {
             database.close();
             throw failure;
@@ -133,18 +117,10 @@ public final class ServerEconomyContext implements AutoCloseable {
         return occupations;
     }
 
-    public EmploymentRegistry getEmploymentRegistry() {
-        return employment;
-    }
-
-    public EmploymentService getEmploymentService() {
-        return employmentService;
-    }
-
     public StaffingCalculator getStaffingCalculator() {
         return staffing;
     }
-    public StaffingApplicationService getStagedStaffingService() { return stagedStaffing; }
+    public StaffingApplicationService getStaffingService() { return staffingService; }
 
     public ProductionService getProductionService() {
         return production;
@@ -157,7 +133,7 @@ public final class ServerEconomyContext implements AutoCloseable {
     public EconomicTime getEconomicTime() { synchronized (economyLock) { return clock.persistentTime(); } }
     public FinanceService getFinanceService() { return finance; }
     public PayrollAccrualService getPayrollAccrualService() { return payrollAccrual; }
-    public BuildingPayrollPort getStagedPayrollQuery() { return stagedPayroll; }
+    public BuildingPayrollPort getPayrollQuery() { return payroll; }
 
     @Override
     public void close() {

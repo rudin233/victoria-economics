@@ -50,81 +50,55 @@ class ProductionDomainTest {
         assertTrue(config.pending().isEmpty());
     }
 
-    private List<EmploymentFact> workers(UUID building, String occupation, int count, int offset) {
-        List<EmploymentFact> result = new ArrayList<>();
-        for (int i = 0; i < count; i++)
-            result.add(new EmploymentFact(new UUID(0, offset + i + 1), building, occupation));
-        return result;
-    }
-
     @Test
     void choosesBottleneckSupportingMinimumWithCeiling() {
-        UUID building = UUID.randomUUID();
-        var employees = new ArrayList<>(workers(building, "laborer", 90, 0));
-        employees.addAll(workers(building, "engineer", 3, 100));
-        var plan = new WorkforcePlanningService().plan(building, Map.of("laborer", 100, "engineer", 10), employees, (id, role) -> true);
+        var plan = new WorkforcePlanningService().plan(Map.of("laborer", 100, "engineer", 10), Map.of("laborer",90,"engineer",3));
         assertEquals(0.3, plan.speed());
-        assertEquals(30, plan.employees().get("laborer").size());
-        assertEquals(3, plan.employees().get("engineer").size());
-        var odd = new WorkforcePlanningService().plan(building, Map.of("laborer", 11, "engineer", 10), employees, (id, role) -> true);
-        assertEquals(4, odd.employees().get("laborer").size());
+        assertEquals(90, plan.participatingWorkers().get("laborer"));
+        assertEquals(3, plan.participatingWorkers().get("engineer"));
+        var odd = new WorkforcePlanningService().plan(Map.of("laborer",11,"engineer",10),Map.of("laborer",4,"engineer",3));
+        assertEquals(4,odd.participatingWorkers().get("laborer"));
     }
 
     @Test
     void tenPercentThresholdUsesIntegerBoundaries() {
-        UUID building = UUID.randomUUID();
         var planner = new WorkforcePlanningService();
-        assertThrows(IllegalStateException.class, () -> planner.plan(building, Map.of("worker", 11), workers(building, "worker", 1, 0), (id, role) -> true));
-        assertEquals(2.0 / 11, planner.plan(building, Map.of("worker", 11), workers(building, "worker", 2, 0), (id, role) -> true).speed());
-        assertEquals(0.1, planner.plan(building, Map.of("worker", 10), workers(building, "worker", 1, 0), (id, role) -> true).speed());
-        assertThrows(IllegalStateException.class, () -> planner.plan(building, Map.of("worker", 10), workers(building, "worker", 0, 0), (id, role) -> true));
+        assertThrows(IllegalStateException.class, () -> planner.plan(Map.of("worker",11),Map.of("worker",1)));
+        assertEquals(2.0/11,planner.plan(Map.of("worker",11),Map.of("worker",2)).speed());
+        assertEquals(0.1,planner.plan(Map.of("worker",10),Map.of("worker",1)).speed());
+        assertThrows(IllegalStateException.class, () -> planner.plan(Map.of("worker",10),Map.of()));
     }
 
     @Test
     void participationIsLimitedOnlyByFormalDemandWithoutAnAssetFactor() {
-        UUID building = UUID.randomUUID();
-        var plan = new WorkforcePlanningService().plan(building, Map.of("worker", 10), workers(building, "worker", 12, 0), (id, role) -> true);
-        assertEquals(10, plan.employees().get("worker").size());
+        var plan = new WorkforcePlanningService().plan(Map.of("worker",10),Map.of("worker",10));
+        assertEquals(10, plan.participatingWorkers().get("worker"));
+        assertThrows(IllegalStateException.class,()->new WorkforcePlanningService().plan(Map.of("worker",10),Map.of("worker",12)));
         assertEquals(1.0, plan.speed());
     }
 
     @Test
-    void filtersQualificationAndFormalOccupationAndOtherLocations() {
-        UUID building = UUID.randomUUID();
-        var employees = new ArrayList<>(workers(building, "worker", 4, 0));
-        employees.addAll(workers(building, "other", 10, 100));
-        employees.addAll(workers(UUID.randomUUID(), "worker", 10, 200));
-        var plan = new WorkforcePlanningService().plan(building, Map.of("worker", 10), employees, (id, role) -> id.getLeastSignificantBits() != 1);
-        assertEquals(3, plan.employees().get("worker").size());
-        assertFalse(plan.employees().get("worker").contains(new UUID(0, 1)));
-        assertThrows(UnsupportedOperationException.class, () -> plan.employees().get("worker").clear());
+    void immutableCountsCannotBeReplacedOrInventedOutsideEffectiveCapacity() {
+        var counts=new HashMap<>(Map.of("worker",3));var plan=new WorkforcePlanningService().plan(Map.of("worker",10),counts);
+        counts.put("worker",10);assertEquals(3,plan.participatingWorkers().get("worker"));
+        assertThrows(UnsupportedOperationException.class,()->plan.participatingWorkers().clear());
+        assertThrows(IllegalStateException.class,()->new WorkforcePlanningService().plan(Map.of("worker",10),Map.of("other",3)));
     }
 
     @Test
-    void duplicateFactsDoNotInflateStaffingAndSelectionRemainsDeterministic() {
-        UUID building = UUID.randomUUID();
-        var employees = new ArrayList<>(workers(building, "worker", 3, 0));
-        employees.addAll(employees.subList(0, 3));
-        Collections.reverse(employees);
-        var plan = new WorkforcePlanningService().plan(building, Map.of("worker", 10),
-                employees, (id, role) -> true);
+    void exactCountsProduceDeterministicReducedFraction() {
+        var plan = new WorkforcePlanningService().plan(Map.of("worker",10),Map.of("worker",3));
         assertEquals(0.3, plan.speed());
-        assertEquals(List.of(new UUID(0, 1), new UUID(0, 2), new UUID(0, 3)), plan.employees().get("worker"));
+        assertEquals(Map.of("worker",3),plan.participatingWorkers());
     }
 
     @Test
-    void oneNpcCannotParticipateInTwoFormalOccupations() {
-        UUID building = UUID.randomUUID(), employee = UUID.randomUUID();
-        var facts = List.of(new EmploymentFact(employee, building, "worker"),
-                new EmploymentFact(employee, building, "engineer"));
-        assertThrows(IllegalArgumentException.class, () -> new WorkforcePlanningService().plan(building,
-                Map.of("worker", 10, "engineer", 10), facts, (id, role) -> true));
+    void everyRequiredOccupationNeedsItsOwnMinimum() {
+        assertThrows(IllegalStateException.class,()->new WorkforcePlanningService().plan(Map.of("worker",10,"engineer",10),Map.of("worker",10)));
     }
 
     private ProductionBatchConfiguration configuration(int selected, int demand) {
-        UUID building = UUID.randomUUID();
-        var plan = new WorkforcePlanningService().plan(building, Map.of("worker", demand),
-                workers(building, "worker", selected, 0), (id, role) -> true);
+        var plan = new WorkforcePlanningService().plan(Map.of("worker",demand),Map.of("worker",selected));
         return new ProductionBatchConfiguration(Map.of("base", "base1"), new ResolvedProductionRecipe(Map.of("ore", 10L), Map.of("metal", 10L), Map.of("worker", demand)), plan);
     }
 
@@ -142,9 +116,8 @@ class ProductionDomainTest {
         assertThrows(IllegalStateException.class, () -> execution.start(UUID.randomUUID(), configuration(1, 3)));
         execution.settlementCompleted(id);
         assertFalse(execution.hasUnfinishedBatch());
-        execution.methodsApplied();
-        execution.advanceLegacyBoundary();
-        execution.workforceReconciled();
+        assertEquals(ProductionExecution.Boundary.RECONFIGURING,execution.boundary());
+        execution.reconfigurationCompleted();
         assertTrue(execution.lastBatch().isCompleted());
         assertNull(execution.batch());
     }

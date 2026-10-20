@@ -87,19 +87,19 @@ class EconomicTimePersistenceTest {
     @Test void crashAfterRealBatchAdvanceNeverReplaysThatAdvanceOnClockRecovery() throws Exception {
         UUID building;
         try(var w=new FinancialTestWorld(file())) {
-            building=w.world.create().getId();var repo=new SqliteProductionExecutionRepository(w.c,w.world.lock);
+            building=w.staffingFixture(1,1);var repo=new SqliteProductionExecutionRepository(w.c,w.world.lock);
             var root=repo.load(building);
-            var recipe=new ResolvedProductionRecipe(Map.of("ore",1L),Map.of("metal",1L),Map.of("worker",1));
-            root.start(UUID.randomUUID(),new ProductionBatchConfiguration(Map.of("base","test"),recipe,new WorkforcePlan(Map.of("worker",List.of(UUID.randomUUID())),1,1)));
+            var recipe=new ResolvedProductionRecipe(Map.of("ore",1L),Map.of("metal",1L),Map.of("laborer",1));
+            root.start(UUID.randomUUID(),new ProductionBatchConfiguration(Map.of("base","test"),recipe,new WorkforcePlan(Map.of("laborer",1),1,1)));
             repo.save(root,root.executionRevision());
             var clock=new EconomicClock(w.time,w.accrual::recoverAcceptedTime,()->{
-                var execution=repo.load(building);execution.tick(1);repo.save(execution,execution.executionRevision());throw new IllegalStateException("crash after production save");
+                var execution=repo.load(building);long tick=w.time.load().acceptedTick();execution.beginTick(tick);execution.tick(1);execution.finishTick(tick);repo.save(execution,execution.executionRevision());throw new IllegalStateException("crash after production save");
             });
             assertThrows(IllegalStateException.class,clock::onServerTick);assertEquals(1,repo.load(building).batch().getProgressUnits());
         }
         try(var w=new FinancialTestWorld(file())) {
             var repo=new SqliteProductionExecutionRepository(w.c,w.world.lock);
-            var clock=new EconomicClock(w.time,w.accrual::recoverAcceptedTime,()->{var execution=repo.load(building);execution.tick(1);repo.save(execution,execution.executionRevision());});
+            var clock=new EconomicClock(w.time,w.accrual::recoverAcceptedTime,()->{var execution=repo.load(building);long tick=w.time.load().acceptedTick();execution.beginTick(tick);execution.tick(1);execution.finishTick(tick);repo.save(execution,execution.executionRevision());});
             assertEquals(1,repo.load(building).batch().getProgressUnits());assertTrue(clock.persistentTime().hasUnconfirmedProductionCallback());
             clock.onServerTick();assertEquals(2,repo.load(building).batch().getProgressUnits());
         }

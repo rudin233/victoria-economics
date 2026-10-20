@@ -54,11 +54,17 @@ public final class FinancialTestWorld implements AutoCloseable {
     }
     public UUID staffingFixture(int employees, long wage) throws Exception {
         sql("UPDATE payroll_runtime SET authority='BUILDING_STAFFING'");
+        if(scalar("SELECT COUNT(*) FROM payroll_accruals")==0)sql("UPDATE regional_wage_rates SET amount="+wage);
         var b = world.create(); world.setSupply(100); world.commands.requestTarget(b.getId(), "laborer", employees); world.applyPendingForPersistenceTest(b.getId());
         if (scalar("SELECT COUNT(*) FROM regional_wage_rates") == 0) accrual.configureRate(new RegionalWageRate(TestIdentities.REGION, CURRENCY, time.load().acceptedTick(), wage, 0));
         return b.getId();
     }
-    public UUID enroll(UUID building) { UUID id = UUID.randomUUID(); SqliteTransactions.write(c, tx -> payroll.inTransaction(tx).enroll(id, building, CURRENCY)); return id; }
+    public UUID enroll(UUID building) {return SqliteTransactions.write(c,tx->{
+        try(var s=c.prepareStatement("SELECT id FROM payroll_accruals WHERE building_id=? AND closed_tick IS NULL")){
+            s.setString(1,building.toString());try(var r=s.executeQuery()){if(r.next())return UUID.fromString(r.getString(1));}
+        }
+        return payroll.inTransaction(tx).enroll(UUID.randomUUID(),building,CURRENCY).id();
+    });}
     /** Explicit persisted time fixture for accrual interval tests, with no production/offline claim. Real callback time has its own 1200-tick test. */
     public void acceptedTimeFixture(long target) {
         SqliteTransactions.write(c, tx -> {
@@ -66,6 +72,7 @@ public final class FinancialTestWorld implements AutoCloseable {
             try (var s = c.prepareStatement("UPDATE economic_time SET accepted_tick=?,production_callback_returned_tick=?,revision=revision+1 WHERE id=1")) {
                 s.setLong(1, target); s.setLong(2, target); s.executeUpdate();
             }
+            try(var s=c.prepareStatement("UPDATE production_executions SET last_completed_tick=?,processing_tick=NULL")){s.setLong(1,target);s.executeUpdate();}
             return null;
         });
     }

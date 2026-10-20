@@ -2,241 +2,72 @@ package com.bbmurloc.victoriaeconomics.server.production.domain;
 
 import java.util.*;
 
-/**
- * One building's execution aggregate. Settlement and boundary work continue to block new starts.
- */
+/** Execution authority: immutable Batch, a reconfiguration barrier and per-building Tick evidence. */
 public final class ProductionExecution {
-    // EQUIPMENT is a persisted compatibility checkpoint only, until the M3.1 boundary replacement.
-    public enum Boundary {NONE, METHODS, EQUIPMENT, WORKFORCE}
-
+    public enum Boundary {NONE,RECONFIGURING}
+    public enum PauseReason {PAYROLL_ARREARS,PAYROLL_RECOVERY,PAYROLL_UNAVAILABLE,MANUAL}
     private final UUID buildingId;
-    private long executionRevision;
-    // A coordination checkpoint, never a second copy of effective PM selections.
-    private long methodsEffectiveRevision;
-    private ProductionBatch batch;
-    private ProductionBatch lastBatch;
-    private Boundary boundary = Boundary.NONE;
+    private long revision,lastCompletedTick;
+    private Long processingTick;
+    private ProductionBatch batch,lastBatch;
+    private Boundary boundary=Boundary.NONE;
     private boolean automatic;
-
-    public ProductionExecution(UUID buildingId) {
-        this.buildingId = Objects.requireNonNull(buildingId);
+    private final EnumSet<PauseReason> pauses=EnumSet.noneOf(PauseReason.class);
+    public ProductionExecution(UUID id){this(id,0);}
+    public ProductionExecution(UUID id,long tick){buildingId=Objects.requireNonNull(id);if(tick<0)throw new IllegalArgumentException("Negative creation Tick");lastCompletedTick=tick;}
+    public UUID buildingId(){return buildingId;}public long executionRevision(){return revision;}
+    public ProductionBatch batch(){return batch;}public ProductionBatch lastBatch(){return lastBatch;}
+    public Boundary boundary(){return boundary;}public boolean automatic(){return automatic;}
+    public long lastCompletedTick(){return lastCompletedTick;}public Long processingTick(){return processingTick;}
+    public Set<PauseReason> pauseReasons(){return Set.copyOf(pauses);}
+    public boolean hasUnfinishedBatch(){return batch!=null&&!batch.isEnded();}
+    public boolean blocksConfiguration(){return hasUnfinishedBatch()||boundary!=Boundary.NONE;}
+    public void requestAutomatic(boolean enabled){automatic=enabled;}
+    public void acknowledgeCommit(long expected){if(revision!=expected)throw new IllegalStateException("Unexpected execution revision");revision=Math.incrementExact(expected);}
+    public static ProductionExecution rehydrate(UUID id,ProductionBatch batch,ProductionBatch last,Boundary boundary,boolean automatic,long revision){return rehydrate(id,batch,last,boundary,automatic,revision,0,null,Set.of());}
+    public static ProductionExecution rehydrate(UUID id,ProductionBatch batch,ProductionBatch last,Boundary boundary,boolean automatic,long revision,long completed,Long processing,Set<PauseReason> reasons){
+        var e=new ProductionExecution(id,completed);if(revision<0)throw new IllegalArgumentException("Negative revision");
+        e.restore(batch,last,boundary,automatic);e.revision=revision;e.processingTick=processing;e.pauses.addAll(reasons);e.validate();return e;
     }
-
-    public UUID buildingId() { return buildingId; }
-    public long executionRevision() { return executionRevision; }
-    public long methodsEffectiveRevision() { return methodsEffectiveRevision; }
-
-    /** Persistence acknowledgement only; does not change a batch or its lifecycle. */
-    public void acknowledgeCommit(long expectedRevision) {
-        if (executionRevision != expectedRevision) throw new IllegalStateException("Unexpected execution revision");
-        executionRevision = Math.incrementExact(expectedRevision);
-    }
-
-    public static ProductionExecution rehydrate(UUID buildingId, ProductionBatch batch, ProductionBatch lastBatch,
-                                                Boundary boundary, boolean automatic, long revision) {
-        return rehydrate(buildingId, batch, lastBatch, boundary, automatic, revision, 0);
-    }
-
-    public static ProductionExecution rehydrate(UUID buildingId, ProductionBatch batch, ProductionBatch lastBatch,
-                                                Boundary boundary, boolean automatic, long revision, long methodsRevision) {
-        if (revision < 0 || methodsRevision < 0) throw new IllegalArgumentException("Negative production revision");
-        var execution = new ProductionExecution(buildingId);
-        execution.restore(batch, lastBatch, boundary, automatic);
-        execution.executionRevision = revision;
-        execution.methodsEffectiveRevision = methodsRevision;
-        return execution;
-    }
-
-    public ProductionBatch batch() {
-        return batch;
-    }
-
-    public ProductionBatch lastBatch() {
-        return lastBatch;
-    }
-
-    public Boundary boundary() {
-        return boundary;
-    }
-
-    public boolean hasUnfinishedBatch() {
-        return batch != null && !batch.isEnded();
-    }
-
-    public boolean blocksConfiguration() {
-        return hasUnfinishedBatch() || boundary != Boundary.NONE;
-    }
-
-    public boolean automatic() {
-        return automatic;
-    }
-
-    public void requestAutomatic(boolean enabled) {
-        automatic = enabled;
-    }
-
-    /**
-     * Opaque rollback checkpoint: callers cannot fabricate production progress or status.
-     */
     public static final class State {
-        private final ProductionExecution owner;
-        private final ProductionBatch batch, lastBatch;
-        private final Boundary boundary;
-        private final boolean automatic;
-        private final long executionRevision;
-        private final long methodsEffectiveRevision;
-
-        private State(ProductionExecution owner) {
-            this.owner = owner;
-            batch = owner.batch;
-            lastBatch = owner.lastBatch;
-            boundary = owner.boundary;
-            automatic = owner.automatic;
-            executionRevision = owner.executionRevision;
-            methodsEffectiveRevision = owner.methodsEffectiveRevision;
-        }
-
-        public ProductionBatch batch() {
-            return batch;
-        }
-
-        public ProductionBatch lastBatch() {
-            return lastBatch;
-        }
-
-        public Boundary boundary() {
-            return boundary;
-        }
-
-        public boolean automatic() {
-            return automatic;
-        }
-
-        public long methodsEffectiveRevision() { return methodsEffectiveRevision; }
+        private final ProductionExecution owner;private final ProductionBatch batch,last;private final Boundary boundary;private final boolean automatic;
+        private final long revision,completed;private final Long processing;private final Set<PauseReason> pauses;
+        private State(ProductionExecution e){owner=e;batch=e.batch;last=e.lastBatch;boundary=e.boundary;automatic=e.automatic;revision=e.revision;completed=e.lastCompletedTick;processing=e.processingTick;pauses=Set.copyOf(e.pauses);}
+        public ProductionBatch batch(){return batch;}public ProductionBatch lastBatch(){return last;}public Boundary boundary(){return boundary;}public boolean automatic(){return automatic;}
     }
-
-    public State state() {
-        return new State(this);
+    public State state(){return new State(this);}
+    public void restoreState(State s){if(s.owner!=this)throw new IllegalArgumentException("Foreign checkpoint");batch=s.batch;lastBatch=s.last;boundary=s.boundary;automatic=s.automatic;revision=s.revision;lastCompletedTick=s.completed;processingTick=s.processing;pauses.clear();pauses.addAll(s.pauses);validate();}
+    /** Progress and this marker must share one physical commit. False means durable replay. */
+    public boolean beginTick(long tick){
+        if(processingTick!=null){if(processingTick==tick)return false;throw new IllegalStateException("Unfinished production Tick "+processingTick);}
+        if(tick<=lastCompletedTick)return false;
+        if(tick!=Math.incrementExact(lastCompletedTick))throw new IllegalStateException("Production Tick gap; do not guess catchup");
+        processingTick=tick;return true;
     }
-
-    /**
-     * Rollback of a failed durable application command, never a player control.
-     */
-    public void restoreState(State state) {
-        if (state.owner != this) throw new IllegalArgumentException("Foreign production rollback checkpoint");
-        ProductionExecution validated = new ProductionExecution(buildingId);
-        validated.restore(state.batch(), state.lastBatch(), state.boundary(), state.automatic());
-        batch = validated.batch;
-        lastBatch = validated.lastBatch;
-        boundary = validated.boundary;
-        automatic = validated.automatic;
-        executionRevision = state.executionRevision;
-        methodsEffectiveRevision = state.methodsEffectiveRevision;
+    public void finishTick(long tick){if(processingTick==null||processingTick!=tick)throw new IllegalStateException("No matching production Tick");lastCompletedTick=tick;processingTick=null;}
+    public ProductionBatch start(UUID id,ProductionBatchConfiguration config){if(batch!=null||boundary!=Boundary.NONE)throw new IllegalStateException("Previous production has not finished");pauses.clear();batch=new ProductionBatch(id,buildingId,config,0,ProductionBatch.Status.ACTIVE);return batch;}
+    public void tick(long ticks){
+        if(ticks<0)throw new IllegalArgumentException("Negative economic ticks");if(batch==null||!batch.isActive())return;
+        long remaining=Math.subtractExact(batch.getMaximumProgressUnits(),batch.getProgressUnits());int speed=batch.getConfiguration().workforcePlan().speedNumerator();
+        long delta=ticks>remaining/speed?remaining:Math.min(remaining,Math.multiplyExact(ticks,speed));long progress=Math.addExact(batch.getProgressUnits(),delta);
+        change(progress==batch.getMaximumProgressUnits()?ProductionBatch.Status.SETTLING_COMPLETED:ProductionBatch.Status.ACTIVE,progress);
     }
-
-    public ProductionBatch start(UUID id, ProductionBatchConfiguration configuration) {
-        if (batch != null || boundary != Boundary.NONE)
-            throw new IllegalStateException("Previous production has not finished");
-        batch = new ProductionBatch(id, buildingId, configuration, 0, ProductionBatch.Status.ACTIVE);
-        return batch;
+    public void pause(){pause(PauseReason.MANUAL);}public void resume(){resume(PauseReason.MANUAL);}
+    public void pause(PauseReason reason){if(batch==null||batch.needsSettlement()||batch.isEnded())return;pauses.add(reason);change(ProductionBatch.Status.PAUSED,batch.getProgressUnits());}
+    public void resume(PauseReason reason){pauses.remove(reason);if(batch!=null&&batch.getStatus()==ProductionBatch.Status.PAUSED&&pauses.isEmpty())change(ProductionBatch.Status.ACTIVE,batch.getProgressUnits());}
+    public void terminate(){automatic=false;if(batch!=null&&!batch.isEnded()&&!batch.needsSettlement()){pauses.clear();change(ProductionBatch.Status.SETTLING_ABORTED,batch.getProgressUnits());}}
+    public void settlementCompleted(UUID id){if(batch==null||!batch.getId().equals(id))throw new IllegalStateException("Wrong settlement owner");if(batch.isEnded())return;if(!batch.needsSettlement())throw new IllegalStateException("Settlement not decided");pauses.clear();change(batch.getStatus()==ProductionBatch.Status.SETTLING_COMPLETED?ProductionBatch.Status.COMPLETED:ProductionBatch.Status.ABORTED,batch.getProgressUnits());boundary=Boundary.RECONFIGURING;}
+    public void reconfigurationCompleted(){if(boundary!=Boundary.RECONFIGURING||batch==null||!batch.isEnded())throw new IllegalStateException("No settled reconfiguration barrier");lastBatch=batch;batch=null;boundary=Boundary.NONE;}
+    private void change(ProductionBatch.Status status,long progress){batch=new ProductionBatch(batch.getId(),buildingId,batch.getConfiguration(),progress,status);}
+    public void restore(ProductionBatch batch,ProductionBatch last,Boundary boundary,boolean automatic){
+        if(this.batch!=null||lastBatch!=null||this.boundary!=Boundary.NONE)throw new IllegalStateException("Execution already initialized");
+        if(batch!=null&&!batch.getBuildingId().equals(buildingId))throw new IllegalArgumentException("Foreign Batch");
+        if((batch!=null&&batch.isEnded())!=(boundary==Boundary.RECONFIGURING))throw new IllegalArgumentException("Invalid restored barrier");
+        if(last!=null&&(!last.isEnded()||!last.getBuildingId().equals(buildingId)||(batch!=null&&batch.getId().equals(last.getId()))))throw new IllegalArgumentException("Invalid Batch history");
+        this.batch=batch;lastBatch=last;this.boundary=Objects.requireNonNull(boundary);this.automatic=automatic;
     }
-
-    public void tick(long ticks) {
-        if (ticks < 0) throw new IllegalArgumentException("Negative economic ticks");
-        if (batch == null || !batch.isActive()) return;
-        long remaining = batch.getMaximumProgressUnits() - batch.getProgressUnits();
-        int speed = batch.getConfiguration().workforcePlan().speedNumerator();
-        long delta = ticks > remaining / speed ? remaining : Math.min(remaining, ticks * speed);
-        long progress = batch.getProgressUnits() + delta;
-        change(progress == batch.getMaximumProgressUnits() ? ProductionBatch.Status.SETTLING_COMPLETED : ProductionBatch.Status.ACTIVE, progress);
-    }
-
-    public void pause() {
-        if (batch != null && batch.isActive()) change(ProductionBatch.Status.PAUSED, batch.getProgressUnits());
-    }
-
-    public void resume() {
-        if (batch != null && batch.getStatus() == ProductionBatch.Status.PAUSED)
-            change(ProductionBatch.Status.ACTIVE, batch.getProgressUnits());
-    }
-
-    public void terminate() {
-        automatic = false;
-        if (batch != null && !batch.isEnded() && !batch.needsSettlement()) {
-            change(ProductionBatch.Status.SETTLING_ABORTED, batch.getProgressUnits());
-        }
-    }
-
-    public void settlementCompleted(UUID batchId) {
-        if (batch == null || !batch.getId().equals(batchId)) throw new IllegalStateException("Wrong settlement owner");
-        if (batch.isEnded()) return;
-        if (!batch.needsSettlement()) throw new IllegalStateException("Production has not reached settlement");
-        change(batch.getStatus() == ProductionBatch.Status.SETTLING_COMPLETED ? ProductionBatch.Status.COMPLETED : ProductionBatch.Status.ABORTED, batch.getProgressUnits());
-        boundary = Boundary.METHODS;
-    }
-
-    public void methodsApplied() {
-        methodsApplied(methodsEffectiveRevision);
-    }
-
-    public void methodsApplied(long effectiveRevision) {
-        requireBoundary(Boundary.METHODS);
-        acknowledgeMethods(effectiveRevision);
-        boundary = Boundary.EQUIPMENT;
-    }
-
-    public void idleMethodsReconciled(long effectiveRevision) {
-        if (batch != null || boundary != Boundary.NONE) throw new IllegalStateException("Production is not idle");
-        acknowledgeMethods(effectiveRevision);
-    }
-
-    private void acknowledgeMethods(long revision) {
-        if (revision < methodsEffectiveRevision) throw new IllegalArgumentException("Effective PM revision regressed");
-        methodsEffectiveRevision = revision;
-    }
-
-    public void revisitMethods() {
-        if (boundary == Boundary.NONE || batch == null || !batch.isEnded())
-            throw new IllegalStateException("No settled batch boundary");
-        boundary = Boundary.METHODS;
-    }
-
-    /** Durable compatibility transition only; EQUIPMENT owns no business operation since M1.4. */
-    public void advanceLegacyBoundary() {
-        requireBoundary(Boundary.EQUIPMENT);
-        boundary = Boundary.WORKFORCE;
-    }
-
-    public void workforceReconciled() {
-        requireBoundary(Boundary.WORKFORCE);
-        lastBatch = batch;
-        batch = null;
-        boundary = Boundary.NONE;
-    }
-
-    private void requireBoundary(Boundary expected) {
-        if (boundary != expected || batch == null || !batch.isEnded())
-            throw new IllegalStateException("Unexpected production boundary: " + boundary);
-    }
-
-    private void change(ProductionBatch.Status status, long progress) {
-        batch = new ProductionBatch(batch.getId(), buildingId, batch.getConfiguration(), progress, status);
-    }
-
-    public void restore(ProductionBatch batch, ProductionBatch lastBatch, Boundary boundary, boolean automatic) {
-        if (this.batch != null || this.lastBatch != null || this.boundary != Boundary.NONE)
-            throw new IllegalStateException("Execution already initialized");
-        if (batch != null && !batch.getBuildingId().equals(buildingId))
-            throw new IllegalArgumentException("Foreign batch");
-        if ((batch != null && batch.isEnded()) != (boundary != Boundary.NONE))
-            throw new IllegalArgumentException("Invalid restored boundary");
-        if (lastBatch != null && (!lastBatch.isEnded() || !lastBatch.getBuildingId().equals(buildingId)))
-            throw new IllegalArgumentException("Invalid batch history");
-        if (batch != null && lastBatch != null && batch.getId().equals(lastBatch.getId()))
-            throw new IllegalArgumentException("Current and last batch must differ");
-        this.batch = batch;
-        this.lastBatch = lastBatch;
-        this.boundary = Objects.requireNonNull(boundary);
-        this.automatic = automatic;
+    private void validate(){
+        if(processingTick!=null&&processingTick!=Math.incrementExact(lastCompletedTick))throw new IllegalArgumentException("Invalid Tick checkpoint");
+        if((batch!=null&&batch.getStatus()==ProductionBatch.Status.PAUSED)!=!pauses.isEmpty())throw new IllegalArgumentException("Pause reasons do not match Batch");
     }
 }

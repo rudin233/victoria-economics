@@ -8,7 +8,7 @@ import com.bbmurloc.victoriaeconomics.server.workforce.port.StaffingQueryPort;
 import java.sql.Connection;
 import java.util.*;
 
-/** One DEFERRED committed snapshot for the staged model; never consumes NPC employment. */
+/** One DEFERRED snapshot of formal integer Staffing, PM capacity and derived regional supply. */
 public final class SqliteStaffingQuery implements StaffingQueryPort {
     private final Connection connection;
     private final Object lock;

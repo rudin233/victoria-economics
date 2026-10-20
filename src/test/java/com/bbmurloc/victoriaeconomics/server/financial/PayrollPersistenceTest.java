@@ -23,16 +23,17 @@ import static com.bbmurloc.victoriaeconomics.server.financial.FinancialTestWorld
 class PayrollPersistenceTest {
     @TempDir Path dir;
     Path file() { return dir.resolve("payroll.sqlite"); }
-    @Test void missingAuthorityRateOrEnrollmentNeverMeansCurrentAndEffectiveHiringStaysClosed() throws Exception {
+    @Test void missingRateOrEnrollmentCannotMeanCurrentOrPermitHiring() throws Exception {
         try(var w=new FinancialTestWorld(file())) {
             UUID b=w.world.create().getId();
-            assertEquals(State.UNAVAILABLE,w.query.state(b));
-            assertThrows(IllegalStateException.class,()->SqliteTransactions.write(w.c,tx->w.payroll.inTransaction(tx).enroll(UUID.randomUUID(),b,CURRENCY)));
-            w.sql("UPDATE payroll_runtime SET authority='BUILDING_STAFFING'");
-            assertThrows(IllegalStateException.class,()->w.enroll(b));
+            assertEquals(State.CURRENT,w.query.state(b)); // Empty but fully initialized real wage segment.
+            w.sql("DELETE FROM regional_wage_rates");w.world.setSupply(1);
+            assertThrows(IllegalStateException.class,()->w.world.commands.requestTarget(b,"laborer",1));
             assertEquals(State.UNAVAILABLE,w.query.state(b));
             assertThrows(IllegalStateException.class,()->w.world.commands.applyEffectiveChanges(b));
-            assertEquals(0,w.scalar("SELECT COUNT(*) FROM payroll_accruals"));assertEquals(0,w.scalar("SELECT COUNT(*) FROM employment_state"));
+            assertTrue(w.world.staffing.load(b).employed().isEmpty());
+            w.sql("DELETE FROM payroll_employment_history");w.sql("DELETE FROM payroll_accruals");assertEquals(State.UNAVAILABLE,w.query.state(b));
+            assertEquals(0,w.scalar("SELECT COUNT(*) FROM sqlite_master WHERE name='employment_state'"));
         }
     }
     @Test void realFactsDistinguishNotDueCurrentArrearsRecoveryAndUnavailable() throws Exception {
@@ -70,7 +71,7 @@ class PayrollPersistenceTest {
             assertEquals(100,w.payroll.load(p).accrued());assertEquals(3,w.payroll.load(p).employees());
             w.acceptedTimeFixture(200);w.changeEmployeesFixture(p,0);assertEquals(400,w.payroll.load(p).accrued());
             w.acceptedTimeFixture(1200);w.accrual.recoverAcceptedTime();assertEquals(400,w.payroll.load(p).matured());
-            assertTrue(w.world.staffing.load(b).employed().isEmpty());assertEquals(0,w.scalar("SELECT COUNT(*) FROM employment_state"));
+            assertTrue(w.world.staffing.load(b).employed().isEmpty());assertEquals(0,w.scalar("SELECT COUNT(*) FROM sqlite_master WHERE name='employment_state'"));
         }
     }
     @Test void employeeWriteFailureRollsBackOldAccrualAndHeadcountTogether() throws Exception {
@@ -106,7 +107,7 @@ class PayrollPersistenceTest {
             if(control.equals("STOPPED")||control.equals("DISABLED"))w.sql("UPDATE economic_buildings SET status='"+control+"' WHERE id='"+b+"'");
             if(control.equals("PAUSED")||control.equals("SETTLING_ABORTED")) {
                 var recipe=new ResolvedProductionRecipe(Map.of("wood",1L),Map.of("tools",1L),Map.of("laborer",1));
-                var snapshot=new ProductionBatchConfiguration(Map.of("base","test"),recipe,new WorkforcePlan(Map.of("laborer",List.of(UUID.randomUUID())),1,1));
+                var snapshot=new ProductionBatchConfiguration(Map.of("base","test"),recipe,new WorkforcePlan(Map.of("laborer",1),1,1));
                 UUID batch=UUID.randomUUID();
                 try(var s=w.c.prepareStatement("INSERT INTO production_batches VALUES(?,?,?,?,?)")) {
                     s.setString(1,batch.toString());s.setString(2,b.toString());s.setString(3,EconomyStateCodec.encodeBatchConfiguration(snapshot));s.setLong(4,20);s.setString(5,control);s.executeUpdate();
@@ -196,7 +197,7 @@ class PayrollPersistenceTest {
             w.sql("CREATE TRIGGER fail_history BEFORE INSERT ON payroll_employment_history BEGIN SELECT RAISE(ABORT,'failed'); END");
             assertThrows(RuntimeException.class,()->w.changeEmployeesFixture(p,3));
             assertEquals(0,w.payroll.load(p).lastAccruedTick());assertEquals(2,w.world.staffing.load(b).employed().get("laborer"));
-            assertEquals(1,w.scalar("SELECT COUNT(*) FROM payroll_employment_history"));
+            assertEquals(2,w.scalar("SELECT COUNT(*) FROM payroll_employment_history")); // Initial empty base plus the initial hire.
         }
     }
     @Test void unaccruedOrMismatchedStaffingCannotBeAcknowledgedAsNewPayrollBase() throws Exception {
@@ -217,7 +218,7 @@ class PayrollPersistenceTest {
     }
     @Test void missingEnrollmentCannotAdvanceCursorPastEmployedWages() throws Exception {
         try(var w=new FinancialTestWorld(file())) {
-            w.staffingFixture(1,7);w.acceptedTimeFixture(1200);
+            w.staffingFixture(1,7);w.sql("DELETE FROM payroll_employment_history");w.sql("DELETE FROM payroll_accruals");w.acceptedTimeFixture(1200);
             assertThrows(IllegalStateException.class,w.accrual::recoverAcceptedTime);assertEquals(0,w.time.load().payrollTick());
         }
     }
@@ -225,7 +226,7 @@ class PayrollPersistenceTest {
         try(var w=new FinancialTestWorld(file())) {
             UUID b=w.staffingFixture(1,7),p=w.enroll(b);w.acceptedTimeFixture(100);w.changeEmployeesFixture(p,3);
             w.acceptedTimeFixture(399);w.changeEmployeesFixture(p,2);w.acceptedTimeFixture(1200);w.accrual.recoverAcceptedTime();
-            assertEquals(3,w.scalar("SELECT COUNT(*) FROM payroll_employment_history"));
+            assertEquals(4,w.scalar("SELECT COUNT(*) FROM payroll_employment_history"));
         }
         try(var ignored=SqliteEconomyDatabase.open(file())) {}
     }

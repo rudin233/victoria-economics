@@ -1,100 +1,46 @@
 package com.bbmurloc.victoriaeconomics.server.production.application;
 
-import com.bbmurloc.victoriaeconomics.server.production.domain.EmploymentFact;
-import com.bbmurloc.victoriaeconomics.server.production.domain.WorkforcePlanningService;
-import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteEmploymentRepository;
-import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentRecord;
-import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-
+import com.bbmurloc.victoriaeconomics.server.TestIdentities;
+import com.bbmurloc.victoriaeconomics.server.finance.domain.CurrencyId;
+import com.bbmurloc.victoriaeconomics.server.payroll.domain.RegionalWageRate;
 import java.nio.file.Path;
-import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.BiPredicate;
-
+import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class WorkforceContractTest {
-    @TempDir
-    Path directory;
-
-    private EmploymentService adapter(TestEconomy economy, BiPredicate<UUID, String> qualified) {
-        var repository = new SqliteEmploymentRepository(economy.connection);
-        return new EmploymentService(economy.employees, economy.buildings, economy.occupations,
-                qualified, repository::save, economy.facts, economy.lock);
-    }
-
-    private ProductionService production(TestEconomy economy, EmploymentService workforce) {
-        return new ProductionService(economy.buildings, economy.configurations, economy.repository, economy.inventory,
-                building -> economy.payroll.get(), workforce, economy.journal, economy.lock);
-    }
-
-    @Test
-    void adapterKeepsUnqualifiedFormalEmployeesButExcludesOtherBuildingsAndPendingDismissals() throws Exception {
-        try (var economy = new TestEconomy(directory.resolve("economy.sqlite"), true)) {
-            UUID unqualified = new UUID(1, 1), pending = new UUID(1, 2);
-            var workforce = adapter(economy, (npc, role) -> !npc.equals(unqualified));
-            var other = economy.createBuilding();
-            economy.employment.hire(UUID.randomUUID(), other.getId(), "laborer");
-            economy.employees.requestDismissal(pending);
-
-            var facts = workforce.effectiveEmployment(economy.id);
-            assertEquals(13, facts.size());
-            assertTrue(facts.contains(new EmploymentFact(unqualified, economy.id, "laborer")));
-            assertFalse(workforce.qualified(unqualified, "laborer"));
-            assertTrue(facts.stream().allMatch(fact -> fact.buildingId().equals(economy.id)));
-            assertFalse(facts.stream().anyMatch(fact -> fact.employeeId().equals(pending)));
-            assertThrows(UnsupportedOperationException.class, facts::clear);
-
-            var plan = new WorkforcePlanningService().plan(economy.id, Map.of("laborer", 10, "machinist", 4),
-                    facts, workforce::qualified);
-            assertEquals(0.8, plan.speed());
-            assertEquals(8, plan.employees().get("laborer").size());
-            assertEquals(4, plan.employees().get("machinist").size());
-            assertFalse(plan.employees().get("laborer").contains(unqualified));
-            assertNotNull(workforce.getEmployment(unqualified));
+    @TempDir Path dir;
+    @Test void productionUsesOnlyPersistentIntegerStaffingWithNoEmploymentTable()throws Exception{
+        try(var e=new TestEconomy(dir.resolve("authority.sqlite"),true)){
+            e.staffing.requestTarget(e.id,"laborer",6);e.staffing.requestTarget(e.id,"machinist",3);
+            var frozen=e.production.startBatch(e.id).getConfiguration();assertEquals(Map.of("laborer",6,"machinist",3),frozen.workforcePlan().participatingWorkers());assertEquals(0.6,frozen.productionSpeed());
+            assertEquals(0,e.scalar("SELECT COUNT(*) FROM sqlite_master WHERE name='employment_state'"));
         }
     }
-
-    @Test
-    void unqualifiedNewEmploymentStillViolatesPositionCapacityAtFinalCommit() throws Exception {
-        try (var economy = new TestEconomy(directory.resolve("economy.sqlite"), true)) {
-            UUID excess = UUID.randomUUID();
-            var workforce = adapter(economy, (npc, role) -> !npc.equals(excess));
-            var production = production(economy, workforce);
-            // Simulate an authority change after reservation; qualification filtering must not hide overstaffing.
-            economy.inventory.afterReserve = () -> economy.employees.add(new EmploymentRecord(excess, economy.id, "laborer"));
-
-            var failure = assertThrows(IllegalStateException.class, () -> production.startBatch(economy.id));
-            assertTrue(failure.getMessage().contains("Employment exceeds current PM capacity"));
-            assertEquals(11, workforce.effectiveEmployment(economy.id).stream()
-                    .filter(fact -> fact.occupationId().equals("laborer")).count());
-            assertNull(economy.execution().batch());
-            assertTrue(economy.stockState().reservations().isEmpty());
-            assertTrue(economy.journal.pendingStarts().isEmpty());
-            assertEquals(100, economy.quantity("wood"));
+    @Test void pendingDoesNotChangeEffectiveHeadcountOrFrozenParticipation()throws Exception{
+        try(var e=new TestEconomy(dir.resolve("pending.sqlite"),true)){
+            var frozen=e.production.startBatch(e.id).getConfiguration();e.staffing.requestTarget(e.id,"laborer",3);
+            assertEquals(10,e.staffingRepository.load(e.id).employed().get("laborer"));assertEquals(3,e.staffingRepository.load(e.id).pending().get("laborer"));
+            assertEquals(14,e.scalar("SELECT employees FROM payroll_accruals"));assertEquals(frozen,e.execution().batch().getConfiguration());
+            assertThrows(IllegalStateException.class,()->e.staffing.applyEffectiveChanges(e.id));
         }
     }
-
-    @Test
-    void qualificationLossAfterReservationIsRecheckedAndCompensated() throws Exception {
-        try (var economy = new TestEconomy(directory.resolve("economy.sqlite"), true)) {
-            var qualified = new AtomicBoolean(true);
-            var workforce = adapter(economy, (npc, role) -> qualified.get() || !npc.equals(new UUID(1, 1)));
-            var production = production(economy, workforce);
-            economy.inventory.afterReserve = () -> qualified.set(false);
-
-            assertThrows(IllegalStateException.class, () -> production.startBatch(economy.id));
-            assertEquals(14, workforce.effectiveEmployment(economy.id).size());
-            assertNull(economy.execution().batch());
-            assertTrue(economy.stockState().reservations().isEmpty());
-            assertTrue(economy.journal.pendingStarts().isEmpty());
-
-            economy.inventory.afterReserve = () -> {};
-            qualified.set(true);
-            assertNotNull(production.startBatch(economy.id));
+    @Test void newEmployeesAfterReservationAreRecheckedAndFailedStartCompensates()throws Exception{
+        try(var e=new TestEconomy(dir.resolve("recheck.sqlite"),true)){
+            e.inventory.afterReserve=()->e.staffingRaceFixture("machinist",0);
+            assertThrows(ProductionStartBlocked.class,()->e.production.startBatch(e.id));assertNull(e.execution().batch());assertTrue(e.stockState().reservations().isEmpty());assertTrue(e.journal.pendingStarts().isEmpty());
+        }
+    }
+    @Test void liveWageRateAndPendingRequestsCannotRewriteAnExistingBatchSnapshot()throws Exception{
+        try(var e=new TestEconomy(dir.resolve("wage-snapshot.sqlite"),true)){
+            var batch=e.production.startBatch(e.id);var frozen=batch.getConfiguration();e.ticks(50);
+            e.accrual.configureRate(new RegionalWageRate(TestIdentities.REGION,new CurrencyId(new UUID(700,1)),50,2,1));
+            e.staffing.requestTarget(e.id,"laborer",3);e.production.selectProductionMethod(e.id,"tooling_workshop_base","reduced_tools");
+            e.ticks(1);
+            assertEquals(batch.getId(),e.execution().batch().getId());assertEquals(frozen,e.execution().batch().getConfiguration());
+            assertEquals(Map.of("laborer",10,"machinist",4),frozen.workforcePlan().participatingWorkers());assertEquals(51,e.execution().batch().getProgressUnits());
+            assertEquals(728,e.scalar("SELECT remainder FROM payroll_accruals"));assertEquals(14,e.scalar("SELECT employees FROM payroll_accruals"));
         }
     }
 }

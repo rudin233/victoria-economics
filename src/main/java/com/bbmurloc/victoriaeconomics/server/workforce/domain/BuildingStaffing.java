@@ -2,7 +2,7 @@ package com.bbmurloc.victoriaeconomics.server.workforce.domain;
 
 import java.util.*;
 
-/** Independent staged staffing root. Never contains NPCs, PM capacity, supply or payroll. */
+/** Independent employment authority; never duplicates PM capacity, regional supply or payroll. */
 public record BuildingStaffing(UUID buildingId, Map<String, Integer> employed,
                                Map<String, Integer> pending, long revision) {
     public BuildingStaffing {

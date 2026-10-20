@@ -2,7 +2,7 @@ package com.bbmurloc.victoriaeconomics.server.workforce.domain;
 
 import java.util.*;
 
-/** Pure proposal only. Persisting effective changes requires future real payroll accrual first. */
+/** Pure proposal. Effective persistence must first accrue old wages in the same shared transaction. */
 public record StaffingTransition(BuildingStaffing before, BuildingStaffing after) {
     public StaffingTransition {
         if (!before.buildingId().equals(after.buildingId()) || after.revision() != Math.incrementExact(before.revision()))

@@ -14,6 +14,12 @@ public final class TestIdentities {
         try (var statement = connection.createStatement()) {
             statement.executeUpdate("INSERT INTO companies VALUES('" + COMPANY + "') ON CONFLICT DO NOTHING");
             statement.executeUpdate("INSERT INTO regions VALUES('" + REGION + "') ON CONFLICT DO NOTHING");
+            long version;
+            try(var r=statement.executeQuery("SELECT version FROM economy_schema_migrations")){r.next();version=r.getLong(1);}
+            if(version>=7){
+                statement.executeUpdate("INSERT INTO currencies VALUES('00000000-0000-02bc-0000-000000000001','Explicit isolated test currency') ON CONFLICT DO NOTHING");
+                statement.executeUpdate("INSERT INTO regional_wage_rates VALUES('"+REGION+"','00000000-0000-02bc-0000-000000000001',0,1,0) ON CONFLICT DO NOTHING");
+            }
         }
     }
     public static void building(Connection connection, UUID id, String type) throws SQLException {
@@ -24,6 +30,15 @@ public final class TestIdentities {
         }
         try (var insert = connection.prepareStatement("INSERT INTO building_staffing VALUES(?,0)")) {
             insert.setString(1, id.toString()); insert.executeUpdate();
+        }
+        long version;
+        try(var s=connection.createStatement();var r=s.executeQuery("SELECT version FROM economy_schema_migrations")){r.next();version=r.getLong(1);}
+        if(version>=7){
+            UUID segment=UUID.nameUUIDFromBytes(("payroll:"+id).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            try(var s=connection.createStatement()){
+                s.executeUpdate("INSERT INTO payroll_accruals VALUES('"+segment+"','"+id+"','"+COMPANY+"','"+REGION+"','00000000-0000-02bc-0000-000000000001',0,0,NULL,0,0,0,0,0,0,0)");
+                s.executeUpdate("INSERT INTO payroll_employment_history VALUES('"+segment+"',0,0,0)");
+            }
         }
     }
 }

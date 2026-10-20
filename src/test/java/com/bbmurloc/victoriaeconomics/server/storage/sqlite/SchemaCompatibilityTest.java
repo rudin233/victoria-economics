@@ -25,11 +25,11 @@ class SchemaCompatibilityTest {
     private static final UUID RESERVED = UUID.fromString("00000000-0000-0000-0000-000000000004");
     private static final UUID SETTLED = UUID.fromString("00000000-0000-0000-0000-000000000005");
 
-    // Literal v6 and historical v2/v3/v4/v5 fixtures, independent of the current writer.
+    // Literal v7 and historical v2-v6 fixtures, independent of the current writer.
     private static final String BATCH_JSON = """
-            {"formatVersion":6,"fullSpeedTicks":200,"snapshot":{"productionMethodSelections":{"base":"a"},
+            {"formatVersion":7,"fullSpeedTicks":200,"snapshot":{"productionMethodSelections":{"base":"a"},
              "resolvedRecipe":{"inputs":{"ore":10},"outputs":{"metal":5},"requiredWorkers":{"worker":1}},
-             "workforcePlan":{"employees":{"worker":["%s"]},"speedNumerator":1,"speedDenominator":1},
+             "workforcePlan":{"participatingWorkers":{"worker":1},"speedNumerator":1,"speedDenominator":1},
              "effectiveRevision":0}}
             """.formatted(EMPLOYEE);
     private static final String V3_EQUIPMENT_JSON = """
@@ -37,7 +37,7 @@ class SchemaCompatibilityTest {
              "protectedByBatch":"%s","requests":[]}
             """.formatted(BUILDING, BATCH);
     private static final String INVENTORY_JSON = """
-            {"formatVersion":6,"snapshot":{"location":"%s","capacity":100,"quantities":{"ore":12,"metal":1},
+            {"formatVersion":7,"snapshot":{"location":"%s","capacity":100,"quantities":{"ore":12,"metal":1},
              "reservations":{"%s":{"ore":5}},
              "settlements":{"%s":{"command":{"batchId":"%s","outcome":"COMPLETED","inputs":{"ore":2},"outputs":{"metal":1}}}}}}
             """.formatted(BUILDING, RESERVED, SETTLED, SETTLED);
@@ -61,8 +61,14 @@ class SchemaCompatibilityTest {
              "settlements":{"%s":{"batchId":"%s","consumed":{"ore":2.5},"produced":{"metal":1.125}}}}
             """.formatted(BUILDING, RESERVED, SETTLED, SETTLED);
 
-    @Test void validV6LoadsIntegerGoodsAndPreservesNpcUuidSnapshots() throws Exception {
-        Path file = fixture("v6.sqlite");
+    private static final String V6_BATCH_JSON="""
+            {"formatVersion":6,"fullSpeedTicks":200,"snapshot":{"productionMethodSelections":{"base":"a"},
+             "resolvedRecipe":{"inputs":{"ore":10},"outputs":{"metal":5},"requiredWorkers":{"worker":1}},
+             "workforcePlan":{"employees":{"worker":["%s"]},"speedNumerator":1,"speedDenominator":1},"effectiveRevision":0}}
+            """.formatted(EMPLOYEE);
+
+    @Test void validV7LoadsIntegerGoodsAndIntegerParticipation() throws Exception {
+        Path file = fixture("v7.sqlite");
         seedBatch(file, BATCH_JSON, "ACTIVE", 100);
         byte[] before = Files.readAllBytes(file);
         try (var connection = SqliteEconomyDatabase.open(file)) {
@@ -71,15 +77,15 @@ class SchemaCompatibilityTest {
             assertEquals(100, batch.getProgressUnits());
             assertEquals(0.5, batch.getProgress());
 
-            assertEquals(List.of(EMPLOYEE), batch.getConfiguration().workforcePlan().employees().get("worker"));
+            assertEquals(1, batch.getConfiguration().workforcePlan().participatingWorkers().get("worker"));
             assertEquals(10L, batch.getConfiguration().resolvedRecipe().inputs().get("ore"));
             var stock = new SqliteInventoryStore(connection, new Object()).inspect(BUILDING);
             assertEquals(12L, stock.quantities().get("ore"));
             assertEquals(5L, stock.reservations().get(RESERVED).get("ore"));
             assertEquals(1L, stock.settlements().get(SETTLED).produced().get("metal"));
-            assertEquals(6, scalar(connection, "SELECT version FROM economy_schema_migrations"));
+            assertEquals(7, scalar(connection, "SELECT version FROM economy_schema_migrations"));
         }
-        assertArrayEquals(before, Files.readAllBytes(file), "Read-only startup must not rewrite valid v6 data");
+        assertArrayEquals(before, Files.readAllBytes(file), "Read-only startup must not rewrite valid v7 data");
     }
 
     @ParameterizedTest @ValueSource(strings = {"ACTIVE", "PAUSED", "SETTLING_COMPLETED", "SETTLING_ABORTED"})
@@ -95,7 +101,7 @@ class SchemaCompatibilityTest {
     }
 
     @ParameterizedTest @ValueSource(strings = {"ACTIVE", "PAUSED", "SETTLING_COMPLETED", "SETTLING_ABORTED"})
-    void currentV6BatchStatesUseThe200TickBasis(String status) throws Exception {
+    void currentV7BatchStatesUseThe200TickBasis(String status) throws Exception {
         Path file = fixture("current-batch.sqlite");
         long progress = status.equals("SETTLING_COMPLETED") ? 200 : 199;
         seedBatch(file, BATCH_JSON, status, progress);
@@ -125,7 +131,7 @@ class SchemaCompatibilityTest {
         }
     }
 
-    @ParameterizedTest @ValueSource(ints = {-1, 0, 2, 3, 4, 5, 99})
+    @ParameterizedTest @ValueSource(ints = {-1, 0, 2, 3, 4, 5, 6, 99})
     void unknownSchemaVersionsAreRejectedBeforeAnyWritableHandleIsExposed(int version) throws Exception {
         Path file = fixture("unknown.sqlite");
         try (var connection = connect(file)) { sql(connection, "UPDATE economy_schema_migrations SET version=" + version); }
@@ -133,7 +139,7 @@ class SchemaCompatibilityTest {
     }
 
     @ParameterizedTest @ValueSource(strings = {"DELETE FROM economy_schema_migrations", "INSERT INTO economy_schema_migrations VALUES(2)",
-            "DROP TABLE employment_state", "DROP INDEX one_unfinished_batch_per_building",
+            "DROP TABLE payroll_employment_history", "DROP INDEX one_unfinished_batch_per_building",
             "ALTER TABLE inventory_locations ADD COLUMN future_version INTEGER", "CREATE TABLE future_layout(id TEXT)",
             "CREATE TABLE sqlitex_future_layout(id TEXT)"})
     void incompleteOrMixedSchemasAreRejectedWithoutRepair(String mutation) throws Exception {
@@ -162,19 +168,19 @@ class SchemaCompatibilityTest {
 
     @ParameterizedTest @ValueSource(strings = {"missingWorkforce", "missingRevision", "futureVersion", "futureWorkers", "fractionalInteger",
             "legacyBasis", "legacySnapshot", "v3Snapshot", "removedEquipment", "wrongVersion", "fractionalGoods", "floatingInteger", "exponent", "overflow", "noWorkers",
-            "stringNumber", "duplicate", "null", "trailing", "comment", "invalidUuid", "invalidSpeed", "invalidRecipe"})
+            "stringNumber", "duplicate", "null", "trailing", "comment", "invalidCount", "invalidSpeed", "invalidRecipe"})
     void unrecognizedBatchSnapshotsAreRejectedAtStartupAndRepositoryLoad(String kind) throws Exception {
         String malformed = switch (kind) {
             case "missingWorkforce" -> BATCH_JSON.replace("\"workforcePlan\"", "\"oldWorkers\"");
             case "missingRevision" -> BATCH_JSON.replace(",\n \"effectiveRevision\":0", "");
-            case "futureVersion" -> BATCH_JSON.replace("\"effectiveRevision\":0", "\"effectiveRevision\":0,\"formatVersion\":6,\"fullSpeedTicks\":200");
-            case "futureWorkers" -> BATCH_JSON.replace("\"employees\"", "\"participatingWorkers\"");
+            case "futureVersion" -> BATCH_JSON.replace("\"effectiveRevision\":0", "\"effectiveRevision\":0,\"formatVersion\":7,\"fullSpeedTicks\":200");
+            case "futureWorkers" -> BATCH_JSON.replace("\"participatingWorkers\"", "\"employees\"");
             case "fractionalInteger" -> BATCH_JSON.replace("\"speedDenominator\":1", "\"speedDenominator\":1.5");
             case "legacyBasis" -> BATCH_JSON.replace("\"fullSpeedTicks\":200", "\"fullSpeedTicks\":1200");
             case "legacySnapshot" -> LEGACY_BATCH_JSON;
             case "v3Snapshot" -> V3_BATCH_JSON;
-            case "removedEquipment" -> V3_BATCH_JSON.replace("\"formatVersion\":3", "\"formatVersion\":6");
-            case "wrongVersion" -> BATCH_JSON.replace("\"formatVersion\":6", "\"formatVersion\":2");
+            case "removedEquipment" -> V3_BATCH_JSON.replace("\"formatVersion\":3", "\"formatVersion\":7");
+            case "wrongVersion" -> BATCH_JSON.replace("\"formatVersion\":7", "\"formatVersion\":2");
             case "fractionalGoods" -> BATCH_JSON.replace("\"ore\":10", "\"ore\":10.5");
             case "floatingInteger" -> BATCH_JSON.replace("\"ore\":10", "\"ore\":10.0");
             case "exponent" -> BATCH_JSON.replace("\"ore\":10", "\"ore\":1e1");
@@ -185,7 +191,7 @@ class SchemaCompatibilityTest {
             case "null" -> "null";
             case "trailing" -> BATCH_JSON + " {}";
             case "comment" -> "/* future */" + BATCH_JSON;
-            case "invalidUuid" -> BATCH_JSON.replace(EMPLOYEE.toString(), "npc-uuid-from-another-format");
+            case "invalidCount" -> BATCH_JSON.replace("\"participatingWorkers\":{\"worker\":1}", "\"participatingWorkers\":{\"worker\":0}");
             case "invalidSpeed" -> BATCH_JSON.replace("\"speedNumerator\":1", "\"speedNumerator\":0");
             default -> BATCH_JSON.replace("\"metal\":5", "\"metal\":-5");
         };
@@ -208,8 +214,8 @@ class SchemaCompatibilityTest {
             case "missingCapacity" -> INVENTORY_JSON.replace("\"capacity\":100,", "");
             case "nullCapacity" -> INVENTORY_JSON.replace("\"capacity\":100", "\"capacity\":null");
             case "legacySnapshot" -> LEGACY_INVENTORY_JSON;
-            case "v3Snapshot" -> INVENTORY_JSON.replace("\"formatVersion\":6", "\"formatVersion\":3");
-            case "wrongVersion" -> INVENTORY_JSON.replace("\"formatVersion\":6", "\"formatVersion\":2");
+            case "v3Snapshot" -> INVENTORY_JSON.replace("\"formatVersion\":7", "\"formatVersion\":3");
+            case "wrongVersion" -> INVENTORY_JSON.replace("\"formatVersion\":7", "\"formatVersion\":2");
             case "fractionalGoods" -> INVENTORY_JSON.replace("\"ore\":12", "\"ore\":12.5");
             case "floatingInteger" -> INVENTORY_JSON.replace("\"ore\":12", "\"ore\":12.0");
             case "exponent" -> INVENTORY_JSON.replace("\"ore\":12", "\"ore\":12e0");
@@ -350,7 +356,7 @@ class SchemaCompatibilityTest {
     @ParameterizedTest @ValueSource(strings = {"ACTIVE", "PAUSED", "SETTLING_COMPLETED", "SETTLING_ABORTED", "COMPLETED", "ABORTED"})
     void oldV4WorldIsRejectedWithoutFillingIdentityOrStaffingFromNpcSnapshots(String status) throws Exception {
         Path file = fixture("v4.sqlite", UnaryOperator.identity(), 4);
-        String oldJson = BATCH_JSON.replace("\"formatVersion\":6", "\"formatVersion\":4");
+        String oldJson = V6_BATCH_JSON.replace("\"formatVersion\":6", "\"formatVersion\":4");
         seedBatch(file, oldJson, status, status.endsWith("COMPLETED") ? 200 : 199);
         if (status.equals("COMPLETED") || status.equals("ABORTED"))
             try (var connection = connect(file)) { sql(connection, "UPDATE production_executions SET boundary='METHODS'"); }
@@ -363,7 +369,7 @@ class SchemaCompatibilityTest {
 
     @Test void oldV4MainAndWalBytesSurviveTheNewIdentityGate() throws Exception {
         Path file = fixture("v4-wal.sqlite", UnaryOperator.identity(), 4);
-        seedBatch(file, BATCH_JSON.replace("\"formatVersion\":6", "\"formatVersion\":4"), "ACTIVE", 100);
+        seedBatch(file, V6_BATCH_JSON.replace("\"formatVersion\":6", "\"formatVersion\":4"), "ACTIVE", 100);
         try (var writer = connect(file)) {
             sql(writer, "PRAGMA journal_mode=WAL"); sql(writer, "PRAGMA wal_autocheckpoint=0");
             sql(writer, "UPDATE production_batches SET status='PAUSED'");
@@ -378,7 +384,7 @@ class SchemaCompatibilityTest {
     @ParameterizedTest @ValueSource(strings = {"ACTIVE", "PAUSED", "SETTLING_COMPLETED", "SETTLING_ABORTED", "COMPLETED", "ABORTED"})
     void oldV5WorldAndItsIntegerSnapshotsAreRejectedWithoutAddingMoneyOrPayroll(String status) throws Exception {
         Path file = fixture("v5.sqlite", UnaryOperator.identity(), 5);
-        seedBatch(file, BATCH_JSON.replace("\"formatVersion\":6", "\"formatVersion\":5"), status, status.endsWith("COMPLETED") ? 200 : 199);
+        seedBatch(file, V6_BATCH_JSON.replace("\"formatVersion\":6", "\"formatVersion\":5"), status, status.endsWith("COMPLETED") ? 200 : 199);
         assertRejectedUnchanged(file);
         try (var reader = readOnly(file)) {
             assertEquals(5, scalar(reader, "SELECT version FROM economy_schema_migrations"));
@@ -397,9 +403,28 @@ class SchemaCompatibilityTest {
         }
     }
 
+    @ParameterizedTest @ValueSource(strings={"ACTIVE","PAUSED","SETTLING_COMPLETED","SETTLING_ABORTED","COMPLETED","ABORTED"})
+    void oldV6NpcSnapshotsAndLegacyBoundaryAreRejectedWithoutReinterpretation(String status)throws Exception{
+        Path file=fixture("v6-historical.sqlite",UnaryOperator.identity(),6);
+        seedBatch(file,V6_BATCH_JSON,status,status.endsWith("COMPLETED")?200:199);
+        try(var c=connect(file)){sql(c,"UPDATE production_executions SET boundary='"+((status.equals("COMPLETED")||status.equals("ABORTED"))?"WORKFORCE":"NONE")+"'");}
+        assertRejectedUnchanged(file);
+        try(var c=readOnly(file)){
+            assertEquals(6,scalar(c,"SELECT version FROM economy_schema_migrations"));assertEquals(1,scalar(c,"SELECT COUNT(*) FROM sqlite_master WHERE name='employment_state'"));
+            try(var s=c.createStatement();var r=s.executeQuery("SELECT configuration_json FROM production_batches")){r.next();assertEquals(V6_BATCH_JSON,r.getString(1));}
+        }
+    }
+    @Test void oldV6MainAndWalBytesSurviveTheIntegerStaffingGate()throws Exception{
+        Path file=fixture("v6-historical-wal.sqlite",UnaryOperator.identity(),6);seedBatch(file,V6_BATCH_JSON,"PAUSED",199);
+        try(var writer=connect(file)){
+            sql(writer,"PRAGMA journal_mode=WAL");sql(writer,"PRAGMA wal_autocheckpoint=0");sql(writer,"UPDATE production_executions SET automatic=1");
+            Path wal=Path.of(file+"-wal");byte[] before=Files.readAllBytes(wal);assertTrue(before.length>0);assertRejectedUnchanged(file);assertArrayEquals(before,Files.readAllBytes(wal));
+        }
+    }
+
     @ParameterizedTest @ValueSource(strings = {"missingStaffing", "invalidIdentity", "invalidCount", "overSupply"})
     void newIdentityAndLaborInconsistenciesAreRejectedBeforeBusinessWrites(String kind) throws Exception {
-        Path file = fixture("invalid-v6.sqlite");
+        Path file = fixture("invalid-v7.sqlite");
         try (var connection = connect(file)) {
             switch (kind) {
                 case "missingStaffing" -> sql(connection, "DELETE FROM building_staffing");
@@ -445,11 +470,11 @@ class SchemaCompatibilityTest {
         assertRejectedUnchanged(file);
     }
 
-    @Test void absentDatabaseCreatesV6AndExplicitSnapshotEnvelopes() throws Exception {
+    @Test void absentDatabaseCreatesV7AndExplicitSnapshotEnvelopes() throws Exception {
         Path file = directory.resolve("new.sqlite");
         assertFalse(Files.exists(file));
         try (var connection = SqliteEconomyDatabase.open(file)) {
-            assertEquals(6, scalar(connection, "SELECT version FROM economy_schema_migrations"));
+            assertEquals(7, scalar(connection, "SELECT version FROM economy_schema_migrations"));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM sqlite_master WHERE name='equipment_holdings'"));
             var store = new SqliteInventoryStore(connection, new Object());
             store.createLocation(BUILDING, 100);
@@ -486,7 +511,7 @@ class SchemaCompatibilityTest {
         assertRejectedUnchanged(file);
     }
 
-    @Test void floatingPointSignedZeroIsRejectedInV6WithoutConversion() throws Exception {
+    @Test void floatingPointSignedZeroIsRejectedInV7WithoutConversion() throws Exception {
         Path file = fixture("signed-zero.sqlite");
         try (var connection = connect(file)) {
             updateInventory(connection, INVENTORY_JSON.replace("\"metal\":1", "\"metal\":-0.0"));
@@ -514,7 +539,7 @@ class SchemaCompatibilityTest {
     private Path fixture(String name) throws Exception { return fixture(name, UnaryOperator.identity()); }
 
     private Path fixture(String name, UnaryOperator<String> change) throws Exception {
-        return fixture(name, change, 6);
+        return fixture(name, change, 7);
     }
 
     private Path legacyFixture(String name) throws Exception { return fixture(name, UnaryOperator.identity(), 2); }
@@ -530,10 +555,10 @@ class SchemaCompatibilityTest {
             if (version >= 5) com.bbmurloc.victoriaeconomics.server.TestIdentities.building(connection, BUILDING, "factory");
             else sql(connection, "INSERT INTO economic_buildings VALUES('" + BUILDING + "','factory','ACTIVE')");
             sql(connection, "INSERT INTO production_method_configurations VALUES('" + BUILDING + "','{\"methods\":{\"base\":\"a\"}}',NULL,0,0)");
-            sql(connection, "INSERT INTO production_executions VALUES('" + BUILDING + "',NULL,NULL,'NONE',0,0,0)");
+            sql(connection, "INSERT INTO production_executions VALUES('" + BUILDING + "',NULL,NULL,'NONE',0,0,0" + (version >= 7 ? ",NULL,'[]'" : "") + ")");
             try (var insert = connection.prepareStatement(version == 2 ? "INSERT INTO inventory_locations VALUES(?,?)" : "INSERT INTO inventory_locations VALUES(?,?,0)")) {
                 insert.setString(1, BUILDING.toString());
-                insert.setString(2, version == 2 ? LEGACY_INVENTORY_JSON : INVENTORY_JSON.replace("\"formatVersion\":6", "\"formatVersion\":" + version));
+                insert.setString(2, version == 2 ? LEGACY_INVENTORY_JSON : INVENTORY_JSON.replace("\"formatVersion\":7", "\"formatVersion\":" + version));
                 insert.executeUpdate();
             }
         }
@@ -549,6 +574,16 @@ class SchemaCompatibilityTest {
             insert.setString(5, status);
             insert.executeUpdate();
             sql(connection, "UPDATE production_executions SET current_batch_id='" + BATCH + "'");
+            long version=scalar(connection,"SELECT version FROM economy_schema_migrations");
+            if(version==7){
+                sql(connection,"UPDATE production_executions SET pause_reasons_json='"+(status.equals("PAUSED")?"[\"MANUAL\"]":"[]")+"'");
+                if(status.equals("COMPLETED")||status.equals("ABORTED"))sql(connection,"UPDATE production_executions SET boundary='RECONFIGURING'");
+                // Explicit consistent historical participation fixture; never inferred from a UUID list.
+                sql(connection,"INSERT INTO occupation_catalog VALUES('worker') ON CONFLICT DO NOTHING");
+                sql(connection,"INSERT INTO regional_labor_supply VALUES('"+com.bbmurloc.victoriaeconomics.server.TestIdentities.REGION+"','worker',1,0) ON CONFLICT DO NOTHING");
+                sql(connection,"INSERT INTO building_staffing_roles VALUES('"+BUILDING+"','worker',1,NULL) ON CONFLICT DO NOTHING");
+                sql(connection,"UPDATE payroll_accruals SET employees=1");sql(connection,"UPDATE payroll_employment_history SET employees=1");
+            }
         }
     }
 

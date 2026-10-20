@@ -2,21 +2,16 @@ package com.bbmurloc.victoriaeconomics.server.production.domain;
 
 import java.util.*;
 
-public record WorkforcePlan(Map<String, List<UUID>> employees, int speedNumerator, int speedDenominator) {
+/** Immutable integer participation; never a live Staffing authority. */
+public record WorkforcePlan(Map<String,Integer> participatingWorkers,int speedNumerator,int speedDenominator) {
     public WorkforcePlan {
-        Map<String, List<UUID>> copy = new TreeMap<>();
-        Set<UUID> unique = new HashSet<>();
-        employees.forEach((occupation, ids) -> {
-            copy.put(occupation, List.copyOf(ids));
-            for (UUID id : ids)
-                if (!unique.add(id)) throw new IllegalArgumentException("Employee selected twice: " + id);
+        var copy=new TreeMap<String,Integer>();
+        participatingWorkers.forEach((role,count)->{
+            if(role==null||role.isBlank()||count==null||count<=0)throw new IllegalArgumentException("Positive participation required");
+            copy.put(role,count);
         });
-        employees = Map.copyOf(copy);
-        if (speedNumerator <= 0 || speedDenominator <= 0 || speedNumerator > speedDenominator)
-            throw new IllegalArgumentException("Invalid workforce speed");
+        participatingWorkers=Map.copyOf(copy);
+        if(copy.isEmpty()||speedNumerator<=0||speedDenominator<=0||speedNumerator>speedDenominator)throw new IllegalArgumentException("Invalid workforce speed");
     }
-
-    public double speed() {
-        return (double) speedNumerator / speedDenominator;
-    }
+    public double speed(){return (double)speedNumerator/speedDenominator;}
 }

@@ -3,7 +3,7 @@ package com.bbmurloc.victoriaeconomics.server.production.application;
 import com.bbmurloc.victoriaeconomics.server.workforce.port.StaffingQueryPort;
 import java.util.*;
 
-/** Staged integer staffing diagnostics only. ProductionService still uses WorkforcePort/NPC facts. */
+/** Integer Staffing, capacity, Pending and regional supply diagnostics from one committed snapshot. */
 public final class StaffingCalculator {
     private final StaffingQueryPort query;
     public StaffingCalculator(StaffingQueryPort query) { this.query = Objects.requireNonNull(query); }

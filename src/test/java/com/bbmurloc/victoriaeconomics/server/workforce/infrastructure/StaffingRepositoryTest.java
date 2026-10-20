@@ -21,7 +21,7 @@ class StaffingRepositoryTest {
             w.sql("INSERT INTO occupation_catalog VALUES('unrecognized-role')");
             assertThrows(IllegalStateException.class, () -> SqliteOccupationCatalog.register(w.connection, w.occupations));
             assertEquals(0, w.count("regional_labor_supply"));
-            assertEquals(0, w.count("employment_state"));
+            assertEquals(0,w.count("sqlite_master WHERE name='employment_state'"));
         }
     }
 
@@ -29,6 +29,8 @@ class StaffingRepositoryTest {
         try (var w = new LaborTestWorld(file())) {
             var other = new com.bbmurloc.victoriaeconomics.server.region.domain.RegionId(UUID.randomUUID());
             w.regions.create(new com.bbmurloc.victoriaeconomics.server.region.domain.Region(other));
+            new com.bbmurloc.victoriaeconomics.server.payroll.application.PayrollAccrualService(w.connection,w.lock).configureRate(
+                    new com.bbmurloc.victoriaeconomics.server.payroll.domain.RegionalWageRate(other,new com.bbmurloc.victoriaeconomics.server.finance.domain.CurrencyId(new UUID(700,1)),0,1,0));
             UUID a = w.create().getId();
             UUID b = w.buildings.createBuilding("tooling_workshop", TestIdentities.COMPANY, other).getId();
             w.setSupply(5);
@@ -39,8 +41,8 @@ class StaffingRepositoryTest {
                 repository.create(new RegionalLaborSupply(TestIdentities.REGION, "machinist", 2, 0));
                 return null;
             });
-            for (UUID id : List.of(a, b)) { w.commands.requestTarget(id, "laborer", 2); w.commands.requestTarget(id, "machinist", 1); w.applyPendingForPersistenceTest(id); }
-            w.commands.requestTarget(a, "laborer", 10);
+            for (UUID id : List.of(a, b)) { w.requestPendingForPersistenceTest(id, "laborer", 2); w.requestPendingForPersistenceTest(id, "machinist", 1); w.applyPendingForPersistenceTest(id); }
+            w.requestPendingForPersistenceTest(a, "laborer", 10);
             assertEquals(2, w.supply.occupied(TestIdentities.REGION, "laborer"));
             assertEquals(2, w.supply.occupied(other, "laborer"));
             assertEquals(1, w.supply.occupied(TestIdentities.REGION, "machinist"));
@@ -53,31 +55,32 @@ class StaffingRepositoryTest {
         try (var w = new LaborTestWorld(file())) {
             id = w.create().getId();
             assertEquals(BuildingStaffing.empty(id), w.staffing.load(id));
-            w.commands.requestTarget(id, "laborer", 8); w.commands.requestTarget(id, "laborer", 0);
+            w.requestPendingForPersistenceTest(id, "laborer", 8); w.requestPendingForPersistenceTest(id, "laborer", 0);
             assertEquals(Map.of("laborer", 0), w.staffing.load(id).pending());
             assertEquals(0, w.supply.occupied(TestIdentities.REGION, "laborer"));
-            assertEquals(0, w.count("employment_state"));
+            assertEquals(0,w.count("sqlite_master WHERE name='employment_state'"));
         }
         try (var w = new LaborTestWorld(file())) {
             assertEquals(Map.of("laborer", 0), w.staffing.load(id).pending());
-            w.commands.cancelPending(id, "laborer"); assertTrue(w.staffing.load(id).pending().isEmpty());
+            w.cancelPendingForPersistenceTest(id, "laborer"); assertTrue(w.staffing.load(id).pending().isEmpty());
             assertTrue(w.staffing.load(id).employed().isEmpty());
         }
     }
     @Test void invalidRoleCapacityAndFormalEffectiveCommandsAreRejectedWithoutChanges() throws Exception {
         try (var w = new LaborTestWorld(file())) {
             UUID id = w.create().getId(); var before = w.staffing.load(id);
-            assertThrows(IllegalArgumentException.class, () -> w.commands.requestTarget(id, "laborer", 11));
-            assertThrows(IllegalArgumentException.class, () -> w.commands.requestTarget(id, "unknown", 0));
-            assertThrows(IllegalArgumentException.class, () -> w.commands.requestTarget(id, "engineer", 0));
-            assertTrue(assertThrows(IllegalStateException.class, () -> w.commands.applyEffectiveChanges(id)).getMessage().contains("payroll"));
+            assertThrows(IllegalArgumentException.class, () -> w.requestPendingForPersistenceTest(id, "laborer", 11));
+            assertThrows(IllegalArgumentException.class, () -> w.requestPendingForPersistenceTest(id, "unknown", 0));
+            assertThrows(IllegalArgumentException.class, () -> w.requestPendingForPersistenceTest(id, "engineer", 0));
+            w.sql("DELETE FROM regional_wage_rates");
+            assertTrue(assertThrows(IllegalStateException.class, () -> w.commands.applyEffectiveChanges(id)).getMessage().contains("wage rate"));
             assertEquals(before, w.staffing.load(id));
         }
     }
     @Test void isolatedPersistenceTestAllowsPartialHiringAndQueriesRealSumsWithoutPendingOccupancy() throws Exception {
         try (var w = new LaborTestWorld(file())) {
             UUID a = w.create().getId(), b = w.create().getId(); w.setSupply(12);
-            w.commands.requestTarget(a, "laborer", 8); w.commands.requestTarget(b, "laborer", 8);
+            w.requestPendingForPersistenceTest(a, "laborer", 8); w.requestPendingForPersistenceTest(b, "laborer", 8);
             assertEquals(0, w.supply.occupied(TestIdentities.REGION, "laborer"));
             w.applyPendingForPersistenceTest(a); w.applyPendingForPersistenceTest(b);
             assertEquals(8, w.staffing.load(a).employed().get("laborer"));
@@ -92,15 +95,16 @@ class StaffingRepositoryTest {
             assertEquals(12, w.supply.find(TestIdentities.REGION, "laborer").orElseThrow().totalSupply());
             w.setSupply(20); w.applyPendingForPersistenceTest(b);
             assertEquals(4, w.staffing.load(b).employed().get("laborer")); // No automatic refill.
-            assertThrows(IllegalStateException.class, () -> w.commands.applyEffectiveChanges(b));
-            assertEquals(0, w.count("employment_state"));
+            w.commands.applyEffectiveChanges(b);
+            assertEquals(4,w.staffing.load(b).employed().get("laborer"));
+            assertEquals(0,w.count("sqlite_master WHERE name='employment_state'"));
         }
     }
     @Test void supplyAndStaffingCasRejectStaleDetachedSnapshots() throws Exception {
         try (var w = new LaborTestWorld(file())) {
             UUID id = w.create().getId(); w.setSupply(10);
             var staleStaffing = w.staffing.load(id); var staleSupply = w.supply.find(TestIdentities.REGION, "laborer").orElseThrow();
-            w.commands.requestTarget(id, "laborer", 2); w.setSupply(9);
+            w.requestPendingForPersistenceTest(id, "laborer", 2); w.setSupply(9);
             assertThrows(IllegalStateException.class, () -> SqliteTransactions.write(w.connection, tx -> {
                 w.staffing.inTransaction(tx).save(staleStaffing.requestTarget("laborer", 3, Map.of("laborer", 10)), 0); return null;
             }));
@@ -139,7 +143,7 @@ class StaffingRepositoryTest {
             assertThrows(SQLException.class, () -> w.sql("INSERT INTO building_staffing_roles VALUES('" + id + "','laborer',1.5,NULL)"));
             assertThrows(SQLException.class, () -> w.sql("INSERT INTO building_staffing_roles VALUES('" + id + "','laborer',2147483648,NULL)"));
             w.sql("UPDATE building_staffing SET revision=9223372036854775807");
-            assertThrows(ArithmeticException.class, () -> w.commands.requestTarget(id, "laborer", 1));
+            assertThrows(ArithmeticException.class, () -> w.requestPendingForPersistenceTest(id, "laborer", 1));
             assertTrue(w.staffing.load(id).pending().isEmpty());
         }
     }

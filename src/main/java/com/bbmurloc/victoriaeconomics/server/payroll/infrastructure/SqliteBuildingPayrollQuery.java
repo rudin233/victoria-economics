@@ -7,15 +7,21 @@ import com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicT
 import java.sql.*;
 import java.util.UUID;
 
-/** Isolated adapter. Do not wire into the legacy ARREARS->abort production loop before task C. */
+/** Authoritative company/building payroll facts, in committed snapshots or an explicit write session. */
 public final class SqliteBuildingPayrollQuery implements BuildingPayrollPort {
     private final Connection connection;
     private final Object lock;
     public SqliteBuildingPayrollQuery(Connection connection, Object lock) { this.connection = connection; this.lock = lock; }
     @Override public State state(UUID building) { return state(building, null); }
     public State state(UUID building, CompanyId expectedCompany) { synchronized (lock) {
-        try { return SqliteTransactions.read(connection, tx -> {
-            var time = SqliteEconomicTimeRepository.inSnapshot(connection, tx);
+        try { return SqliteTransactions.read(connection, tx -> read(building,expectedCompany,SqliteEconomicTimeRepository.inSnapshot(connection,tx))); } catch (CommitOutcomeUnknownException failure) { return State.RECOVERY; }
+        catch (RuntimeException failure) { return State.UNAVAILABLE; }
+    } }
+    public State inTransaction(SqliteTransactions.WriteSession tx,UUID building,CompanyId expectedCompany) throws SQLException {
+        return tx.perform(()->read(building,expectedCompany,SqliteEconomicTimeRepository.inTransaction(connection,tx)));
+    }
+    private State read(UUID building,CompanyId expectedCompany,com.bbmurloc.victoriaeconomics.server.time.domain.EconomicTime time) throws SQLException {
+
             try (var s = connection.createStatement(); var r = s.executeQuery("SELECT authority FROM payroll_runtime WHERE id=1")) {
                 if (!r.next() || !r.getString(1).equals("BUILDING_STAFFING")) return State.UNAVAILABLE;
             }
@@ -47,7 +53,5 @@ public final class SqliteBuildingPayrollQuery implements BuildingPayrollPort {
             }
             if (!active) return State.UNAVAILABLE;
             return unpaid > 0 ? State.ARREARS : State.CURRENT;
-        }); } catch (CommitOutcomeUnknownException failure) { return State.RECOVERY; }
-        catch (RuntimeException failure) { return State.UNAVAILABLE; }
-    } }
+    }
 }

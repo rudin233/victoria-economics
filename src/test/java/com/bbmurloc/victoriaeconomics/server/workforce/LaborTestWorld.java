@@ -51,6 +51,7 @@ public final class LaborTestWorld implements AutoCloseable {
         companies = new SqliteCompanyRepository(connection, lock); regions = new SqliteRegionRepository(connection, lock);
         if (companies.find(TestIdentities.COMPANY).isEmpty()) companies.create(new Company(TestIdentities.COMPANY));
         if (regions.find(TestIdentities.REGION).isEmpty()) regions.create(new Region(TestIdentities.REGION));
+        TestIdentities.seed(connection);
         identities = new SqliteBuildingRepository(connection, lock);
         staffing = new SqliteBuildingStaffingRepository(connection, recipes, occupations, lock);
         supply = new SqliteRegionalLaborSupplyRepository(connection, occupations, lock);
@@ -74,6 +75,9 @@ public final class LaborTestWorld implements AutoCloseable {
     }
     public void applyPendingForPersistenceTest(UUID building) {
         SqliteTransactions.write(connection, tx -> {
+            var payroll=new com.bbmurloc.victoriaeconomics.server.payroll.infrastructure.SqlitePayrollRepository(connection,lock).inTransaction(tx);
+            var segment=payroll.currentForBuilding(building);
+            payroll.accrue(segment,com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick());
             var repository = staffing.inTransaction(tx); var root = repository.load(building);
             var region = identities.inTransaction(tx).load(building).regionId();
             var caps = methods.inTransaction(tx).load(building).recipe().requiredWorkers();
@@ -82,10 +86,18 @@ public final class LaborTestWorld implements AutoCloseable {
                 long total = supply.inTransaction(tx).find(region, role).map(RegionalLaborSupply::totalSupply).orElse(0L);
                 available.put(role, Math.subtractExact(total, supply.inTransaction(tx).occupied(region, role)));
             }
-            repository.save(root.apply(StaffingTransition.consumePending(root, caps, available)), root.revision());
+            var changed=root.apply(StaffingTransition.consumePending(root,caps,available));
+            repository.save(changed,root.revision());
+            long count=0;for(int n:changed.employed().values())count=Math.addExact(count,n);
+            if(count!=segment.employees())payroll.changeEmployees(segment.id(),count,com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick());
             return null;
         });
     }
+    /** Repository Pending fixture, distinct from the formal idle-immediate application command. */
+    public void requestPendingForPersistenceTest(UUID building,String role,int target){
+        SqliteTransactions.write(connection,tx->{var repo=staffing.inTransaction(tx);var before=repo.load(building);var changed=before.requestTarget(role,target,methods.inTransaction(tx).load(building).recipe().requiredWorkers());if(changed!=before)repo.save(changed,before.revision());return null;});
+    }
+    public void cancelPendingForPersistenceTest(UUID building,String role){SqliteTransactions.write(connection,tx->{var repo=staffing.inTransaction(tx);var before=repo.load(building);var changed=before.cancel(role);if(changed!=before)repo.save(changed,before.revision());return null;});}
     public long count(String table) throws SQLException {
         try (var statement = connection.createStatement(); var row = statement.executeQuery("SELECT COUNT(*) FROM " + table)) { row.next(); return row.getLong(1); }
     }

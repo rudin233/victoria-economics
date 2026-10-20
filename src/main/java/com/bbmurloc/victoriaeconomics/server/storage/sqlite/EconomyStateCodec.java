@@ -12,7 +12,7 @@ import java.math.BigDecimal;
 import java.util.*;
 import java.util.function.Function;
 
-/** Schema v6 integer snapshots without dedicated equipment. NPC UUIDs are retained. */
+/** Schema v7 integer goods and integer participation snapshots. */
 public final class EconomyStateCodec {
     private static final Gson GSON = new Gson();
     private static final int FULL_SPEED_TICKS = 200;
@@ -20,8 +20,8 @@ public final class EconomyStateCodec {
 
     /** A future semantic change must replace the schema/codec together, never reinterpret old snapshots in place. */
     public static void requireCurrentFormat() {
-        if (EconomySchema.VERSION != 6 || ProductionBatch.FULL_SPEED_TICKS != FULL_SPEED_TICKS)
-            throw new IllegalStateException("Schema v6 codec requires integer goods and 200-tick batches; change schema and codec together");
+        if (EconomySchema.VERSION != 7 || ProductionBatch.FULL_SPEED_TICKS != FULL_SPEED_TICKS)
+            throw new IllegalStateException("Schema v7 codec requires integer goods and participation; change schema and codec together");
     }
 
     public static ProductionBatchConfiguration decodeBatchConfiguration(String json) {
@@ -32,13 +32,8 @@ public final class EconomyStateCodec {
             if (integer(envelope.get("fullSpeedTicks")) != FULL_SPEED_TICKS) throw invalid("Wrong Batch progress basis");
             var root = fields(envelope.get("snapshot"), "productionMethodSelections", "resolvedRecipe", "workforcePlan", "effectiveRevision");
             var recipe = fields(root.get("resolvedRecipe"), "inputs", "outputs", "requiredWorkers");
-            var workforce = fields(root.get("workforcePlan"), "employees", "speedNumerator", "speedDenominator");
-            var employees = map(workforce.get("employees"), value -> {
-                if (!value.isJsonArray()) throw invalid("Employee UUID list required");
-                List<UUID> ids = new ArrayList<>();
-                value.getAsJsonArray().forEach(employee -> ids.add(uuid(employee)));
-                return ids;
-            });
+            var workforce = fields(root.get("workforcePlan"), "participatingWorkers", "speedNumerator", "speedDenominator");
+            var employees = map(workforce.get("participatingWorkers"), value -> Math.toIntExact(integer(value)));
             return new ProductionBatchConfiguration(map(root.get("productionMethodSelections"), EconomyStateCodec::string),
                     new ResolvedProductionRecipe(quantities(recipe.get("inputs")), quantities(recipe.get("outputs")),
                             map(recipe.get("requiredWorkers"), value -> Math.toIntExact(integer(value)))),
@@ -116,13 +111,24 @@ public final class EconomyStateCodec {
 
     private static JsonObject envelope(JsonElement snapshot) {
         var result = new JsonObject();
-        result.addProperty("formatVersion", 6);
+        result.addProperty("formatVersion", 7);
         result.add("snapshot", snapshot);
         return result;
     }
 
     private static void requireVersion(JsonObject envelope) {
-        if (integer(envelope.get("formatVersion")) != 6) throw invalid("Unknown snapshot format version");
+        if (integer(envelope.get("formatVersion")) != 7) throw invalid("Unknown snapshot format version");
+    }
+
+    public static String encodePauseReasons(Set<ProductionExecution.PauseReason> reasons) {
+        return GSON.toJson(reasons.stream().map(Enum::name).sorted().toList());
+    }
+    public static Set<ProductionExecution.PauseReason> decodePauseReasons(String json) {
+        var values=parse(json);
+        if(!values.isJsonArray())throw invalid("Pause reason array required");
+        var result=EnumSet.noneOf(ProductionExecution.PauseReason.class);
+        for(var value:values.getAsJsonArray())if(!result.add(ProductionExecution.PauseReason.valueOf(string(value))))throw invalid("Duplicate pause reason");
+        return Set.copyOf(result);
     }
 
     private static BigDecimal number(JsonElement value) {
@@ -181,7 +187,7 @@ public final class EconomyStateCodec {
     // Gson 2.10.1 JsonParser/fromJson enable lenient parsing and discard duplicate object names.
     // Read strictly before typed decoding; these two fixed formats need no extensible serializer system.
     private static JsonElement read(JsonReader reader, int depth) throws IOException {
-        if (depth > 16) throw invalid("Snapshot nesting exceeds the v6 format");
+        if (depth > 16) throw invalid("Snapshot nesting exceeds the v7 format");
         return switch (reader.peek()) {
             case BEGIN_OBJECT -> {
                 reader.beginObject();
@@ -213,6 +219,6 @@ public final class EconomyStateCodec {
 
     private static IllegalArgumentException invalid(String message) { return new IllegalArgumentException(message); }
     private static IllegalStateException incompatible(String kind, RuntimeException failure) {
-        return new IllegalStateException("Invalid or incompatible Schema v6 " + kind + "; no conversion was attempted", failure);
+        return new IllegalStateException("Invalid or incompatible Schema v7 " + kind + "; no conversion was attempted", failure);
     }
 }

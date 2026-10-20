@@ -26,6 +26,10 @@ public final class SqliteEconomicTimeRepository implements EconomicTimeRepositor
             var before = read(connection);
             if (before.acceptedTick() != expected) throw new IllegalStateException("Economic tick CAS conflict; verify accepted time before retry");
             long next = Math.incrementExact(expected), revision = Math.incrementExact(before.revision());
+            if(!before.payrollCaughtUp())throw new IllegalStateException("Previous accepted Tick payroll is not complete");
+            try(var s=connection.prepareStatement("SELECT 1 FROM production_executions e LEFT JOIN production_batches b ON b.batch_id=e.current_batch_id WHERE e.last_completed_tick<? OR e.processing_tick IS NOT NULL OR e.boundary<>'NONE' OR b.status IN ('SETTLING_COMPLETED','SETTLING_ABORTED') UNION ALL SELECT 1 FROM production_start_intents")){
+                s.setLong(1,expected);try(var r=s.executeQuery()){if(r.next())throw new IllegalStateException("Previous accepted Tick has unfinished production facts");}
+            }
             try (var s = connection.prepareStatement("UPDATE economic_time SET accepted_tick=?,revision=?,first_uncertain_production_tick=CASE WHEN first_uncertain_production_tick IS NULL AND production_callback_returned_tick<accepted_tick THEN production_callback_returned_tick+1 ELSE first_uncertain_production_tick END WHERE id=1 AND revision=?")) {
                 s.setLong(1, next); s.setLong(2, revision); s.setLong(3, before.revision());
                 if (s.executeUpdate() != 1) throw new IllegalStateException("Economic tick CAS conflict");
@@ -36,6 +40,7 @@ public final class SqliteEconomicTimeRepository implements EconomicTimeRepositor
     @Override public void acknowledgeProductionCallback(long tick) { synchronized (lock) {
         SqliteTransactions.write(connection, tx -> {
             var before = read(connection);
+            if(tick==before.acceptedTick()&&tick==before.productionCallbackReturnedTick())return null;
             if (tick != before.acceptedTick() || tick <= before.productionCallbackReturnedTick()) throw new IllegalStateException("Invalid production callback acknowledgement");
             try (var s = connection.prepareStatement("UPDATE economic_time SET production_callback_returned_tick=?,revision=? WHERE id=1 AND revision=?")) {
                 s.setLong(1, tick); s.setLong(2, Math.incrementExact(before.revision())); s.setLong(3, before.revision());

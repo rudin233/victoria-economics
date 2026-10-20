@@ -4,257 +4,115 @@ import com.bbmurloc.victoriaeconomics.common.definition.*;
 import com.bbmurloc.victoriaeconomics.common.definition.building.*;
 import com.bbmurloc.victoriaeconomics.common.definition.occupation.*;
 import com.bbmurloc.victoriaeconomics.common.definition.production.*;
+import com.bbmurloc.victoriaeconomics.server.TestIdentities;
 import com.bbmurloc.victoriaeconomics.server.building.*;
-import com.bbmurloc.victoriaeconomics.server.production.port.ProductionInventoryPort;
-import com.bbmurloc.victoriaeconomics.server.inventory.domain.GoodsInventory;
+import com.bbmurloc.victoriaeconomics.server.production.domain.*;
 import com.bbmurloc.victoriaeconomics.server.production.port.*;
-import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionRecipeResolver;
-import com.bbmurloc.victoriaeconomics.server.storage.sqlite.EconomySchema;
-import com.bbmurloc.victoriaeconomics.server.storage.sqlite.CommitOutcomeUnknownException;
-import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteEmploymentRepository;
-import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteBuildingRepository;
-import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore;
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.*;
-import com.bbmurloc.victoriaeconomics.server.workforce.employment.*;
+import com.bbmurloc.victoriaeconomics.server.storage.sqlite.*;
+import com.bbmurloc.victoriaeconomics.server.inventory.domain.GoodsInventory;
+import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore;
+import com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.*;
+import com.bbmurloc.victoriaeconomics.server.workforce.domain.RegionalLaborSupply;
+import com.bbmurloc.victoriaeconomics.server.workforce.application.StaffingApplicationService;
+import com.bbmurloc.victoriaeconomics.server.payroll.application.PayrollAccrualService;
+import com.bbmurloc.victoriaeconomics.server.payroll.infrastructure.*;
+import com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository;
+import com.bbmurloc.victoriaeconomics.server.financial.JdbcFaults;
 import java.nio.file.Path;
 import java.sql.*;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicReference;
-import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionExecution;
 
-/**
- * Actual file-backed SQLite inventories/repositories, with explicit external payroll/qualification test facts.
- */
+/** Full real SQLite Staffing/Payroll production fixture. No fake CURRENT, employee identities or cash. */
 final class TestEconomy implements AutoCloseable {
-    final Object lock = new Object();
-    final Connection connection;
-    final BuildingRegistry buildings = new BuildingRegistry();
-    final BuildingTypeRegistry types = new BuildingTypeRegistry();
-    final ProductionMethodRegistry methods = new ProductionMethodRegistry();
-    final ProductionMethodGroupRegistry groups = new ProductionMethodGroupRegistry();
-    final EmploymentRegistry employees = new EmploymentRegistry();
-    final OccupationRegistry occupations = new OccupationRegistry();
-    final AtomicReference<BuildingPayrollPort.State> payroll = new AtomicReference<>(BuildingPayrollPort.State.CURRENT);
+    final Object lock=new Object();
+    final Connection physical,connection;
+    final JdbcFaults faults;
+    final BuildingRegistry buildings=new BuildingRegistry();
+    final BuildingTypeRegistry types=new BuildingTypeRegistry();
+    final OccupationRegistry occupations=new OccupationRegistry();
+    final ProductionMethodRegistry methods=new ProductionMethodRegistry();
+    final ProductionMethodGroupRegistry groups=new ProductionMethodGroupRegistry();
+    final ProductionRecipeResolver resolver;
     final SqliteBuildingRepository buildingRepository;
-    final FaultExecutionRepository repository;
-    final FaultConfigurations configurations;
-    final RepositoryProductionFacts facts;
-    final FaultJournal journal;
-    final FaultInventory inventory;
-    final EmploymentService employment;
-    final BuildingService buildingService;
-    final ProductionService production;
+    final SqliteProductionExecutionRepository repository;
+    final SqliteProductionMethodConfigurationRepository configurations;
+    final SqliteBuildingStaffingRepository staffingRepository;
+    final SqliteRegionalLaborSupplyRepository supply;
     final SqliteInventoryStore stock;
-    final EconomicClock clock;
+    final FaultInventory inventory;
+    final FaultJournal journal;
+    final BuildingService buildingService;
+    final ProductionBoundaryCoordinator coordinator;
+    final ProductionService production;
+    final StaffingApplicationService staffing;
+    final PayrollAccrualService accrual;
+    final SqliteBuildingPayrollQuery payroll;
+    final SqlitePayrollRepository payrollRepository;
+    EconomicClock clock;
     final UUID id;
-
-    TestEconomy(Path file, boolean create) throws SQLException {
-        this(file, create, 1000);
-    }
-
-    TestEconomy(Path file, boolean create, long capacity) throws SQLException {
-        connection = DriverManager.getConnection("jdbc:sqlite:" + file);
-        EconomySchema.initialize(connection);
-        DefaultDefinitions.registerBuildingTypes(types);
-        DefaultDefinitions.registerProductionMethods(methods);
-        DefaultDefinitions.registerOccupations(occupations);
-        com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteOccupationCatalog.register(connection, occupations);
-        com.bbmurloc.victoriaeconomics.server.TestIdentities.seed(connection);
-        methods.register(new ProductionMethodDefinition("efficient_tools", "tooling_workshop_base", 2,
-                Map.of("wood", 20L, "iron", 10L), Map.of("tools", 60L), Map.of("laborer", 10, "machinist", 4)));
-        // Explicit test-only staffing contraction; never invent jobs for the invalid production pig_iron_tools.
-        methods.register(new ProductionMethodDefinition("reduced_tools", "tooling_workshop_base", 2,
-                Map.of("wood", 30L, "iron", 20L), Map.of("tools", 60L), Map.of("laborer", 5, "machinist", 2)));
-        groups.register(new ProductionMethodGroupDefinition("tooling_workshop_base", "tooling_workshop", List.of("crude_tools", "pig_iron_tools", "efficient_tools", "reduced_tools")));
-        groups.register(new ProductionMethodGroupDefinition("tooling_workshop_automation", "tooling_workshop", List.of("hand_assembly")));
-        var resolver = new ProductionRecipeResolver(types, groups, methods);
-        buildingRepository = new SqliteBuildingRepository(connection, lock);
-        configurations = new FaultConfigurations(new SqliteProductionMethodConfigurationRepository(connection, resolver, lock));
-        repository = new FaultExecutionRepository(new SqliteProductionExecutionRepository(connection, lock));
-        facts = new RepositoryProductionFacts(configurations, repository, lock);
+    TestEconomy(Path file,boolean create)throws SQLException{this(file,create,1000);}
+    TestEconomy(Path file,boolean create,long capacity)throws SQLException{
+        physical=DriverManager.getConnection("jdbc:sqlite:"+file);faults=new JdbcFaults(SqliteConnectionGuard.protect(physical));connection=faults.connection;
+        EconomySchema.initialize(connection);TestIdentities.seed(connection);
+        DefaultDefinitions.registerBuildingTypes(types);DefaultDefinitions.registerProductionMethods(methods);DefaultDefinitions.registerOccupations(occupations);
+        SqliteOccupationCatalog.register(connection,occupations);
+        methods.register(new ProductionMethodDefinition("efficient_tools","tooling_workshop_base",2,Map.of("wood",20L,"iron",10L),Map.of("tools",60L),Map.of("laborer",10,"machinist",4)));
+        methods.register(new ProductionMethodDefinition("reduced_tools","tooling_workshop_base",2,Map.of("wood",30L,"iron",20L),Map.of("tools",60L),Map.of("laborer",5,"machinist",2)));
+        groups.register(new ProductionMethodGroupDefinition("tooling_workshop_base","tooling_workshop",List.of("crude_tools","pig_iron_tools","efficient_tools","reduced_tools")));
+        groups.register(new ProductionMethodGroupDefinition("tooling_workshop_automation","tooling_workshop",List.of("hand_assembly")));
+        resolver=new ProductionRecipeResolver(types,groups,methods);
+        buildingRepository=new SqliteBuildingRepository(connection,lock);repository=new SqliteProductionExecutionRepository(connection,lock);configurations=new SqliteProductionMethodConfigurationRepository(connection,resolver,lock);
+        staffingRepository=new SqliteBuildingStaffingRepository(connection,resolver,occupations,lock);supply=new SqliteRegionalLaborSupplyRepository(connection,occupations,lock);
         buildingRepository.loadAll().forEach(buildings::add);
-        var employmentRepository = new SqliteEmploymentRepository(connection);
-        employees.replace(employmentRepository.load());
-        employment = new EmploymentService(employees, buildings, occupations, (npc, occupation) -> true, employmentRepository::save, facts, lock);
-        stock = new SqliteInventoryStore(connection, lock);
-        inventory = new FaultInventory(stock);
-        journal = new FaultJournal(new SqliteProductionJournal(connection));
-        var staffing = new com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteBuildingStaffingRepository(connection, resolver, occupations, lock);
-        var initializer = new ProductionBuildingInitializer(connection, lock, buildingRepository, configurations, repository, resolver, staffing,
-                () -> com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteEconomyDatabase.open(file));
-        buildingService = new BuildingService(buildings, buildingRepository, types, initializer, lock);
-        production = new ProductionService(buildings, configurations, repository, inventory, (building) -> payroll.get(), employment, journal, lock);
-        clock = new EconomicClock(production::onEconomicTick);
-        if (create) {
-            id = createBuilding().getId();
-            stock.createLocation(id, capacity);
-            stock.deposit(id, Map.of("wood", 100L, "iron", 100L));
-            for (int i = 0; i < 10; i++) employment.hire(new UUID(1, i + 1), id, "laborer");
-            for (int i = 0; i < 4; i++) employment.hire(new UUID(2, i + 1), id, "machinist");
-        } else {
-            id = buildings.getAll().getFirst().getId();
-            production.recoverStarts();
-            production.recoverBoundaries();
-        }
+        var initializer=new ProductionBuildingInitializer(connection,lock,buildingRepository,configurations,repository,resolver,staffingRepository,()->SqliteEconomyDatabase.open(file));
+        buildingService=new BuildingService(buildings,buildingRepository,types,initializer,lock);
+        stock=new SqliteInventoryStore(connection,lock);inventory=new FaultInventory(stock);journal=new FaultJournal(new SqliteProductionJournal(connection));
+        coordinator=new ProductionBoundaryCoordinator(connection,resolver,occupations,lock);production=new ProductionService(coordinator,inventory,journal,lock);
+        staffing=new StaffingApplicationService(coordinator,production::retry);accrual=new PayrollAccrualService(connection,lock);payroll=new SqliteBuildingPayrollQuery(connection,lock);payrollRepository=new SqlitePayrollRepository(connection,lock);
+        if(create){id=createBuilding().getId();stock.createLocation(id,capacity);stock.deposit(id,Map.of("wood",100L,"iron",100L));setSupply("laborer",100);setSupply("machinist",100);staffing.requestTarget(id,"laborer",10);staffing.requestTarget(id,"machinist",4);}
+        else id=buildings.getAll().getFirst().getId();
+        recover();
     }
-
-    EconomicBuilding building() {
-        return buildings.get(id);
-    }
-    EconomicBuilding createBuilding() {
-        return buildingService.createBuilding("tooling_workshop", com.bbmurloc.victoriaeconomics.server.TestIdentities.COMPANY,
-                com.bbmurloc.victoriaeconomics.server.TestIdentities.REGION);
-    }
-
-    ProductionExecution execution() {
-        return repository.load(id);
-    }
-
-    com.bbmurloc.victoriaeconomics.server.production.domain.ProductionMethodConfiguration methods() { return configurations.load(id); }
-
-    GoodsInventory.State stockState() {
-        return stock.inspect(id);
-    }
-
-    long quantity(String good) {
-        return stockState().quantities().getOrDefault(good, 0L);
-    }
-
-    void ticks(int count) {
-        for (int i = 0; i < count; i++) clock.onServerTick();
-    }
-
-    @Override
-    public void close() throws SQLException {
-        connection.close();
-    }
-
-    static final class FaultExecutionRepository implements ProductionExecutionRepository {
-        final ProductionExecutionRepository delegate;
-        boolean failNextSave, failCompletedSave, failMethodsSave, failLegacyBoundarySave;
-        boolean loseStartAcknowledgement, failLoad, failProgressSave, failReturnMethodsSave;
-        Runnable afterSave = () -> {};
-        FaultExecutionRepository(ProductionExecutionRepository delegate) { this.delegate = delegate; }
-        @Override public ProductionExecution load(UUID id) {
-            if (failLoad) throw new IllegalStateException("Injected unknown execution state");
-            return delegate.load(id);
-        }
-        @Override public void create(ProductionExecution initial) { delegate.create(initial); }
-        @Override public void save(ProductionExecution execution, long expected) {
-            var batch = execution.batch();
-            if (failNextSave || (failCompletedSave && batch != null && batch.isEnded())) {
-                failNextSave = false; failCompletedSave = false;
-                throw new IllegalStateException("Injected execution checkpoint failure");
-            }
-            if (failProgressSave && batch != null && batch.isActive() && batch.getProgress() > 0) {
-                failProgressSave = false;
-                throw new IllegalStateException("Injected progress persistence failure");
-            }
-            if (failMethodsSave && execution.boundary() == ProductionExecution.Boundary.EQUIPMENT) {
-                failMethodsSave = false;
-                throw new IllegalStateException("Injected METHODS checkpoint failure");
-            }
-            if (failLegacyBoundarySave && execution.boundary() == ProductionExecution.Boundary.WORKFORCE) {
-                failLegacyBoundarySave = false;
-                throw new IllegalStateException("Injected EQUIPMENT checkpoint failure");
-            }
-            if (failReturnMethodsSave && execution.boundary() == ProductionExecution.Boundary.METHODS) {
-                failReturnMethodsSave = false;
-                throw new IllegalStateException("Injected METHODS reentry failure");
-            }
-            delegate.save(execution, expected);
-            afterSave.run();
-            if (loseStartAcknowledgement && batch != null && batch.isActive() && batch.getProgress() == 0) {
-                loseStartAcknowledgement = false;
-                throw new CommitOutcomeUnknownException("Injected lost start acknowledgement", null);
-            }
-        }
-    }
-
-    static final class FaultConfigurations implements ProductionMethodConfigurationRepository {
-        final ProductionMethodConfigurationRepository delegate;
-        boolean failNextSave, failLoad;
-        Runnable afterSave = () -> {};
-        FaultConfigurations(ProductionMethodConfigurationRepository delegate) { this.delegate = delegate; }
-        @Override public com.bbmurloc.victoriaeconomics.server.production.domain.ProductionMethodConfiguration load(UUID id) {
-            if (failLoad) throw new IllegalStateException("Injected unknown configuration state");
-            return delegate.load(id);
-        }
-        @Override public void create(com.bbmurloc.victoriaeconomics.server.production.domain.ProductionMethodConfiguration initial) { delegate.create(initial); }
-        @Override public void save(com.bbmurloc.victoriaeconomics.server.production.domain.ProductionMethodConfiguration changed, long expected) {
-            if (failNextSave) { failNextSave = false; throw new IllegalStateException("Injected configuration save failure"); }
-            delegate.save(changed, expected);
-            afterSave.run();
-        }
-    }
-
+    void recover(){clock=new EconomicClock(new SqliteEconomicTimeRepository(connection,lock),accrual::recoverAcceptedTime,production::onEconomicTick,production::recoverAcceptedTick);}
+    EconomicBuilding building(){return buildings.get(id);}
+    EconomicBuilding createBuilding(){return buildingService.createBuilding("tooling_workshop",TestIdentities.COMPANY,TestIdentities.REGION);}
+    ProductionExecution execution(){return repository.load(id);}
+    ProductionMethodConfiguration methods(){return configurations.load(id);}
+    GoodsInventory.State stockState(){return stock.inspect(id);}
+    long quantity(String good){return stockState().quantities().getOrDefault(good,0L);}
+    void ticks(int count){for(int i=0;i<count;i++)clock.onServerTick();}
+    void setSupply(String role,long total){SqliteTransactions.write(connection,tx->{var repo=supply.inTransaction(tx);var prior=repo.find(TestIdentities.REGION,role);if(prior.isEmpty())repo.create(new RegionalLaborSupply(TestIdentities.REGION,role,total,0));else repo.save(prior.get().withTotal(total),prior.get().revision());return null;});}
+    /** Isolated concurrent persistence injection; not a formal application admission path. */
+    void staffingRaceFixture(String role,int target){SqliteTransactions.write(connection,tx->{
+        var wages=payrollRepository.inTransaction(tx);var p=wages.currentForBuilding(id);long tick=SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick();
+        wages.accrue(p,tick);var repo=staffingRepository.inTransaction(tx);var prior=repo.load(id);var counts=new TreeMap<>(prior.employed());counts.put(role,target);
+        var changed=new com.bbmurloc.victoriaeconomics.server.workforce.domain.BuildingStaffing(id,counts,prior.pending(),Math.incrementExact(prior.revision()));repo.save(changed,prior.revision());
+        long sum=0;for(int count:changed.employed().values())sum=Math.addExact(sum,count);wages.changeEmployees(p.id(),sum,tick);return null;
+    });}
+    void sql(String sql)throws SQLException{try(var s=connection.createStatement()){s.execute(sql);}}
+    long scalar(String sql)throws SQLException{try(var s=connection.createStatement();var r=s.executeQuery(sql)){r.next();return r.getLong(1);}}
+    @Override public void close()throws SQLException{physical.close();}
     static final class FaultJournal implements ProductionJournal {
-        final ProductionJournal delegate;
-        boolean failContains, failReads, failCleanup;
-        FaultJournal(ProductionJournal delegate) { this.delegate = delegate; }
-        @Override public void recordStart(StartIntent intent) { delegate.recordStart(intent); }
-        @Override public void finishStart(UUID batch) {
-            if (failCleanup) throw new IllegalStateException("Injected journal cleanup failure");
-            delegate.finishStart(batch);
-        }
-        @Override public List<StartIntent> pendingStarts() {
-            if (failReads) throw new IllegalStateException("Injected unknown start intent state");
-            return delegate.pendingStarts();
-        }
-        @Override public boolean containsBatch(UUID batch) {
-            if (failContains) throw new IllegalStateException("Injected unknown start commit evidence");
-            return delegate.containsBatch(batch);
-        }
+        final ProductionJournal delegate;boolean failContains,failReads,failCleanup;
+        FaultJournal(ProductionJournal delegate){this.delegate=delegate;}
+        public void recordStart(StartIntent i){delegate.recordStart(i);}
+        public void finishStart(UUID id){if(failCleanup)throw new IllegalStateException("Injected journal cleanup failure");delegate.finishStart(id);}
+        public List<StartIntent> pendingStarts(){if(failReads)throw new IllegalStateException("Injected unknown start intents");return delegate.pendingStarts();}
+        public boolean containsBatch(UUID id){if(failContains)throw new IllegalStateException("Injected unknown start evidence");return delegate.containsBatch(id);}
     }
     static final class FaultInventory implements ProductionInventoryPort {
         final SqliteInventoryStore delegate;
-        boolean failAfterReserve, failRelease, reserveOnlyFirstMaterial, failSettlement;
-        Runnable afterReserve = () -> {
-        };
-
-        FaultInventory(SqliteInventoryStore delegate) {
-            this.delegate = delegate;
+        boolean failAfterReserve,failRelease,reserveOnlyFirstMaterial,failSettlement,loseSettlementAcknowledgement;
+        Runnable afterReserve=()->{};
+        FaultInventory(SqliteInventoryStore delegate){this.delegate=delegate;}
+        public StorageStatus storageStatus(UUID id){return delegate.storageStatus(id);}
+        public void reserve(UUID id,UUID batch,Map<String,Long> inputs){
+            if(reserveOnlyFirstMaterial){var first=new TreeMap<>(inputs).firstEntry();delegate.reserve(id,batch,Map.of(first.getKey(),first.getValue()));throw new IllegalStateException("Injected partial reservation failure");}
+            delegate.reserve(id,batch,inputs);afterReserve.run();if(failAfterReserve)throw new IllegalStateException("Injected lost reserve acknowledgement");
         }
-
-        @Override
-        public StorageStatus storageStatus(UUID location) {
-            return delegate.storageStatus(location);
-        }
-
-        @Override
-        public void reserve(UUID location, UUID batch, Map<String, Long> inputs) {
-            if (reserveOnlyFirstMaterial) {
-                var first = new TreeMap<>(inputs).firstEntry();
-                delegate.reserve(location, batch, Map.of(first.getKey(), first.getValue()));
-                throw new IllegalStateException("Injected partial multi-material reservation failure");
-            }
-            delegate.reserve(location, batch, inputs);
-            afterReserve.run();
-            if (failAfterReserve) throw new IllegalStateException("Injected lost reservation acknowledgement");
-        }
-
-        @Override
-        public boolean isReserved(UUID location, UUID batch, Map<String, Long> inputs) {
-            return delegate.isReserved(location, batch, inputs);
-        }
-
-        @Override
-        public void release(UUID location, UUID batch) {
-            if (failRelease) throw new IllegalStateException("Injected release failure");
-            delegate.release(location, batch);
-        }
-
-        boolean loseSettlementAcknowledgement;
-
-        @Override
-        public SettlementReceipt settle(UUID location, com.bbmurloc.victoriaeconomics.server.production.domain.ProductionSettlement command) {
-            if (failSettlement) throw new IllegalStateException("Injected inventory settlement failure");
-            var receipt = delegate.settle(location, command);
-            if (loseSettlementAcknowledgement) {
-                loseSettlementAcknowledgement = false;
-                throw new CommitOutcomeUnknownException("Injected lost settlement acknowledgement after durable save", new SQLException("receipt lost"));
-            }
-            return receipt;
-        }
+        public boolean isReserved(UUID id,UUID batch,Map<String,Long> inputs){return delegate.isReserved(id,batch,inputs);}
+        public void release(UUID id,UUID batch){if(failRelease)throw new IllegalStateException("Injected release failure");delegate.release(id,batch);}
+        public SettlementReceipt settle(UUID id,ProductionSettlement command){if(failSettlement)throw new IllegalStateException("Injected settlement failure");var receipt=delegate.settle(id,command);if(loseSettlementAcknowledgement){loseSettlementAcknowledgement=false;throw new CommitOutcomeUnknownException("Injected lost settlement receipt",null);}return receipt;}
     }
 }

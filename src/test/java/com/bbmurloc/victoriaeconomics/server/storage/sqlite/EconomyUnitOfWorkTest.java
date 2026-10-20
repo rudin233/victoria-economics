@@ -74,7 +74,7 @@ class EconomyUnitOfWorkTest {
             assertSame(pm.get(), session.methods().load(id));
             assertSame(execution.get(), session.executions().load(id));
             pm.get().requestSelection("base", "b", false);
-            execution.get().idleMethodsReconciled(pm.get().effectiveRevision());
+
             execution.get().requestAutomatic(true);
             session.methods().save(pm.get(), 0);
             session.executions().save(execution.get(), 0);
@@ -86,7 +86,7 @@ class EconomyUnitOfWorkTest {
         assertEquals(1, execution.get().executionRevision());
         assertEquals(1, pm.get().configurationRevision());
         assertCommittedPair(1, "b", true);
-        assertEquals(1, executions.load(id).methodsEffectiveRevision());
+        assertEquals(ProductionExecution.Boundary.NONE, executions.load(id).boundary());
         assertNotSame(pm.get(), methods.load(id));
         assertNotSame(execution.get(), executions.load(id));
     }
@@ -486,10 +486,8 @@ class EconomyUnitOfWorkTest {
     }
 
     private ProductionBatchConfiguration commitment(ProductionMethodConfiguration pm) {
-        var employees = new ArrayList<EmploymentFact>();
-        for (int i = 0; i < 10; i++) employees.add(new EmploymentFact(new UUID(0, i + 1), id, "worker"));
         var recipe = pm.recipe();
-        var plan = new WorkforcePlanningService().plan(id, recipe.requiredWorkers(), employees, (npc, role) -> true);
+        var plan = new WorkforcePlanningService().plan(recipe.requiredWorkers(), Map.of("worker",10));
         return new ProductionBatchConfiguration(pm.effective().methods(), recipe, plan, pm.effectiveRevision());
     }
 

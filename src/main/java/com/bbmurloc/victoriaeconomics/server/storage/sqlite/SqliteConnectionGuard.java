@@ -61,7 +61,8 @@ public final class SqliteConnectionGuard {
         return state.transactionConfig;
     }
 
-    static void quarantine(Connection connection, Throwable failure) {
+    /** Application workflows may also retire a connection after an unknown commit acknowledgement. */
+    public static void quarantine(Connection connection, Throwable failure) {
         State state = stateOf(connection);
         // Mark before close: a failed close must never make this connection usable again.
         synchronized (state) {

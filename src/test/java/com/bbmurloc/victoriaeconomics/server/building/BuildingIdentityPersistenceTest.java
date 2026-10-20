@@ -42,13 +42,20 @@ class BuildingIdentityPersistenceTest {
             assertEquals(0, w.identities.load(root.getId()).identityRevision());
         }
     }
-    @ParameterizedTest @ValueSource(strings = {"economic_buildings", "production_method_configurations", "production_executions", "building_staffing"})
+    @ParameterizedTest @ValueSource(strings = {"economic_buildings", "production_method_configurations", "production_executions", "building_staffing", "payroll_accruals", "payroll_employment_history"})
     void failureAtAnyRootRollsBackAllFourAndPublishesNothing(String table) throws Exception {
         try (var w = new LaborTestWorld(file())) {
             w.sql("CREATE TRIGGER reject_root BEFORE INSERT ON " + table + " BEGIN SELECT RAISE(ABORT,'injected creation failure'); END");
             assertThrows(IllegalStateException.class, w::create);
-            for (String root : List.of("economic_buildings", "production_method_configurations", "production_executions", "building_staffing")) assertEquals(0, w.count(root));
+            for (String root : List.of("economic_buildings", "production_method_configurations", "production_executions", "building_staffing", "payroll_accruals", "payroll_employment_history")) assertEquals(0, w.count(root));
             assertTrue(w.registry.getAll().isEmpty());
+        }
+    }
+    @Test void missingRegionalWageConfigurationCannotCreateAStaffableBuilding()throws Exception{
+        try(var w=new LaborTestWorld(file())){
+            w.sql("DELETE FROM regional_wage_rates");assertThrows(IllegalStateException.class,w::create);
+            for(String table:List.of("economic_buildings","production_method_configurations","production_executions","building_staffing","payroll_accruals"))assertEquals(0,w.count(table));
+            assertTrue(w.registry.getAll().isEmpty());assertEquals(0,w.count("finance_accounts"));
         }
     }
     @Test void identityCasAndOperationStatusAreIndependentOfLifecycleAndOtherRoots() throws Exception {

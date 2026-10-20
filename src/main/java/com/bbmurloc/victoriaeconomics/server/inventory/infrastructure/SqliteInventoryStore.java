@@ -100,6 +100,28 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
 
     private record Loaded(GoodsInventory inventory, long revision) {}
 
+    public boolean configured(SqliteTransactions.WriteSession tx,UUID location){
+        tx.requireConnection(connection);
+        try(var s=connection.prepareStatement("SELECT 1 FROM inventory_locations WHERE location_id=?")){
+            s.setString(1,location.toString());try(var r=s.executeQuery()){return r.next();}
+        }catch(SQLException failure){throw failure(location,failure);}
+    }
+
+    public boolean inputsAvailable(SqliteTransactions.WriteSession tx,UUID location,Map<String,Long> inputs){
+        tx.requireConnection(connection);var inventory=read(location).inventory();
+        return inputs.entrySet().stream().allMatch(entry->inventory.available(entry.getKey())>=entry.getValue());
+    }
+
+    /** Explicit read capability for final start checks while the caller owns the SQLite write lock. */
+    public ProductionInventoryPort.ReadSession inTransaction(SqliteTransactions.WriteSession tx) {
+        tx.requireConnection(connection);
+        return new ProductionInventoryPort.ReadSession(){
+            private GoodsInventory current(UUID id){tx.requireConnection(connection);return read(id).inventory();}
+            public StorageStatus storageStatus(UUID id){return new StorageStatus(current(id).overCapacity());}
+            public boolean isReserved(UUID id,UUID batch,Map<String,Long> inputs){return current(id).hasReservation(batch,inputs);}
+        };
+    }
+
     private Loaded read(UUID location) {
         try (var statement = connection.prepareStatement("SELECT state_json, revision, typeof(revision) AS revision_type FROM inventory_locations WHERE location_id = ?")) {
             statement.setString(1, location.toString());

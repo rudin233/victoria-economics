@@ -46,11 +46,9 @@ class ProductionRepositoryTest {
     @AfterEach void close() throws Exception { connection.close(); }
 
     private ProductionBatchConfiguration commitment() {
-        var employees = new ArrayList<EmploymentFact>();
-        for (int i = 0; i < 10; i++) employees.add(new EmploymentFact(new UUID(0, i + 1), id, "worker"));
         var configuration = methods.load(id);
         var recipe = configuration.recipe();
-        var plan = new WorkforcePlanningService().plan(id, recipe.requiredWorkers(), employees, (npc, role) -> true);
+        var plan = new WorkforcePlanningService().plan(recipe.requiredWorkers(), Map.of("worker",10));
         return new ProductionBatchConfiguration(configuration.effective().methods(), recipe, plan, configuration.effectiveRevision());
     }
 
