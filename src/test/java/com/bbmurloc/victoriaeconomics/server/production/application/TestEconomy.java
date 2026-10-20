@@ -57,15 +57,18 @@ final class TestEconomy implements AutoCloseable {
         this(file, create, 1000);
     }
 
-    TestEconomy(Path file, boolean create, double capacity) throws SQLException {
+    TestEconomy(Path file, boolean create, long capacity) throws SQLException {
         connection = DriverManager.getConnection("jdbc:sqlite:" + file);
         EconomySchema.initialize(connection);
         DefaultDefinitions.registerBuildingTypes(types);
         DefaultDefinitions.registerProductionMethods(methods);
         DefaultDefinitions.registerOccupations(occupations);
         methods.register(new ProductionMethodDefinition("efficient_tools", "tooling_workshop_base", 2,
-                Map.of("wood", 20.0, "iron", 10.0), Map.of("tools", 60.0), Map.of("laborer", 10, "machinist", 4)));
-        groups.register(new ProductionMethodGroupDefinition("tooling_workshop_base", "tooling_workshop", List.of("crude_tools", "pig_iron_tools", "efficient_tools")));
+                Map.of("wood", 20L, "iron", 10L), Map.of("tools", 60L), Map.of("laborer", 10, "machinist", 4)));
+        // Explicit test-only staffing contraction; never invent jobs for the invalid production pig_iron_tools.
+        methods.register(new ProductionMethodDefinition("reduced_tools", "tooling_workshop_base", 2,
+                Map.of("wood", 30L, "iron", 20L), Map.of("tools", 60L), Map.of("laborer", 5, "machinist", 2)));
+        groups.register(new ProductionMethodGroupDefinition("tooling_workshop_base", "tooling_workshop", List.of("crude_tools", "pig_iron_tools", "efficient_tools", "reduced_tools")));
         groups.register(new ProductionMethodGroupDefinition("tooling_workshop_automation", "tooling_workshop", List.of("hand_assembly")));
         var resolver = new ProductionRecipeResolver(types, groups, methods);
         buildingRepository = new SqliteBuildingRepository(connection, lock);
@@ -89,7 +92,7 @@ final class TestEconomy implements AutoCloseable {
         if (create) {
             id = buildingService.createBuilding("tooling_workshop").getId();
             stock.createLocation(id, capacity);
-            stock.deposit(id, Map.of("wood", 100.0, "iron", 100.0));
+            stock.deposit(id, Map.of("wood", 100L, "iron", 100L));
             equipment.addUninstalledEquipment(id, 100);
             equipment.install(id, 100);
             for (int i = 0; i < 10; i++) employment.hire(new UUID(1, i + 1), id, "laborer");
@@ -115,8 +118,8 @@ final class TestEconomy implements AutoCloseable {
         return stock.inspect(id);
     }
 
-    double quantity(String good) {
-        return stockState().quantities().getOrDefault(good, 0.0);
+    long quantity(String good) {
+        return stockState().quantities().getOrDefault(good, 0L);
     }
 
     void ticks(int count) {
@@ -221,7 +224,7 @@ final class TestEconomy implements AutoCloseable {
         }
 
         @Override
-        public void reserve(UUID location, UUID batch, Map<String, Double> inputs) {
+        public void reserve(UUID location, UUID batch, Map<String, Long> inputs) {
             if (reserveOnlyFirstMaterial) {
                 var first = new TreeMap<>(inputs).firstEntry();
                 delegate.reserve(location, batch, Map.of(first.getKey(), first.getValue()));
@@ -233,7 +236,7 @@ final class TestEconomy implements AutoCloseable {
         }
 
         @Override
-        public boolean isReserved(UUID location, UUID batch, Map<String, Double> inputs) {
+        public boolean isReserved(UUID location, UUID batch, Map<String, Long> inputs) {
             return delegate.isReserved(location, batch, inputs);
         }
 
@@ -243,10 +246,17 @@ final class TestEconomy implements AutoCloseable {
             delegate.release(location, batch);
         }
 
+        boolean loseSettlementAcknowledgement;
+
         @Override
-        public SettlementReceipt settle(UUID location, UUID batch, Map<String, Double> inputs, Map<String, Double> outputs, double progress) {
+        public SettlementReceipt settle(UUID location, com.bbmurloc.victoriaeconomics.server.production.domain.ProductionSettlement command) {
             if (failSettlement) throw new IllegalStateException("Injected inventory settlement failure");
-            return delegate.settle(location, batch, inputs, outputs, progress);
+            var receipt = delegate.settle(location, command);
+            if (loseSettlementAcknowledgement) {
+                loseSettlementAcknowledgement = false;
+                throw new CommitOutcomeUnknownException("Injected lost settlement acknowledgement after durable save", new SQLException("receipt lost"));
+            }
+            return receipt;
         }
     }
 }

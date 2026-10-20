@@ -218,7 +218,11 @@ public final class ProductionService {
         var batch = execution.batch();
         if (batch != null && batch.needsSettlement()) {
             var recipe = batch.getConfiguration().resolvedRecipe();
-            var receipt = inventory.settle(id, batch.getId(), recipe.inputs(), recipe.outputs(), batch.getProgress());
+            var outcome = batch.getStatus() == ProductionBatch.Status.SETTLING_COMPLETED
+                    ? ProductionSettlement.Outcome.COMPLETED : ProductionSettlement.Outcome.ABORTED;
+            var command = new ProductionSettlement(batch.getId(), outcome, recipe.inputs(), recipe.outputs());
+            var receipt = inventory.settle(id, command);
+            if (!command.equals(receipt.command())) throw new IllegalStateException("Inventory receipt does not match the frozen settlement command");
             execution.settlementCompleted(receipt.batchId());
             executions.save(execution, execution.executionRevision());
         }

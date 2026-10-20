@@ -10,8 +10,8 @@ public record ProductionMethodDefinition(
         // Victoria Economics 自己使用的等级
         int tier,
         // 对最终配方的变化量
-        Map<String, Double> inputChanges,
-        Map<String, Double> outputChanges,
+        Map<String, Long> inputChanges,
+        Map<String, Long> outputChanges,
         Map<String, Integer> workerChanges
 ) {
 

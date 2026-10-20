@@ -28,7 +28,7 @@ class StartCommitRecoveryTest {
 
     @Test void idlePmCanCommitDespiteMissingMaterialsWagesAndWorkers() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
-            e.stock.withdraw(e.id, Map.of("wood", 100.0, "iron", 100.0));
+            e.stock.withdraw(e.id, Map.of("wood", 100L, "iron", 100L));
             for (var employee : e.employees.getAll()) e.employment.fire(employee.employeeId());
             e.payroll.set(BuildingPayrollPort.State.UNAVAILABLE);
             e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
@@ -139,7 +139,7 @@ class StartCommitRecoveryTest {
         UUID batch;
         try (var e = new TestEconomy(database(), true)) {
             batch = e.production.startBatch(e.id).getId();
-            e.ticks(300);
+            e.ticks(50);
             e.inventory.failSettlement = true;
             assertThrows(IllegalStateException.class, () -> e.production.abortBatch(e.id));
             assertEquals(ProductionBatch.Status.SETTLING_ABORTED, e.execution().batch().getStatus());
@@ -149,7 +149,7 @@ class StartCommitRecoveryTest {
             e.repository.failCompletedSave = true;
             assertThrows(IllegalStateException.class, () -> e.production.retry(e.id));
             assertEquals(ProductionBatch.Status.SETTLING_ABORTED, e.execution().batch().getStatus());
-            assertEquals(7.5, e.quantity("tools"));
+            assertEquals(0L, e.quantity("tools"));
             assertTrue(e.stockState().reservations().isEmpty());
         }
         try (var e = new TestEconomy(database(), false)) {
@@ -158,8 +158,8 @@ class StartCommitRecoveryTest {
             assertEquals(batch, e.execution().lastBatch().getId());
             assertTrue(e.execution().lastBatch().isAborted());
             assertEquals(0.25, e.execution().lastBatch().getProgress());
-            assertEquals(92.5, e.quantity("wood"));
-            assertEquals(7.5, e.quantity("tools"));
+            assertEquals(100L, e.quantity("wood"));
+            assertEquals(0L, e.quantity("tools"));
             assertEquals(1, e.stockState().settlements().size());
         }
     }

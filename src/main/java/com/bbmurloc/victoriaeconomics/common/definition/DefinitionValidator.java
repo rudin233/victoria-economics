@@ -302,7 +302,7 @@ public final class DefinitionValidator {
 
     private static void validateGoods(
             ProductionMethodDefinition method,
-            java.util.Map<String, Double> goods,
+            java.util.Map<String, Long> goods,
             String type,
             GoodRegistry goodRegistry
     ) {

@@ -46,29 +46,29 @@ public final class ProductionCommands {
                                 .then(literal("cancel_equipment").requires(source -> source.hasPermission(4)).then(argument("request", StringArgumentType.word())
                                         .executes(ctx -> run(ctx, economy -> reply(ctx, "Cancelled: " + economy.getProductionEquipmentService().cancel(id(ctx), UUID.fromString(StringArgumentType.getString(ctx, "request"))))))))))
                 .then(literal("debug").requires(source -> source.hasPermission(4))
-                        .then(literal("create").then(argument("type", StringArgumentType.word()).then(argument("capacity", DoubleArgumentType.doubleArg(0))
+                        .then(literal("create").then(argument("type", StringArgumentType.word()).then(argument("capacity", LongArgumentType.longArg(0))
                                 .executes(ctx -> run(ctx, economy -> {
                                     var building = economy.getBuildingService().createBuilding(StringArgumentType.getString(ctx, "type"));
                                     reply(ctx, "Created building " + building.getId());
-                                    economy.getInventoryStore().createLocation(building.getId(), DoubleArgumentType.getDouble(ctx, "capacity"));
+                                    economy.getInventoryStore().createLocation(building.getId(), LongArgumentType.getLong(ctx, "capacity"));
                                 })))))
                         .then(argument("building", StringArgumentType.word())
-                                .then(literal("configure_storage").then(argument("capacity", DoubleArgumentType.doubleArg(0))
+                                .then(literal("configure_storage").then(argument("capacity", LongArgumentType.longArg(0))
                                         .executes(ctx -> run(ctx, economy -> {
                                             if (economy.getBuildingRegistry().get(id(ctx)) == null)
                                                 throw new IllegalArgumentException("Unknown building");
-                                            economy.getInventoryStore().createLocation(id(ctx), DoubleArgumentType.getDouble(ctx, "capacity"));
+                                            economy.getInventoryStore().createLocation(id(ctx), LongArgumentType.getLong(ctx, "capacity"));
                                         }))))
-                                .then(literal("deposit").then(argument("good", StringArgumentType.word()).then(argument("quantity", DoubleArgumentType.doubleArg(0))
+                                .then(literal("deposit").then(argument("good", StringArgumentType.word()).then(argument("quantity", LongArgumentType.longArg(0))
                                         .executes(ctx -> run(ctx, economy -> {
                                             String good = StringArgumentType.getString(ctx, "good");
                                             if (!economy.getGoodRegistry().contains(good))
                                                 throw new IllegalArgumentException("Unknown good: " + good);
-                                            economy.getInventoryStore().deposit(id(ctx), Map.of(good, DoubleArgumentType.getDouble(ctx, "quantity")));
+                                            economy.getInventoryStore().deposit(id(ctx), Map.of(good, LongArgumentType.getLong(ctx, "quantity")));
                                         })))))
-                                .then(literal("withdraw").then(argument("good", StringArgumentType.word()).then(argument("quantity", DoubleArgumentType.doubleArg(0))
+                                .then(literal("withdraw").then(argument("good", StringArgumentType.word()).then(argument("quantity", LongArgumentType.longArg(0))
                                         .executes(ctx -> run(ctx, economy -> economy.getInventoryStore().withdraw(id(ctx),
-                                                Map.of(StringArgumentType.getString(ctx, "good"), DoubleArgumentType.getDouble(ctx, "quantity"))))))))
+                                                Map.of(StringArgumentType.getString(ctx, "good"), LongArgumentType.getLong(ctx, "quantity"))))))))
                                 .then(literal("add_equipment").then(argument("amount", IntegerArgumentType.integer(1)).executes(ctx -> run(ctx, economy ->
                                         economy.getProductionEquipmentService().addUninstalledEquipment(id(ctx), IntegerArgumentType.getInteger(ctx, "amount"))))))
                                 .then(literal("bind_anchor").then(argument("position", BlockPosArgument.blockPos()).executes(ctx -> run(ctx, economy -> {

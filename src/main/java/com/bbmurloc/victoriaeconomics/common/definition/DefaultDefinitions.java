@@ -81,10 +81,10 @@ public final class DefaultDefinitions {
                         "tooling_workshop_base",
                         1,
                         Map.of(
-                                "wood", 30.0
+                                "wood", 30L
                         ),
                         Map.of(
-                                "tools", 30.0
+                                "tools", 30L
                         ),
                         Map.of(
                                 "laborer", 10,
@@ -99,11 +99,11 @@ public final class DefaultDefinitions {
                         "tooling_workshop_base",
                         2,
                         Map.of(
-                                "wood", 30.0,
-                                "iron", 20.0
+                                "wood", 30L,
+                                "iron", 20L
                         ),
                         Map.of(
-                                "tools", 60.0
+                                "tools", 60L
                         ),
                         Map.of()
                 )
@@ -170,7 +170,7 @@ public final class DefaultDefinitions {
         registry.register(
                 new OccupationDefinition(
                         "laborer",
-                        1.0
+                        1L
                 )
         );
 
@@ -184,7 +184,7 @@ public final class DefaultDefinitions {
         registry.register(
                 new OccupationDefinition(
                         "engineer",
-                        3.0
+                        3L
                 )
         );
     }

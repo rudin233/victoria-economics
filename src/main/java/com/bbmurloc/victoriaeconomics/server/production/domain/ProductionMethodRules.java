@@ -35,20 +35,20 @@ public final class ProductionMethodRules {
             throw new IllegalArgumentException("PM target must select exactly every building group");
         }
         int baseTier = requireMethod(type.baseProductionMethodGroupId(), selections.get(type.baseProductionMethodGroupId())).tier();
-        Map<String, Double> inputs = new TreeMap<>();
-        Map<String, Double> outputs = new TreeMap<>();
+        Map<String, Long> inputs = new TreeMap<>();
+        Map<String, Long> outputs = new TreeMap<>();
         Map<String, Integer> workers = new TreeMap<>();
         for (String group : type.productionMethodGroupIds()) {
             ProductionMethodDefinition method = requireMethod(group, selections.get(group));
             if (method.tier() > baseTier)
                 throw new IllegalArgumentException("PM " + method.id() + " exceeds base tier " + baseTier);
-            method.inputChanges().forEach((good, q) -> inputs.merge(good, q, Double::sum));
-            method.outputChanges().forEach((good, q) -> outputs.merge(good, q, Double::sum));
+            method.inputChanges().forEach((good, q) -> inputs.merge(good, q, Math::addExact));
+            method.outputChanges().forEach((good, q) -> outputs.merge(good, q, Math::addExact));
             method.workerChanges().forEach((occupation, n) -> workers.merge(occupation, n, Math::addExact));
         }
-        // Do not discard small real quantities or introduce business rounding.
-        inputs.values().removeIf(q -> q == 0.0);
-        outputs.values().removeIf(q -> q == 0.0);
+        // Signed deltas cancel exactly; only final zeros disappear, never negative results.
+        inputs.values().removeIf(q -> q == 0L);
+        outputs.values().removeIf(q -> q == 0L);
         workers.values().removeIf(n -> n == 0);
         return new ResolvedProductionRecipe(inputs, outputs, workers);
     }

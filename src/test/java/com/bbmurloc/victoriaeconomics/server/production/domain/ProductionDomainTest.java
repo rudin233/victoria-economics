@@ -12,8 +12,8 @@ class ProductionDomainTest {
         return new ProductionMethodRules(new BuildingTypeDefinition("factory", "industry", "equipment", 100, List.of("base", "later")),
                 List.of(new ProductionMethodGroupDefinition("base", "factory", List.of("base1", "base2")),
                         new ProductionMethodGroupDefinition("later", "factory", List.of("later1", "later2"))),
-                List.of(new ProductionMethodDefinition("base1", "base", 1, Map.of("ore", 10.0), Map.of("metal", 10.0), Map.of("worker", 10)),
-                        new ProductionMethodDefinition("base2", "base", 2, Map.of("ore", 10.0), Map.of("metal", 20.0), Map.of("worker", 10)),
+                List.of(new ProductionMethodDefinition("base1", "base", 1, Map.of("ore", 10L), Map.of("metal", 10L), Map.of("worker", 10)),
+                        new ProductionMethodDefinition("base2", "base", 2, Map.of("ore", 10L), Map.of("metal", 20L), Map.of("worker", 10)),
                         new ProductionMethodDefinition("later1", "later", 1, Map.of(), Map.of(), Map.of()),
                         new ProductionMethodDefinition("later2", "later", 2, Map.of(), Map.of(), Map.of("worker", -5))));
     }
@@ -125,7 +125,7 @@ class ProductionDomainTest {
         UUID building = UUID.randomUUID();
         var plan = new WorkforcePlanningService().plan(building, Map.of("worker", demand), 100, 100,
                 workers(building, "worker", selected, 0), (id, role) -> true);
-        return new ProductionBatchConfiguration(Map.of("base", "base1"), new ResolvedProductionRecipe(Map.of("ore", 10.0), Map.of("metal", 10.0), Map.of("worker", demand)), 100, 100, plan);
+        return new ProductionBatchConfiguration(Map.of("base", "base1"), new ResolvedProductionRecipe(Map.of("ore", 10L), Map.of("metal", 10L), Map.of("worker", demand)), 100, 100, plan);
     }
 
     @Test
@@ -133,7 +133,7 @@ class ProductionDomainTest {
         UUID building = UUID.randomUUID(), id = UUID.randomUUID();
         var execution = new ProductionExecution(building);
         var immutableInitial = execution.start(id, configuration(1, 3));
-        execution.tick(3599);
+        execution.tick(599);
         assertTrue(execution.batch().isActive());
         execution.tick(1);
         assertEquals(ProductionBatch.Status.SETTLING_COMPLETED, execution.batch().getStatus());
@@ -153,13 +153,13 @@ class ProductionDomainTest {
     void pausedProductionKeepsCommitmentAndTerminatesAtActualProgress() {
         var execution = new ProductionExecution(UUID.randomUUID());
         execution.start(UUID.randomUUID(), configuration(10, 10));
-        execution.tick(300);
+        execution.tick(50);
         execution.pause();
         execution.tick(10000);
         assertEquals(0.25, execution.batch().getProgress());
         assertTrue(execution.hasUnfinishedBatch());
         execution.resume();
-        execution.tick(300);
+        execution.tick(50);
         execution.terminate();
         assertEquals(0.5, execution.batch().getProgress());
         assertEquals(ProductionBatch.Status.SETTLING_ABORTED, execution.batch().getStatus());
@@ -169,9 +169,9 @@ class ProductionDomainTest {
 
     @Test
     void invalidRecipeQuantitiesAndUnsafeSnapshotsAreRejected() {
-        assertThrows(IllegalArgumentException.class, () -> new ResolvedProductionRecipe(Map.of("ore", Double.NaN), Map.of("metal", 1.0), Map.of()));
-        assertThrows(IllegalArgumentException.class, () -> new ResolvedProductionRecipe(Map.of(), Map.of("metal", -1.0), Map.of()));
-        assertThrows(IllegalArgumentException.class, () -> new ProductionBatch(UUID.randomUUID(), UUID.randomUUID(), configuration(10, 10), 1199, ProductionBatch.Status.COMPLETED));
+        assertThrows(IllegalArgumentException.class, () -> new ResolvedProductionRecipe(Map.of("ore", 0L), Map.of("metal", 1L), Map.of("worker", 1)));
+        assertThrows(IllegalArgumentException.class, () -> new ResolvedProductionRecipe(Map.of(), Map.of("metal", -1L), Map.of()));
+        assertThrows(IllegalArgumentException.class, () -> new ProductionBatch(UUID.randomUUID(), UUID.randomUUID(), configuration(10, 10), 199, ProductionBatch.Status.COMPLETED));
         var execution = new ProductionExecution(UUID.randomUUID());
         execution.start(UUID.randomUUID(), configuration(10, 10));
         execution.tick(Long.MAX_VALUE);
@@ -184,10 +184,60 @@ class ProductionDomainTest {
         var execution = new ProductionExecution(UUID.randomUUID());
         execution.start(UUID.randomUUID(), configuration(10, 10));
         var clock = new EconomicClock(() -> execution.tick(1));
-        for (int i = 0; i < 1199; i++) clock.onServerTick();
+        for (int i = 0; i < 199; i++) clock.onServerTick();
         assertTrue(execution.batch().isActive());
         clock.onServerTick();
-        assertEquals(1200, clock.elapsedTicks());
+        assertEquals(200, clock.elapsedTicks());
         assertTrue(execution.batch().needsSettlement());
+    }
+
+    @Test void threeFifthsSpeedCompletesOnTick334WithExactIntegerProgress() {
+        var execution = new ProductionExecution(UUID.randomUUID());
+        execution.start(UUID.randomUUID(), configuration(3, 5));
+        execution.tick(333);
+        assertEquals(999, execution.batch().getProgressUnits());
+        assertEquals(1000, execution.batch().getMaximumProgressUnits());
+        assertTrue(execution.batch().isActive());
+        execution.tick(1);
+        assertEquals(1000, execution.batch().getProgressUnits());
+        assertEquals(ProductionBatch.Status.SETTLING_COMPLETED, execution.batch().getStatus());
+    }
+
+    private ProductionMethodRules deltaRules(long initialInput, long inputDelta, long outputDelta, int workerDelta) {
+        return new ProductionMethodRules(new BuildingTypeDefinition("delta", "industry", "equipment", 100, List.of("base", "modifier")),
+                List.of(new ProductionMethodGroupDefinition("base", "delta", List.of("base")),
+                        new ProductionMethodGroupDefinition("modifier", "delta", List.of("modifier"))),
+                List.of(new ProductionMethodDefinition("base", "base", 1, Map.of("ore", initialInput), Map.of("metal", 5L), Map.of("worker", 5)),
+                        new ProductionMethodDefinition("modifier", "modifier", 1, Map.of("ore", inputDelta), Map.of("metal", outputDelta, "tools", 7L), Map.of("worker", workerDelta))));
+    }
+
+    @Test void signedIntegerPmDeltasCancelFinalZerosWithoutRounding() {
+        var recipe = deltaRules(10, -10, -5, -4).resolve(Map.of("base", "base", "modifier", "modifier"));
+        assertTrue(recipe.inputs().isEmpty());
+        assertEquals(Map.of("tools", 7L), recipe.outputs());
+        assertEquals(Map.of("worker", 1), recipe.requiredWorkers());
+    }
+
+    @Test void negativeFinalAmountsZeroWorkersAndArithmeticOverflowAreRejected() {
+        assertThrows(IllegalArgumentException.class, () -> deltaRules(10, -11, 0, 0).defaults());
+        assertThrows(IllegalArgumentException.class, () -> deltaRules(10, 0, 0, -5).defaults());
+        assertThrows(ArithmeticException.class, () -> deltaRules(Long.MAX_VALUE, 1, 0, 0).defaults());
+        assertThrows(ArithmeticException.class, () -> deltaRules(1, 0, Long.MAX_VALUE, 0).defaults());
+        assertThrows(IllegalArgumentException.class, () -> new ResolvedProductionRecipe(Map.of(), Map.of("metal", 0L), Map.of("worker", 1)));
+        assertThrows(IllegalArgumentException.class, () -> new ResolvedProductionRecipe(Map.of(), Map.of("metal", 1L), Map.of()));
+    }
+
+    @Test void defaultPigIronCombinationIsRejectedWithoutInventingOccupations() {
+        var types = new com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeRegistry();
+        var groups = new ProductionMethodGroupRegistry();
+        var methods = new ProductionMethodRegistry();
+        com.bbmurloc.victoriaeconomics.common.definition.DefaultDefinitions.registerBuildingTypes(types);
+        com.bbmurloc.victoriaeconomics.common.definition.DefaultDefinitions.registerProductionMethodGroups(groups);
+        com.bbmurloc.victoriaeconomics.common.definition.DefaultDefinitions.registerProductionMethods(methods);
+        var rules = new ProductionRecipeResolver(types, groups, methods).rulesFor("tooling_workshop");
+        assertFalse(rules.resolve(rules.defaults()).requiredWorkers().isEmpty());
+        assertTrue(methods.get("pig_iron_tools").workerChanges().isEmpty());
+        assertThrows(IllegalArgumentException.class, () -> rules.resolve(Map.of("tooling_workshop_base", "pig_iron_tools",
+                "tooling_workshop_automation", "hand_assembly")));
     }
 }

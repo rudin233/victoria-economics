@@ -26,7 +26,7 @@ class ProductionIntegrationTest {
             var batch = e.production.startBatch(e.id);
             assertEquals(30, new GoodsInventory(e.stockState()).reserved("wood"));
             assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
-            e.ticks(1200);
+            e.ticks(200);
             assertNull(e.execution().batch());
             assertTrue(e.execution().lastBatch().isCompleted());
             assertEquals(batch.getId(), e.execution().lastBatch().getId());
@@ -54,7 +54,7 @@ class ProductionIntegrationTest {
             assertEquals(100, e.equipment.getHolding(e.id).getInstalledQuantity());
             assertEquals(ProductionBatch.Status.PAUSED, e.execution().batch().getStatus());
             e.payroll.set(BuildingPayrollPort.State.CURRENT);
-            e.ticks(1199);
+            e.ticks(199);
             assertEquals("crude_tools", e.methods().effective().methods().get("tooling_workshop_base"));
             // Stop the method checkpoint once: no equipment changes can precede a durable PM boundary.
             e.repository.failCompletedSave = true;
@@ -74,14 +74,14 @@ class ProductionIntegrationTest {
         try (var e = new TestEconomy(database(), true)) {
             e.production.startBatch(e.id);
             e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
-            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "pig_iron_tools");
-            assertEquals("pig_iron_tools", e.methods().pending().orElseThrow().methods().get("tooling_workshop_base"));
+            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "reduced_tools");
+            assertEquals("reduced_tools", e.methods().pending().orElseThrow().methods().get("tooling_workshop_base"));
             e.production.cancelPendingProductionMethods(e.id);
         }
         try (var e = new TestEconomy(database(), false)) {
             assertTrue(e.methods().pending().isEmpty());
             assertEquals("crude_tools", e.execution().batch().getConfiguration().productionMethodSelections().get("tooling_workshop_base"));
-            e.ticks(1200);
+            e.ticks(200);
             assertEquals(30, e.quantity("tools"));
         }
     }
@@ -105,7 +105,7 @@ class ProductionIntegrationTest {
     void insufficientMaterialDoesNotConsumeOrLeaveLocks() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
             e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
-            e.stock.withdraw(e.id, Map.of("iron", 100.0));
+            e.stock.withdraw(e.id, Map.of("iron", 100L));
             assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
             assertNull(e.execution().batch());
             assertTrue(e.stockState().reservations().isEmpty());
@@ -178,7 +178,7 @@ class ProductionIntegrationTest {
     void recoveryPausesThenResumesOriginalCommitmentWithoutRelockingOrReselecting() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
             var batch = e.production.startBatch(e.id);
-            e.ticks(300);
+            e.ticks(50);
             e.payroll.set(BuildingPayrollPort.State.RECOVERY);
             e.ticks(100);
             assertEquals(0.25, e.execution().batch().getProgress());
@@ -186,7 +186,7 @@ class ProductionIntegrationTest {
             assertEquals(batch.getId(), e.stockState().reservations().keySet().iterator().next());
             assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
             e.payroll.set(BuildingPayrollPort.State.CURRENT);
-            e.ticks(900);
+            e.ticks(150);
             assertEquals(batch.getId(), e.execution().lastBatch().getId());
             assertEquals(batch.getConfiguration(), e.execution().lastBatch().getConfiguration());
             assertEquals(30, e.quantity("tools"));
@@ -197,11 +197,11 @@ class ProductionIntegrationTest {
     void pausedBatchCanFinishOnTheFirstTickAfterPayrollRecovery() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
             UUID batch = e.production.startBatch(e.id).getId();
-            e.ticks(1199);
+            e.ticks(199);
             e.payroll.set(BuildingPayrollPort.State.RECOVERY);
             e.ticks(1);
             assertEquals(ProductionBatch.Status.PAUSED, e.execution().batch().getStatus());
-            assertEquals(1199.0 / 1200, e.execution().batch().getProgress());
+            assertEquals(199.0 / 200, e.execution().batch().getProgress());
             e.payroll.set(BuildingPayrollPort.State.CURRENT);
             e.ticks(1);
             assertNull(e.execution().batch());
@@ -213,10 +213,10 @@ class ProductionIntegrationTest {
     }
 
     @Test
-    void recoveryFailureTerminatesProportionallyAndReleasesParticipants() throws Exception {
+    void recoveryFailureAbortsWithFullRefundAndZeroOutputAndReleasesParticipants() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
             e.production.startBatch(e.id);
-            e.ticks(300);
+            e.ticks(50);
             e.employment.fire(new UUID(1, 1));
             assertNotNull(e.employment.getEmployment(new UUID(1, 1)));
             e.payroll.set(BuildingPayrollPort.State.RECOVERY);
@@ -225,8 +225,8 @@ class ProductionIntegrationTest {
             e.ticks(1);
             assertTrue(e.execution().lastBatch().isAborted());
             assertEquals(0.25, e.execution().lastBatch().getProgress());
-            assertEquals(92.5, e.quantity("wood"));
-            assertEquals(7.5, e.quantity("tools"));
+            assertEquals(100, e.quantity("wood"));
+            assertEquals(0, e.quantity("tools"));
             assertTrue(e.stockState().reservations().isEmpty());
             assertNull(e.employment.getEmployment(new UUID(1, 1)));
             assertEquals(13, e.employees.getAll().size());
@@ -242,7 +242,7 @@ class ProductionIntegrationTest {
             assertTrue(e.stockState().reservations().isEmpty());
             e.payroll.set(BuildingPayrollPort.State.CURRENT);
             e.production.startBatch(e.id);
-            e.ticks(300);
+            e.ticks(50);
         }
         try (var e = new TestEconomy(database(), false)) {
             e.payroll.set(BuildingPayrollPort.State.UNAVAILABLE);
@@ -257,7 +257,7 @@ class ProductionIntegrationTest {
         UUID batchId;
         try (var e = new TestEconomy(database(), true)) {
             batchId = e.production.startBatch(e.id).getId();
-            e.ticks(1199);
+            e.ticks(199);
             e.repository.failCompletedSave = true;
             e.ticks(1);
             assertTrue(e.execution().batch().needsSettlement());
@@ -279,18 +279,18 @@ class ProductionIntegrationTest {
         UUID batchId, requestId;
         try (var e = new TestEconomy(database(), true)) {
             batchId = e.production.startBatch(e.id).getId();
-            e.ticks(400);
+            e.ticks(60);
             e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
             requestId = e.equipment.uninstall(e.id, 50).id();
         }
         try (var e = new TestEconomy(database(), false)) {
             assertEquals(batchId, e.execution().batch().getId());
-            assertEquals(1.0 / 3, e.execution().batch().getProgress());
+            assertEquals(0.3, e.execution().batch().getProgress());
             assertEquals(14, e.employees.getAll().size());
             assertEquals(100, e.equipment.getHolding(e.id).getInstalledQuantity());
             assertEquals(EquipmentConfigurationRequest.Status.PENDING, e.equipment.getHolding(e.id).find(requestId).status());
             assertEquals(30, new GoodsInventory(e.stockState()).reserved("wood"));
-            e.ticks(800);
+            e.ticks(140);
             assertEquals(50, e.equipment.getHolding(e.id).getInstalledQuantity());
             assertEquals("efficient_tools", e.methods().effective().methods().get("tooling_workshop_base"));
             assertEquals(30, e.quantity("tools"));
@@ -302,8 +302,8 @@ class ProductionIntegrationTest {
         try (var e = new TestEconomy(database(), true)) {
             var other = e.buildingService.createBuilding("tooling_workshop");
             e.stock.createLocation(other.getId(), 10000);
-            e.stock.deposit(other.getId(), Map.of("wood", 500.0));
-            e.stock.withdraw(e.id, Map.of("wood", 100.0));
+            e.stock.deposit(other.getId(), Map.of("wood", 500L));
+            e.stock.withdraw(e.id, Map.of("wood", 100L));
             assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
             assertEquals(500, e.stock.inspect(other.getId()).quantities().get("wood"));
         }
@@ -314,12 +314,12 @@ class ProductionIntegrationTest {
         try (var e = new TestEconomy(database(), true, 200)) {
             e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
             e.production.startBatch(e.id);
-            e.ticks(1200);
+            e.ticks(200);
             assertTrue(new GoodsInventory(e.stockState()).overCapacity()); // 200 - 30 + 60 = 230
             assertEquals(60, e.quantity("tools"));
             assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
-            assertThrows(IllegalStateException.class, () -> e.stock.deposit(e.id, Map.of("iron", 1.0)));
-            e.stock.withdraw(e.id, Map.of("tools", 40.0));
+            assertThrows(IllegalStateException.class, () -> e.stock.deposit(e.id, Map.of("iron", 1L)));
+            e.stock.withdraw(e.id, Map.of("tools", 40L));
             e.production.startBatch(e.id);
         }
     }
@@ -355,8 +355,8 @@ class ProductionIntegrationTest {
             e.employment.fire(new UUID(1, 1));
             e.employment.reservePosition(new UUID(1, 1), e.id, "laborer");
             e.production.startBatch(e.id);
-            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "pig_iron_tools");
-            e.ticks(1334);
+            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "reduced_tools");
+            e.ticks(223);
             assertEquals(ProductionExecution.Boundary.WORKFORCE, e.execution().boundary());
             assertTrue(e.employees.reservations().isEmpty());
             assertTrue(e.execution().batch().isEnded());

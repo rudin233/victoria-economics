@@ -9,7 +9,7 @@ import java.util.UUID;
 public final class ProductionBatch {
     public enum Status {ACTIVE, PAUSED, SETTLING_COMPLETED, SETTLING_ABORTED, COMPLETED, ABORTED}
 
-    public static final int FULL_SPEED_TICKS = 1200;
+    public static final int FULL_SPEED_TICKS = 200;
     private final UUID id;
     private final UUID buildingId;
     private final ProductionBatchConfiguration configuration;

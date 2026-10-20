@@ -31,8 +31,8 @@ class ProductionRepositoryTest {
         var definitions = new ProductionMethodRegistry();
         types.register(new BuildingTypeDefinition("factory", "industry", "equipment", 100, List.of("base")));
         groups.register(new ProductionMethodGroupDefinition("base", "factory", List.of("a", "b")));
-        definitions.register(new ProductionMethodDefinition("a", "base", 1, Map.of("ore", 10.0), Map.of("metal", 10.0), Map.of("worker", 10)));
-        definitions.register(new ProductionMethodDefinition("b", "base", 2, Map.of("ore", 10.0), Map.of("metal", 20.0), Map.of("worker", 10)));
+        definitions.register(new ProductionMethodDefinition("a", "base", 1, Map.of("ore", 10L), Map.of("metal", 10L), Map.of("worker", 10)));
+        definitions.register(new ProductionMethodDefinition("b", "base", 2, Map.of("ore", 10L), Map.of("metal", 20L), Map.of("worker", 10)));
         recipes = new ProductionRecipeResolver(types, groups, definitions);
         Object lock = new Object();
         methods = new SqliteProductionMethodConfigurationRepository(connection, recipes, lock);
@@ -93,14 +93,14 @@ class ProductionRepositoryTest {
         var execution = executions.load(id);
         execution.start(batch, commitment());
         executions.save(execution, 0);
-        execution.tick(300);
+        execution.tick(50);
         executions.save(execution, 1);
         var restored = executions.load(id);
         assertEquals(2, restored.executionRevision());
         assertEquals(0.25, restored.batch().getProgress());
         assertEquals(batch, restored.batch().getId());
         assertEquals(1, scalar("SELECT COUNT(*) FROM production_batches"));
-        assertEquals(300, scalar("SELECT progress_units FROM production_batches"));
+        assertEquals(50, scalar("SELECT progress_units FROM production_batches"));
         assertEquals(0, methods.load(id).configurationRevision());
     }
 
@@ -138,7 +138,7 @@ class ProductionRepositoryTest {
         var execution = executions.load(id);
         execution.start(UUID.randomUUID(), commitment());
         executions.save(execution, 0);
-        execution.tick(300);
+        execution.tick(50);
         executions.save(execution, 1);
         execution.terminate();
         executions.save(execution, 2);
@@ -154,7 +154,7 @@ class ProductionRepositoryTest {
         var execution = executions.load(id);
         execution.start(UUID.randomUUID(), commitment());
         executions.save(execution, 0);
-        execution.tick(300);
+        execution.tick(50);
         executions.save(execution, 1);
         execution.terminate();
         executions.save(execution, 2);

@@ -4,8 +4,8 @@ import java.util.Map;
 import java.util.Objects;
 
 public record ResolvedProductionRecipe(
-        Map<String, Double> inputs,
-        Map<String, Double> outputs,
+        Map<String, Long> inputs,
+        Map<String, Long> outputs,
         Map<String, Integer> requiredWorkers
 ) {
 
@@ -21,10 +21,11 @@ public record ResolvedProductionRecipe(
             if (count <= 0) throw new IllegalArgumentException("Worker demand must be positive: " + occupation);
         });
         if (outputs.isEmpty()) throw new IllegalArgumentException("Recipe needs at least one output");
+        if (requiredWorkers.isEmpty()) throw new IllegalArgumentException("A goods-producing recipe needs at least one positive occupation demand");
     }
 
-    private static void requireQuantity(String good, double quantity) {
-        if (!Double.isFinite(quantity) || quantity <= 0)
-            throw new IllegalArgumentException("Recipe quantity must be finite and positive: " + good);
+    private static void requireQuantity(String good, long quantity) {
+        if (good == null || good.isBlank() || quantity <= 0)
+            throw new IllegalArgumentException("Recipe quantity must be a positive integer: " + good);
     }
 }

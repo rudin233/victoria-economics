@@ -19,8 +19,8 @@ class BoundaryRecoveryTest {
     @Test void restartFindsPendingAtWorkforceAfterMethodsReentrySaveFailed() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
             e.production.startBatch(e.id);
-            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "pig_iron_tools");
-            e.ticks(1200);
+            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "reduced_tools");
+            e.ticks(200);
             assertEquals(ProductionExecution.Boundary.WORKFORCE, e.execution().boundary());
             assertEquals(14, e.employees.getAll().size()); // No invented consenting transfer or dismissal.
             e.repository.failReturnMethodsSave = true;
@@ -45,7 +45,7 @@ class BoundaryRecoveryTest {
             batch = e.production.startBatch(e.id).getId();
             e.equipment.uninstall(e.id, 20);
             e.repository.failEquipmentBoundarySave = true;
-            e.ticks(1200);
+            e.ticks(200);
             assertEquals(ProductionExecution.Boundary.EQUIPMENT, e.execution().boundary());
             assertEquals(80, e.equipment.getHolding(e.id).getInstalledQuantity());
             e.repository.failReturnMethodsSave = true;
@@ -68,7 +68,7 @@ class BoundaryRecoveryTest {
             UUID batch = e.production.startBatch(e.id).getId();
             e.equipment.uninstall(e.id, 20);
             e.repository.failEquipmentBoundarySave = true;
-            e.ticks(1200);
+            e.ticks(200);
             // Build an independently committed intermediate state to test the guard and recovery, not a public PM command.
             var configuration = e.methods();
             long revision = configuration.configurationRevision();
@@ -107,8 +107,8 @@ class BoundaryRecoveryTest {
             e.employment.fire(new UUID(1, 1));
             e.employment.reservePosition(new UUID(1, 1), e.id, "laborer");
             statement.executeUpdate("CREATE TRIGGER reject_hr BEFORE UPDATE ON employment_state BEGIN SELECT RAISE(ABORT,'injected personnel save failure'); END");
-            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "pig_iron_tools");
-            assertEquals("pig_iron_tools", effective(e));
+            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "reduced_tools");
+            assertEquals("reduced_tools", effective(e));
             assertEquals(1, e.employees.reservations().size());
             assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
             assertTrue(e.stockState().reservations().isEmpty());
@@ -130,11 +130,11 @@ class BoundaryRecoveryTest {
             e.employment.fire(new UUID(1, 1));
             e.employment.reservePosition(new UUID(1, 1), e.id, "laborer");
             e.production.startBatch(e.id);
-            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "pig_iron_tools");
+            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "reduced_tools");
             e.repository.failMethodsSave = true;
-            e.ticks(1334);
+            e.ticks(223);
             assertEquals(ProductionExecution.Boundary.METHODS, e.execution().boundary());
-            assertEquals("pig_iron_tools", effective(e));
+            assertEquals("reduced_tools", effective(e));
             assertTrue(e.methods().pending().isEmpty());
             assertTrue(e.employees.reservations().isEmpty());
             assertEquals(13, e.employees.getAll().size());
@@ -166,7 +166,7 @@ class BoundaryRecoveryTest {
             assertEquals(ProductionBatch.Status.PAUSED, e.execution().batch().getStatus());
             assertThrows(IllegalStateException.class, () -> e.equipment.flushPendingOperationsForBuilding(e.id, batch));
             e.payroll.set(BuildingPayrollPort.State.CURRENT);
-            e.ticks(1199);
+            e.ticks(199);
             e.repository.failCompletedSave = true;
             e.ticks(1);
             assertEquals(ProductionBatch.Status.SETTLING_COMPLETED, e.execution().batch().getStatus());

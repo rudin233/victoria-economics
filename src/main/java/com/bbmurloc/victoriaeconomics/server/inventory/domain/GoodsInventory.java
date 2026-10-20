@@ -1,174 +1,131 @@
 package com.bbmurloc.victoriaeconomics.server.inventory.domain;
 
+import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionSettlement;
 import java.util.*;
 
-/**
- * A single physical storage location. Equipment is a separate aggregate and capacity system.
- */
+/** Integer goods authority. Equipment remains a separate aggregate and capacity system. */
 public final class GoodsInventory {
-    public record Settlement(UUID batchId, Map<String, Double> consumed, Map<String, Double> produced) {
-        public Settlement {
-            consumed = Map.copyOf(consumed);
-            produced = Map.copyOf(produced);
-        }
+    public record Settlement(ProductionSettlement command) {
+        public Settlement { Objects.requireNonNull(command); }
+        public UUID batchId() { return command.batchId(); }
+        public Map<String, Long> consumed() { return command.consumed(); }
+        public Map<String, Long> produced() { return command.produced(); }
     }
 
-    public record State(UUID location, double capacity, Map<String, Double> quantities,
-                        Map<UUID, Map<String, Double>> reservations, Map<UUID, Settlement> settlements) {
+    public record State(UUID location, long capacity, Map<String, Long> quantities,
+                        Map<UUID, Map<String, Long>> reservations, Map<UUID, Settlement> settlements) {
         public State {
             Objects.requireNonNull(location);
-            if (!Double.isFinite(capacity) || capacity < 0)
-                throw new IllegalArgumentException("Invalid storage capacity");
-            quantities = copyQuantities(quantities);
-            Map<UUID, Map<String, Double>> locks = new HashMap<>();
-            reservations.forEach((id, amounts) -> locks.put(id, copyQuantities(amounts)));
+            if (capacity < 0) throw new IllegalArgumentException("Negative storage capacity");
+            quantities = checked(quantities, false);
+            Map<UUID, Map<String, Long>> locks = new HashMap<>();
+            reservations.forEach((id, amounts) -> locks.put(Objects.requireNonNull(id), checked(amounts, true)));
             reservations = Map.copyOf(locks);
             settlements = Map.copyOf(settlements);
+            settlements.forEach((id, receipt) -> {
+                if (!id.equals(receipt.batchId())) throw new IllegalArgumentException("Settlement key differs from its batch");
+            });
         }
     }
 
     private final UUID location;
-    private final double capacity;
-    private final Map<String, Double> quantities;
-    private final Map<UUID, Map<String, Double>> reservations;
+    private final long capacity;
+    private final Map<String, Long> quantities;
+    private final Map<UUID, Map<String, Long>> reservations;
     private final Map<UUID, Settlement> settlements;
 
-    public GoodsInventory(UUID location, double capacity) {
-        this(new State(location, capacity, Map.of(), Map.of(), Map.of()));
-    }
+    public GoodsInventory(UUID location, long capacity) { this(new State(location, capacity, Map.of(), Map.of(), Map.of())); }
 
     public GoodsInventory(State state) {
-        location = state.location();
-        capacity = state.capacity();
+        location = state.location(); capacity = state.capacity();
         quantities = new HashMap<>(state.quantities());
         reservations = new HashMap<>(state.reservations());
         settlements = new HashMap<>(state.settlements());
-        for (String good : quantities.keySet()) {
-            if (reserved(good) > quantity(good))
-                throw new IllegalArgumentException("Reservation exceeds stock: " + good);
-        }
-        for (var amounts : reservations.values()) {
-            for (String good : amounts.keySet())
-                if (reserved(good) > quantity(good))
-                    throw new IllegalArgumentException("Reservation exceeds stock: " + good);
-        }
-        for (UUID batch : reservations.keySet()) {
-            if (settlements.containsKey(batch))
-                throw new IllegalArgumentException("Settled batch still holds materials");
-        }
+        total(quantities);
+        Set<String> goods = new HashSet<>(quantities.keySet());
+        reservations.values().forEach(amounts -> goods.addAll(amounts.keySet()));
+        for (String good : goods)
+            if (reserved(good) > quantity(good)) throw new IllegalArgumentException("Reservation exceeds stock: " + good);
+        for (UUID batch : reservations.keySet())
+            if (settlements.containsKey(batch)) throw new IllegalArgumentException("Settled batch still holds materials");
     }
 
-    public State state() {
-        return new State(location, capacity, quantities, reservations, settlements);
+    public State state() { return new State(location, capacity, quantities, reservations, settlements); }
+    public long quantity(String good) { return quantities.getOrDefault(good, 0L); }
+    public long reserved(String good) {
+        long result = 0;
+        for (var amounts : reservations.values()) result = Math.addExact(result, amounts.getOrDefault(good, 0L));
+        return result;
+    }
+    public long available(String good) { return Math.subtractExact(quantity(good), reserved(good)); }
+    public long used() { return total(quantities); }
+    public boolean overCapacity() { return used() > capacity; }
+
+    public void deposit(Map<String, Long> amounts) {
+        var additions = checked(amounts, true);
+        Map<String, Long> next = new HashMap<>(quantities);
+        additions.forEach((good, quantity) -> next.merge(good, quantity, Math::addExact));
+        if (overCapacity() || total(next) > capacity) throw new IllegalStateException("Ordinary storage intake exceeds capacity: " + location);
+        quantities.clear(); quantities.putAll(next);
     }
 
-    public double quantity(String good) {
-        return quantities.getOrDefault(good, 0.0);
-    }
-
-    public double reserved(String good) {
-        return reservations.values().stream().mapToDouble(r -> r.getOrDefault(good, 0.0)).sum();
-    }
-
-    public double available(String good) {
-        return quantity(good) - reserved(good);
-    }
-
-    public double used() {
-        return quantities.values().stream().mapToDouble(Double::doubleValue).sum();
-    }
-
-    public boolean overCapacity() {
-        return used() > capacity;
-    }
-
-    public void deposit(Map<String, Double> amounts) {
-        var checked = copyQuantities(amounts);
-        if (overCapacity() || used() + checked.values().stream().mapToDouble(Double::doubleValue).sum() > capacity) {
-            throw new IllegalStateException("Ordinary storage intake exceeds capacity: " + location);
-        }
-        Map<String, Double> next = new HashMap<>(quantities);
-        checked.forEach((good, q) -> next.merge(good, q, Double::sum));
-        copyQuantities(next);
-        quantities.clear();
-        quantities.putAll(next);
-    }
-
-    public void withdraw(Map<String, Double> amounts) {
-        var checked = copyQuantities(amounts);
-        checked.forEach((good, q) -> {
-            if (q > available(good)) throw new IllegalStateException("Insufficient available stock: " + good);
+    public void withdraw(Map<String, Long> amounts) {
+        var withdrawals = checked(amounts, true);
+        withdrawals.forEach((good, quantity) -> {
+            if (quantity > available(good)) throw new IllegalStateException("Insufficient available stock: " + good);
         });
-        checked.forEach((good, q) -> quantities.put(good, quantity(good) - q));
+        withdrawals.forEach((good, quantity) -> quantities.put(good, Math.subtractExact(quantity(good), quantity)));
     }
 
-    /**
-     * All inputs commit together or none do. A repeated reservation must match the same commitment.
-     */
-    public void reserve(UUID batch, Map<String, Double> inputs) {
+    public void reserve(UUID batch, Map<String, Long> inputs) {
         Objects.requireNonNull(batch);
-        var checked = copyQuantities(inputs);
+        var commitment = checked(inputs, true);
         if (settlements.containsKey(batch)) throw new IllegalStateException("Batch has already settled");
         if (reservations.containsKey(batch)) {
-            if (!reservations.get(batch).equals(checked)) throw new IllegalStateException("Reservation id reused");
+            if (!reservations.get(batch).equals(commitment)) throw new IllegalStateException("Reservation id reused");
             return;
         }
         if (overCapacity()) throw new IllegalStateException("Overfull storage cannot start production");
-        checked.forEach((good, q) -> {
-            if (q > available(good)) throw new IllegalStateException("Missing batch input: " + good);
+        commitment.forEach((good, quantity) -> {
+            if (quantity > available(good)) throw new IllegalStateException("Missing batch input: " + good);
         });
-        reservations.put(batch, checked);
+        reservations.put(batch, commitment);
     }
 
-    public boolean hasReservation(UUID batch, Map<String, Double> inputs) {
-        return inputs.equals(reservations.get(batch));
-    }
+    public boolean hasReservation(UUID batch, Map<String, Long> inputs) { return inputs.equals(reservations.get(batch)); }
+    public void release(UUID batch) { reservations.remove(batch); }
+    public Settlement settlement(UUID batch) { return settlements.get(batch); }
 
-    public void release(UUID batch) {
-        reservations.remove(batch);
-    }
-
-    public Settlement settlement(UUID batch) {
-        return settlements.get(batch);
-    }
-
-    /**
-     * Consumption, committed output intake, remaining release and receipt form one atomic domain change.
-     */
-    public Settlement settle(UUID batch, Map<String, Double> inputs, Map<String, Double> outputs, double progress) {
-        if (!Double.isFinite(progress) || progress < 0 || progress > 1)
-            throw new IllegalArgumentException("Invalid settlement progress");
-        var consumed = proportional(inputs, progress);
-        var produced = proportional(outputs, progress);
-        Settlement desired = new Settlement(batch, consumed, produced);
+    /** One durable command per BatchId, matched by outcome and complete frozen inputs/outputs. */
+    public Settlement settle(ProductionSettlement command) {
+        UUID batch = command.batchId();
         Settlement prior = settlements.get(batch);
         if (prior != null) {
-            if (!prior.equals(desired)) throw new IllegalStateException("Conflicting repeated settlement");
+            if (!prior.command().equals(command)) throw new IllegalStateException("Conflicting repeated settlement");
             return prior;
         }
-        if (!hasReservation(batch, inputs))
-            throw new IllegalStateException("Batch material commitment not held: " + batch);
-        Map<String, Double> next = new HashMap<>(quantities);
-        consumed.forEach((good, q) -> next.put(good, next.getOrDefault(good, 0.0) - q));
-        produced.forEach((good, q) -> next.merge(good, q, Double::sum));
-        copyQuantities(next); // Validate before mutating. A committed batch may exceed ordinary capacity.
-        quantities.clear();
-        quantities.putAll(next);
+        if (!hasReservation(batch, command.inputs())) throw new IllegalStateException("Batch material commitment not held: " + batch);
+        Map<String, Long> next = new HashMap<>(quantities);
+        command.consumed().forEach((good, quantity) -> next.put(good, Math.subtractExact(next.getOrDefault(good, 0L), quantity)));
+        command.produced().forEach((good, quantity) -> next.merge(good, quantity, Math::addExact));
+        checked(next, false);
+        total(next); // Reject overflow before any mutation, while allowing a representable committed overflow of capacity.
+        quantities.clear(); quantities.putAll(next);
         reservations.remove(batch);
-        settlements.put(batch, desired);
-        return desired;
+        Settlement result = new Settlement(command);
+        settlements.put(batch, result);
+        return result;
     }
 
-    private static Map<String, Double> proportional(Map<String, Double> amounts, double fraction) {
-        Map<String, Double> result = new HashMap<>();
-        copyQuantities(amounts).forEach((good, q) -> result.put(good, q * fraction));
-        return Map.copyOf(result);
+    private static long total(Map<String, Long> amounts) {
+        long result = 0;
+        for (long quantity : amounts.values()) result = Math.addExact(result, quantity);
+        return result;
     }
-
-    private static Map<String, Double> copyQuantities(Map<String, Double> source) {
-        source.forEach((good, q) -> {
-            if (good == null || good.isBlank() || q == null || !Double.isFinite(q) || q < 0)
-                throw new IllegalArgumentException("Invalid good quantity: " + good);
+    private static Map<String, Long> checked(Map<String, Long> source, boolean positive) {
+        source.forEach((good, quantity) -> {
+            if (good == null || good.isBlank() || quantity == null || quantity < 0 || (positive && quantity == 0))
+                throw new IllegalArgumentException("Invalid integer good quantity: " + good);
         });
         return Map.copyOf(source);
     }

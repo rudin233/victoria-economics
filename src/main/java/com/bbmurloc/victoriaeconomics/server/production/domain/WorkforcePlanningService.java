@@ -11,6 +11,7 @@ public final class WorkforcePlanningService {
                               Collection<EmploymentFact> employment, BiPredicate<UUID, String> qualified) {
         if (capacity <= 0 || installed < 0 || installed > capacity)
             throw new IllegalArgumentException("Invalid equipment capability");
+        if (demand.isEmpty()) throw new IllegalArgumentException("Production requires positive occupation demand");
         int numerator = 1;
         int denominator = 1;
         Map<String, List<UUID>> candidates = new TreeMap<>();

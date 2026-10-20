@@ -5,6 +5,8 @@ import com.bbmurloc.victoriaeconomics.server.production.port.ProductionJournal;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.EconomySchema;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import java.nio.file.Path;
 import java.sql.*;
 import java.util.*;
@@ -20,11 +22,48 @@ class RecoveryAndControlsTest {
         return directory.resolve("economy.sqlite");
     }
 
+    @ParameterizedTest @ValueSource(booleans = {true, false})
+    void lostSettlementReceiptAtNinetyNinePercentRecoversTheExactOutcomeAfterRestart(boolean completed) throws Exception {
+        UUID batch;
+        var outcome = completed
+                ? com.bbmurloc.victoriaeconomics.server.production.domain.ProductionSettlement.Outcome.COMPLETED
+                : com.bbmurloc.victoriaeconomics.server.production.domain.ProductionSettlement.Outcome.ABORTED;
+        try (var e = new TestEconomy(database(), true)) {
+            batch = e.production.startBatch(e.id).getId();
+            e.production.setAutomatic(e.id, false);
+            e.ticks(199);
+            assertEquals(199, e.execution().batch().getProgressUnits());
+            e.inventory.loseSettlementAcknowledgement = true;
+            if (completed) e.ticks(1);
+            else assertThrows(com.bbmurloc.victoriaeconomics.server.storage.sqlite.CommitOutcomeUnknownException.class,
+                    () -> e.production.abortBatch(e.id));
+            assertTrue(e.execution().batch().needsSettlement());
+            assertEquals(outcome, e.stockState().settlements().get(batch).command().outcome());
+            assertTrue(e.stockState().reservations().isEmpty());
+            assertEquals(completed ? 70L : 100L, e.quantity("wood"));
+            assertEquals(completed ? 30L : 0L, e.quantity("tools"));
+        }
+        try (var e = new TestEconomy(database(), false)) {
+            e.production.retry(e.id);
+            e.production.retry(e.id);
+            assertNull(e.execution().batch());
+            assertEquals(batch, e.execution().lastBatch().getId());
+            assertEquals(completed, e.execution().lastBatch().isCompleted());
+            assertEquals(!completed, e.execution().lastBatch().isAborted());
+            assertEquals(outcome, e.stockState().settlements().get(batch).command().outcome());
+            assertEquals(1, e.stockState().settlements().size());
+            assertTrue(e.stockState().reservations().isEmpty());
+            assertEquals(completed ? 70L : 100L, e.quantity("wood"));
+            assertEquals(100L, e.quantity("iron"));
+            assertEquals(completed ? 30L : 0L, e.quantity("tools"));
+        }
+    }
+
     @Test
     void missingPayrollFactCannotResumeProtectedProduction() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
             e.production.startBatch(e.id);
-            e.ticks(300);
+            e.ticks(50);
             e.payroll.set(null);
             e.ticks(100);
             assertEquals(0.25, e.execution().batch().getProgress());
@@ -45,7 +84,7 @@ class RecoveryAndControlsTest {
         }
         try (var e = new TestEconomy(database(), false)) {
             assertEquals(batch, e.execution().batch().getId());
-            e.ticks(1200);
+            e.ticks(200);
             assertEquals(30, e.quantity("tools"));
         }
     }
@@ -57,7 +96,7 @@ class RecoveryAndControlsTest {
             e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
             e.equipment.uninstall(e.id, 50);
             e.repository.failMethodsSave = true;
-            e.ticks(1200);
+            e.ticks(200);
             assertEquals(ProductionExecution.Boundary.METHODS, e.execution().boundary());
             assertEquals("efficient_tools", e.methods().effective().methods().get("tooling_workshop_base"));
             assertTrue(e.methods().pending().isEmpty());
@@ -80,7 +119,7 @@ class RecoveryAndControlsTest {
             e.production.startBatch(e.id);
             request = e.equipment.uninstall(e.id, 20).id();
             e.repository.failEquipmentBoundarySave = true;
-            e.ticks(1200);
+            e.ticks(200);
             assertEquals(ProductionExecution.Boundary.EQUIPMENT, e.execution().boundary());
             assertEquals(80, e.equipment.getHolding(e.id).getInstalledQuantity());
         }
@@ -95,8 +134,8 @@ class RecoveryAndControlsTest {
     void pmArrivingDuringBlockedPersonnelBoundaryIsAppliedBeforeNextStart() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
             e.production.startBatch(e.id);
-            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "pig_iron_tools");
-            e.ticks(1200);
+            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "reduced_tools");
+            e.ticks(200);
             assertEquals(ProductionExecution.Boundary.WORKFORCE, e.execution().boundary());
             e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
             assertEquals(ProductionExecution.Boundary.METHODS, e.execution().boundary());
@@ -113,7 +152,7 @@ class RecoveryAndControlsTest {
         try (var e = new TestEconomy(database(), true)) {
             e.employment.fire(new UUID(1, 1));
             e.employment.reservePosition(new UUID(1, 1), e.id, "laborer");
-            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "pig_iron_tools");
+            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "reduced_tools");
             assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
             assertTrue(e.employees.reservations().isEmpty());
             assertEquals(13, e.employees.getAll().size());
@@ -151,7 +190,7 @@ class RecoveryAndControlsTest {
     void mixedConcurrentControlRequestsNeverLoseTheBatchOrDuplicateItsSettlement() throws Exception {
         try (var e = new TestEconomy(database(), true); var pool = Executors.newFixedThreadPool(4)) {
             e.production.startBatch(e.id);
-            e.ticks(300);
+            e.ticks(50);
             var barrier = new CyclicBarrier(4);
             List<Callable<Void>> actions = List.of(
                     () -> {
@@ -180,8 +219,8 @@ class RecoveryAndControlsTest {
             assertNull(e.execution().batch());
             assertTrue(e.execution().lastBatch().isAborted());
             assertEquals(0.25, e.execution().lastBatch().getProgress());
-            assertEquals(92.5, e.quantity("wood"));
-            assertEquals(7.5, e.quantity("tools"));
+            assertEquals(100L, e.quantity("wood"));
+            assertEquals(0L, e.quantity("tools"));
             assertEquals(1, e.stockState().settlements().size());
             assertTrue(e.stockState().reservations().isEmpty());
             assertEquals(60, e.equipment.getHolding(e.id).getInstalledQuantity());
@@ -194,7 +233,7 @@ class RecoveryAndControlsTest {
         UUID abandoned = UUID.randomUUID();
         try (var e = new TestEconomy(database(), true)) {
             e.journal.recordStart(new ProductionJournal.StartIntent(abandoned, e.id));
-            e.stock.reserve(e.id, abandoned, Map.of("wood", 30.0));
+            e.stock.reserve(e.id, abandoned, Map.of("wood", 30L));
             e.equipment.protectForBatch(e.id, abandoned);
         }
         try (var e = new TestEconomy(database(), false)) {

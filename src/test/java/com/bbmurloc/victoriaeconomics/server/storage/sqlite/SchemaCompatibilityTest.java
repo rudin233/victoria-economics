@@ -25,55 +25,76 @@ class SchemaCompatibilityTest {
     private static final UUID RESERVED = UUID.fromString("00000000-0000-0000-0000-000000000004");
     private static final UUID SETTLED = UUID.fromString("00000000-0000-0000-0000-000000000005");
 
-    // Literal pre-M1.2 v2 snapshots: fixtures do not depend on the new codec's writer.
+    // Literal v3 and historical v2 fixtures, independent of the current writer.
     private static final String BATCH_JSON = """
+            {"formatVersion":3,"fullSpeedTicks":200,"snapshot":{"productionMethodSelections":{"base":"a"},
+             "resolvedRecipe":{"inputs":{"ore":10},"outputs":{"metal":5},"requiredWorkers":{"worker":1}},
+             "installedEquipment":100,"equipmentCapacity":100,
+             "workforcePlan":{"employees":{"worker":["%s"]},"speedNumerator":1,"speedDenominator":1},
+             "effectiveRevision":0}}
+            """.formatted(EMPLOYEE);
+    private static final String INVENTORY_JSON = """
+            {"formatVersion":3,"snapshot":{"location":"%s","capacity":100,"quantities":{"ore":12,"metal":1},
+             "reservations":{"%s":{"ore":5}},
+             "settlements":{"%s":{"command":{"batchId":"%s","outcome":"COMPLETED","inputs":{"ore":2},"outputs":{"metal":1}}}}}}
+            """.formatted(BUILDING, RESERVED, SETTLED, SETTLED);
+    private static final String LEGACY_BATCH_JSON = """
             {"productionMethodSelections":{"base":"a"},
              "resolvedRecipe":{"inputs":{"ore":10.5},"outputs":{"metal":5.25},"requiredWorkers":{"worker":1}},
              "installedEquipment":100,"equipmentCapacity":100,
              "workforcePlan":{"employees":{"worker":["%s"]},"speedNumerator":1,"speedDenominator":1},
              "effectiveRevision":0}
             """.formatted(EMPLOYEE);
-    private static final String INVENTORY_JSON = """
+    private static final String LEGACY_INVENTORY_JSON = """
             {"location":"%s","capacity":100.0,"quantities":{"ore":12.5,"metal":1.25},
              "reservations":{"%s":{"ore":5.5}},
              "settlements":{"%s":{"batchId":"%s","consumed":{"ore":2.5},"produced":{"metal":1.125}}}}
             """.formatted(BUILDING, RESERVED, SETTLED, SETTLED);
 
-    @Test void validHistoricalV2LoadsWithItsExistingDoubleUuidEquipmentAndProgressSemantics() throws Exception {
+    @Test void validV3LoadsIntegerGoodsWhilePreservingEquipmentAndUuidSnapshots() throws Exception {
         Path file = fixture("v2.sqlite");
-        seedBatch(file, BATCH_JSON, "ACTIVE", 600);
+        seedBatch(file, BATCH_JSON, "ACTIVE", 100);
         byte[] before = Files.readAllBytes(file);
         try (var connection = SqliteEconomyDatabase.open(file)) {
             var batch = new SqliteProductionExecutionRepository(connection, new Object()).load(BUILDING).batch();
-            assertEquals(1200, ProductionBatch.FULL_SPEED_TICKS);
-            assertEquals(600, batch.getProgressUnits());
+            assertEquals(200, ProductionBatch.FULL_SPEED_TICKS);
+            assertEquals(100, batch.getProgressUnits());
             assertEquals(0.5, batch.getProgress());
             assertEquals(100, batch.getConfiguration().installedEquipment());
             assertEquals(List.of(EMPLOYEE), batch.getConfiguration().workforcePlan().employees().get("worker"));
-            assertEquals(10.5, batch.getConfiguration().resolvedRecipe().inputs().get("ore"));
+            assertEquals(10L, batch.getConfiguration().resolvedRecipe().inputs().get("ore"));
             var stock = new SqliteInventoryStore(connection, new Object()).inspect(BUILDING);
-            assertEquals(12.5, stock.quantities().get("ore"));
-            assertEquals(5.5, stock.reservations().get(RESERVED).get("ore"));
-            assertEquals(1.125, stock.settlements().get(SETTLED).produced().get("metal"));
-            assertEquals(2, scalar(connection, "SELECT version FROM economy_schema_migrations"));
+            assertEquals(12L, stock.quantities().get("ore"));
+            assertEquals(5L, stock.reservations().get(RESERVED).get("ore"));
+            assertEquals(1L, stock.settlements().get(SETTLED).produced().get("metal"));
+            assertEquals(3, scalar(connection, "SELECT version FROM economy_schema_migrations"));
         }
-        assertArrayEquals(before, Files.readAllBytes(file), "Successful read-only startup must not rewrite valid v2 data either");
+        assertArrayEquals(before, Files.readAllBytes(file), "Read-only startup must not rewrite valid v3 data");
     }
 
     @ParameterizedTest @ValueSource(strings = {"ACTIVE", "PAUSED", "SETTLING_COMPLETED", "SETTLING_ABORTED"})
-    void everyUnfinishedLegacyBatchKeepsIts1200TickBasisAndIsRejectedByAnIncompatibleSchema(String status) throws Exception {
-        Path file = fixture("batch.sqlite");
+    void everyUnfinishedLegacyV2BatchIsRejectedWithoutReinterpretingIts1200TickBasis(String status) throws Exception {
+        Path file = legacyFixture("batch.sqlite");
         long progress = status.equals("SETTLING_COMPLETED") ? 1200 : 1199;
+        seedBatch(file, LEGACY_BATCH_JSON, status, progress);
+        assertRejectedUnchanged(file);
+        try (var connection = readOnly(file)) {
+            assertEquals(progress, scalar(connection, "SELECT progress_units FROM production_batches"));
+            assertEquals(2, scalar(connection, "SELECT version FROM economy_schema_migrations"));
+        }
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"ACTIVE", "PAUSED", "SETTLING_COMPLETED", "SETTLING_ABORTED"})
+    void currentV3BatchStatesUseThe200TickBasis(String status) throws Exception {
+        Path file = fixture("current-batch.sqlite");
+        long progress = status.equals("SETTLING_COMPLETED") ? 200 : 199;
         seedBatch(file, BATCH_JSON, status, progress);
         try (var connection = SqliteEconomyDatabase.open(file)) {
             var batch = new SqliteProductionExecutionRepository(connection, new Object()).load(BUILDING).batch();
             assertEquals(status, batch.getStatus().name());
             assertEquals(progress, batch.getProgressUnits());
-            assertEquals(1200, batch.getMaximumProgressUnits());
-            assertEquals(progress / 1200.0, batch.getProgress());
-            sql(connection, "UPDATE economy_schema_migrations SET version=3");
+            assertEquals(200, batch.getMaximumProgressUnits());
         }
-        assertRejectedUnchanged(file); // The v2 payload is not guessed/converted under a future version.
     }
 
     @Test void nonemptyV1IsPreservedAndNotUpgradedOrCleared() throws Exception {
@@ -84,7 +105,7 @@ class SchemaCompatibilityTest {
             sql(connection, "CREATE TABLE economic_buildings(id TEXT PRIMARY KEY,current_equipment INTEGER)");
             sql(connection, "INSERT INTO economic_buildings VALUES('legacy-building',73)");
             sql(connection, "CREATE TABLE building_production_execution(building_id TEXT,state_json TEXT)");
-            sql(connection, "INSERT INTO building_production_execution VALUES('legacy-building','{\"progress\":600,\"ore\":12.5}')");
+            sql(connection, "INSERT INTO building_production_execution VALUES('legacy-building','{\"progress\":600,\"ore\":12}')");
         }
         assertRejectedUnchanged(file);
         try (var connection = readOnly(file)) {
@@ -94,14 +115,14 @@ class SchemaCompatibilityTest {
         }
     }
 
-    @ParameterizedTest @ValueSource(ints = {-1, 0, 3, 99})
+    @ParameterizedTest @ValueSource(ints = {-1, 0, 2, 99})
     void unknownSchemaVersionsAreRejectedBeforeAnyWritableHandleIsExposed(int version) throws Exception {
         Path file = fixture("unknown.sqlite");
         try (var connection = connect(file)) { sql(connection, "UPDATE economy_schema_migrations SET version=" + version); }
         assertRejectedUnchanged(file);
     }
 
-    @ParameterizedTest @ValueSource(strings = {"DELETE FROM economy_schema_migrations", "INSERT INTO economy_schema_migrations VALUES(3)",
+    @ParameterizedTest @ValueSource(strings = {"DELETE FROM economy_schema_migrations", "INSERT INTO economy_schema_migrations VALUES(2)",
             "DROP TABLE equipment_holdings", "DROP INDEX one_unfinished_batch_per_building",
             "ALTER TABLE inventory_locations ADD COLUMN future_version INTEGER", "CREATE TABLE future_layout(id TEXT)",
             "CREATE TABLE sqlitex_future_layout(id TEXT)"})
@@ -130,6 +151,7 @@ class SchemaCompatibilityTest {
     }
 
     @ParameterizedTest @ValueSource(strings = {"missingEquipment", "missingRevision", "futureVersion", "futureWorkers", "fractionalInteger",
+            "legacyBasis", "legacySnapshot", "wrongVersion", "fractionalGoods", "floatingInteger", "exponent", "overflow", "noWorkers",
             "stringNumber", "duplicate", "null", "trailing", "comment", "invalidUuid", "invalidSpeed", "invalidRecipe"})
     void unrecognizedBatchSnapshotsAreRejectedAtStartupAndRepositoryLoad(String kind) throws Exception {
         String malformed = switch (kind) {
@@ -138,6 +160,14 @@ class SchemaCompatibilityTest {
             case "futureVersion" -> BATCH_JSON.replace("\"effectiveRevision\":0", "\"effectiveRevision\":0,\"formatVersion\":3,\"fullSpeedTicks\":200");
             case "futureWorkers" -> BATCH_JSON.replace("\"employees\"", "\"participatingWorkers\"");
             case "fractionalInteger" -> BATCH_JSON.replace("\"installedEquipment\":100", "\"installedEquipment\":99.5");
+            case "legacyBasis" -> BATCH_JSON.replace("\"fullSpeedTicks\":200", "\"fullSpeedTicks\":1200");
+            case "legacySnapshot" -> LEGACY_BATCH_JSON;
+            case "wrongVersion" -> BATCH_JSON.replace("\"formatVersion\":3", "\"formatVersion\":2");
+            case "fractionalGoods" -> BATCH_JSON.replace("\"ore\":10", "\"ore\":10.5");
+            case "floatingInteger" -> BATCH_JSON.replace("\"ore\":10", "\"ore\":10.0");
+            case "exponent" -> BATCH_JSON.replace("\"ore\":10", "\"ore\":1e1");
+            case "overflow" -> BATCH_JSON.replace("\"ore\":10", "\"ore\":9223372036854775808");
+            case "noWorkers" -> BATCH_JSON.replace("\"requiredWorkers\":{\"worker\":1}", "\"requiredWorkers\":{}");
             case "stringNumber" -> BATCH_JSON.replace("\"speedNumerator\":1", "\"speedNumerator\":\"1\"");
             case "duplicate" -> BATCH_JSON.replace("\"effectiveRevision\":0", "\"effectiveRevision\":0,\"effectiveRevision\":9");
             case "null" -> "null";
@@ -145,11 +175,11 @@ class SchemaCompatibilityTest {
             case "comment" -> "/* future */" + BATCH_JSON;
             case "invalidUuid" -> BATCH_JSON.replace(EMPLOYEE.toString(), "npc-uuid-from-another-format");
             case "invalidSpeed" -> BATCH_JSON.replace("\"speedNumerator\":1", "\"speedNumerator\":0");
-            default -> BATCH_JSON.replace("\"metal\":5.25", "\"metal\":-5.25");
+            default -> BATCH_JSON.replace("\"metal\":5", "\"metal\":-5");
         };
         assertNotEquals(BATCH_JSON, malformed, "Fixture mutation must actually change the snapshot");
         Path file = fixture("batch-json.sqlite");
-        seedBatch(file, malformed, "ACTIVE", 600);
+        seedBatch(file, malformed, "ACTIVE", 100);
         assertRejectedUnchanged(file);
         byte[] before = Files.readAllBytes(file);
         try (var connection = connect(file)) {
@@ -159,18 +189,27 @@ class SchemaCompatibilityTest {
     }
 
     @ParameterizedTest @ValueSource(strings = {"missingCapacity", "nullCapacity", "stringQuantity", "duplicateQuantity", "futureReceipt",
+            "legacySnapshot", "wrongVersion", "fractionalGoods", "floatingInteger", "exponent", "overflow", "wrongOutcome", "zeroReservation",
             "wrongLocation", "wrongReceipt", "negativeReceipt", "infiniteQuantity", "null", "trailing"})
     void unrecognizedInventorySnapshotsCannotReachBusinessMutation(String kind) throws Exception {
         String malformed = switch (kind) {
-            case "missingCapacity" -> INVENTORY_JSON.replace("\"capacity\":100.0,", "");
-            case "nullCapacity" -> INVENTORY_JSON.replace("\"capacity\":100.0", "\"capacity\":null");
-            case "stringQuantity" -> INVENTORY_JSON.replace("\"ore\":12.5", "\"ore\":\"12.5\"");
-            case "duplicateQuantity" -> INVENTORY_JSON.replace("\"ore\":12.5", "\"ore\":12.5,\"ore\":0");
-            case "futureReceipt" -> INVENTORY_JSON.replace("\"consumed\"", "\"outcome\":\"ABORTED\",\"consumed\"");
+            case "missingCapacity" -> INVENTORY_JSON.replace("\"capacity\":100,", "");
+            case "nullCapacity" -> INVENTORY_JSON.replace("\"capacity\":100", "\"capacity\":null");
+            case "legacySnapshot" -> LEGACY_INVENTORY_JSON;
+            case "wrongVersion" -> INVENTORY_JSON.replace("\"formatVersion\":3", "\"formatVersion\":2");
+            case "fractionalGoods" -> INVENTORY_JSON.replace("\"ore\":12", "\"ore\":12.5");
+            case "floatingInteger" -> INVENTORY_JSON.replace("\"ore\":12", "\"ore\":12.0");
+            case "exponent" -> INVENTORY_JSON.replace("\"ore\":12", "\"ore\":12e0");
+            case "overflow" -> INVENTORY_JSON.replace("\"ore\":12", "\"ore\":9223372036854775808");
+            case "wrongOutcome" -> INVENTORY_JSON.replace("COMPLETED", "PARTIAL");
+            case "zeroReservation" -> INVENTORY_JSON.replace("\"ore\":5", "\"ore\":0");
+            case "stringQuantity" -> INVENTORY_JSON.replace("\"ore\":12", "\"ore\":\"12\"");
+            case "duplicateQuantity" -> INVENTORY_JSON.replace("\"ore\":12", "\"ore\":12,\"ore\":0");
+            case "futureReceipt" -> INVENTORY_JSON.replace("\"inputs\"", "\"outcome\":\"ABORTED\",\"inputs\"");
             case "wrongLocation" -> INVENTORY_JSON.replace(BUILDING.toString(), UUID.randomUUID().toString());
             case "wrongReceipt" -> INVENTORY_JSON.replace("\"batchId\":\"" + SETTLED, "\"batchId\":\"" + BATCH);
-            case "negativeReceipt" -> INVENTORY_JSON.replace("\"ore\":2.5", "\"ore\":-2.5");
-            case "infiniteQuantity" -> INVENTORY_JSON.replace("\"ore\":12.5", "\"ore\":1e999");
+            case "negativeReceipt" -> INVENTORY_JSON.replace("\"ore\":2", "\"ore\":-2");
+            case "infiniteQuantity" -> INVENTORY_JSON.replace("\"ore\":12", "\"ore\":1e999");
             case "null" -> "null";
             default -> INVENTORY_JSON + " {}";
         };
@@ -182,32 +221,32 @@ class SchemaCompatibilityTest {
         try (var connection = connect(file)) {
             var store = new SqliteInventoryStore(connection, new Object());
             assertThrows(IllegalStateException.class, () -> store.inspect(BUILDING));
-            assertThrows(IllegalStateException.class, () -> store.deposit(BUILDING, Map.of("ore", 1.0)));
+            assertThrows(IllegalStateException.class, () -> store.deposit(BUILDING, Map.of("ore", 1L)));
         }
         assertArrayEquals(before, Files.readAllBytes(file), "Malformed JSON must be rejected before UPDATE");
     }
 
     @Test void invalidUnreferencedHistoricalBatchIsStillCheckedBeforeRecoveryWrites() throws Exception {
         Path file = fixture("history.sqlite");
-        seedBatch(file, "{}", "COMPLETED", 1200);
+        seedBatch(file, "{}", "COMPLETED", 200);
         try (var connection = connect(file)) { sql(connection, "UPDATE production_executions SET current_batch_id=NULL"); }
         assertRejectedUnchanged(file);
     }
 
     @Test void integerDatabaseProgressCannotBeSilentlyTruncatedFromARealValue() throws Exception {
         Path file = fixture("fractional-progress.sqlite");
-        seedBatch(file, BATCH_JSON, "ACTIVE", 600);
-        try (var connection = connect(file)) { sql(connection, "UPDATE production_batches SET progress_units=600.5"); }
+        seedBatch(file, BATCH_JSON, "ACTIVE", 100);
+        try (var connection = connect(file)) { sql(connection, "UPDATE production_batches SET progress_units=100.5"); }
         assertRejectedUnchanged(file);
     }
 
     @Test void snapshotValidationAlsoWorksOnAPhysicallyReadOnlyConnection() throws Exception {
         Path file = fixture("readonly.sqlite");
-        seedBatch(file, BATCH_JSON, "ACTIVE", 600);
+        seedBatch(file, BATCH_JSON, "ACTIVE", 100);
         byte[] before = Files.readAllBytes(file);
         try (var connection = readOnly(file)) {
             EconomySchema.validateExisting(connection);
-            assertThrows(SQLException.class, () -> sql(connection, "UPDATE economy_schema_migrations SET version=3"));
+            assertThrows(SQLException.class, () -> sql(connection, "UPDATE economy_schema_migrations SET version=2"));
         }
         assertArrayEquals(before, Files.readAllBytes(file));
     }
@@ -222,6 +261,26 @@ class SchemaCompatibilityTest {
             byte[] beforeWal = Files.readAllBytes(wal);
             assertRejectedUnchanged(file);
             assertArrayEquals(beforeWal, Files.readAllBytes(wal), "Read-only preflight must not checkpoint or rewrite the WAL");
+        }
+    }
+
+    @Test void oldV2MainFileAndWalRemainByteForByteUnchangedOnRejection() throws Exception {
+        Path file = legacyFixture("v2-wal.sqlite");
+        seedBatch(file, LEGACY_BATCH_JSON, "SETTLING_ABORTED", 1199);
+        try (var writer = connect(file)) {
+            sql(writer, "PRAGMA journal_mode=WAL");
+            sql(writer, "PRAGMA wal_autocheckpoint=0");
+            sql(writer, "UPDATE production_batches SET progress_units=1198");
+            Path wal = Path.of(file + "-wal");
+            assertTrue(Files.size(wal) > 0);
+            byte[] beforeWal = Files.readAllBytes(wal);
+            assertRejectedUnchanged(file);
+            assertArrayEquals(beforeWal, Files.readAllBytes(wal));
+            try (var reader = readOnly(file)) {
+                assertEquals(2, scalar(reader, "SELECT version FROM economy_schema_migrations"));
+                assertEquals(1198, scalar(reader, "SELECT progress_units FROM production_batches"));
+            }
+            assertArrayEquals(beforeWal, Files.readAllBytes(wal));
         }
     }
 
@@ -248,50 +307,45 @@ class SchemaCompatibilityTest {
         assertRejectedUnchanged(file);
     }
 
-    @Test void absentDatabaseCreatesOnlyTheCurrentV2SchemaAndOriginalJsonShapes() throws Exception {
+    @Test void absentDatabaseCreatesV3AndExplicitSnapshotEnvelopes() throws Exception {
         Path file = directory.resolve("new.sqlite");
         assertFalse(Files.exists(file));
         try (var connection = SqliteEconomyDatabase.open(file)) {
-            assertEquals(2, scalar(connection, "SELECT version FROM economy_schema_migrations"));
+            assertEquals(3, scalar(connection, "SELECT version FROM economy_schema_migrations"));
             var store = new SqliteInventoryStore(connection, new Object());
             store.createLocation(BUILDING, 100);
-            store.deposit(BUILDING, Map.of("ore", 12.5));
-            assertEquals(12.5, store.inspect(BUILDING).quantities().get("ore"));
+            store.deposit(BUILDING, Map.of("ore", 12L));
+            assertEquals(12L, store.inspect(BUILDING).quantities().get("ore"));
             try (var statement = connection.createStatement(); var rows = statement.executeQuery("SELECT state_json FROM inventory_locations")) {
                 assertTrue(rows.next());
-                assertEquals(Set.of("location", "capacity", "quantities", "reservations", "settlements"),
+                assertEquals(Set.of("formatVersion", "snapshot"),
                         keys(connection, rows.getString(1)));
             }
-            assertEquals(Set.of("productionMethodSelections", "resolvedRecipe", "installedEquipment", "equipmentCapacity", "workforcePlan", "effectiveRevision"),
+            assertEquals(Set.of("formatVersion", "fullSpeedTicks", "snapshot"),
                     keys(connection, EconomyStateCodec.encodeBatchConfiguration(EconomyStateCodec.decodeBatchConfiguration(BATCH_JSON))));
         }
     }
 
-    @Test void validFractionsSurviveCurrentV2MutationsWithoutRoundingOrFormatTagging() throws Exception {
+    @Test void quantitiesAboveDoublePrecisionRemainExactLongValuesAcrossRestart() throws Exception {
         Path file = fixture("fractions.sqlite");
         try (var connection = SqliteEconomyDatabase.open(file)) {
             var store = new SqliteInventoryStore(connection, new Object());
-            store.deposit(BUILDING, Map.of("wood", 0.125));
-            var stock = store.inspect(BUILDING);
-            assertEquals(12.5, stock.quantities().get("ore"));
-            assertEquals(0.125, stock.quantities().get("wood"));
-            assertEquals(1.125, stock.settlements().get(SETTLED).produced().get("metal"));
+            store.createLocation(BATCH, Long.MAX_VALUE);
+            store.deposit(BATCH, Map.of("wood", 9007199254740993L));
         }
-        try (var connection = connect(file)) { sql(connection, "UPDATE economy_schema_migrations SET version=3"); }
+        try (var connection = SqliteEconomyDatabase.open(file)) {
+            assertEquals(9007199254740993L, new SqliteInventoryStore(connection, new Object()).inspect(BATCH).quantities().get("wood"));
+        }
+        try (var connection = connect(file)) { sql(connection, "UPDATE economy_schema_migrations SET version=2"); }
         assertRejectedUnchanged(file);
     }
 
-    @Test void currentV2DoubleSignedZeroIsPreservedAcrossReadAndWrite() throws Exception {
+    @Test void floatingPointSignedZeroIsRejectedInV3WithoutConversion() throws Exception {
         Path file = fixture("signed-zero.sqlite");
         try (var connection = connect(file)) {
-            updateInventory(connection, INVENTORY_JSON.replace("\"metal\":1.25", "\"metal\":-0.0"));
+            updateInventory(connection, INVENTORY_JSON.replace("\"metal\":1", "\"metal\":-0.0"));
         }
-        try (var connection = SqliteEconomyDatabase.open(file)) {
-            var store = new SqliteInventoryStore(connection, new Object());
-            assertEquals(Double.doubleToRawLongBits(-0.0), Double.doubleToRawLongBits(store.inspect(BUILDING).quantities().get("metal")));
-            store.deposit(BUILDING, Map.of("wood", 0.125));
-            assertEquals(Double.doubleToRawLongBits(-0.0), Double.doubleToRawLongBits(store.inspect(BUILDING).quantities().get("metal")));
-        }
+        assertRejectedUnchanged(file);
     }
 
     @Test void compatibilityValidationCannotResolveOrReadAnUncommittedLocalTransaction() throws Exception {
@@ -314,9 +368,15 @@ class SchemaCompatibilityTest {
     private Path fixture(String name) throws Exception { return fixture(name, UnaryOperator.identity()); }
 
     private Path fixture(String name, UnaryOperator<String> change) throws Exception {
+        return fixture(name, change, false);
+    }
+
+    private Path legacyFixture(String name) throws Exception { return fixture(name, UnaryOperator.identity(), true); }
+
+    private Path fixture(String name, UnaryOperator<String> change, boolean legacy) throws Exception {
         Path file = directory.resolve(name);
         String ddl;
-        try (var resource = Objects.requireNonNull(getClass().getResourceAsStream("/fixtures/sqlite/schema-v2.sql"))) {
+        try (var resource = Objects.requireNonNull(getClass().getResourceAsStream(legacy ? "/fixtures/sqlite/schema-v2.sql" : "/fixtures/sqlite/schema-v3.sql"))) {
             ddl = change.apply(new String(resource.readAllBytes(), StandardCharsets.UTF_8));
         }
         try (var connection = connect(file)) {
@@ -324,9 +384,9 @@ class SchemaCompatibilityTest {
             sql(connection, "INSERT INTO economic_buildings VALUES('" + BUILDING + "','factory','ACTIVE')");
             sql(connection, "INSERT INTO production_method_configurations VALUES('" + BUILDING + "','{\"methods\":{\"base\":\"a\"}}',NULL,0,0)");
             sql(connection, "INSERT INTO production_executions VALUES('" + BUILDING + "',NULL,NULL,'NONE',0,0,0)");
-            try (var insert = connection.prepareStatement("INSERT INTO inventory_locations VALUES(?,?)")) {
+            try (var insert = connection.prepareStatement(legacy ? "INSERT INTO inventory_locations VALUES(?,?)" : "INSERT INTO inventory_locations VALUES(?,?,0)")) {
                 insert.setString(1, BUILDING.toString());
-                insert.setString(2, INVENTORY_JSON);
+                insert.setString(2, legacy ? LEGACY_INVENTORY_JSON : INVENTORY_JSON);
                 insert.executeUpdate();
             }
         }
