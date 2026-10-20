@@ -3,7 +3,7 @@ package com.bbmurloc.victoriaeconomics.server.production.infrastructure;
 import com.bbmurloc.victoriaeconomics.server.production.domain.*;
 import com.bbmurloc.victoriaeconomics.server.production.port.*;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteTransactions;
-import com.google.gson.Gson;
+import com.bbmurloc.victoriaeconomics.server.storage.sqlite.EconomyStateCodec;
 import java.sql.*;
 import java.util.*;
 
@@ -11,7 +11,6 @@ import java.util.*;
 public final class SqliteProductionExecutionRepository implements ProductionExecutionRepository {
     private final Connection connection;
     private final Object lock;
-    private final Gson gson = new Gson();
 
     public SqliteProductionExecutionRepository(Connection connection, Object lock) {
         this.connection = connection;
@@ -117,9 +116,9 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
             statement.setString(1, id);
             try (var rows = statement.executeQuery()) {
                 if (!rows.next()) throw new IllegalStateException("Referenced batch missing: " + id);
-                return new ProductionBatch(UUID.fromString(id), UUID.fromString(rows.getString("building_id")),
-                        gson.fromJson(rows.getString("configuration_json"), ProductionBatchConfiguration.class),
-                        rows.getLong("progress_units"), ProductionBatch.Status.valueOf(rows.getString("status")));
+                return EconomyStateCodec.decodeBatch(UUID.fromString(id), UUID.fromString(rows.getString("building_id")),
+                        rows.getString("configuration_json"),
+                        rows.getLong("progress_units"), rows.getString("status"));
             }
         }
     }
@@ -137,7 +136,7 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
             try (var statement = connection.prepareStatement("INSERT INTO production_batches(batch_id,building_id,configuration_json,progress_units,status) VALUES(?,?,?,0,'ACTIVE')")) {
                 statement.setString(1, batch.getId().toString());
                 statement.setString(2, batch.getBuildingId().toString());
-                statement.setString(3, gson.toJson(batch.getConfiguration()));
+                statement.setString(3, EconomyStateCodec.encodeBatchConfiguration(batch.getConfiguration()));
                 statement.executeUpdate();
             }
             return;

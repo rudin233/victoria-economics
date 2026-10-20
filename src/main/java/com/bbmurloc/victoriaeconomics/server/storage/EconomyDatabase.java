@@ -1,7 +1,6 @@
 package com.bbmurloc.victoriaeconomics.server.storage;
 
-import com.bbmurloc.victoriaeconomics.server.storage.sqlite.EconomySchema;
-import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteConnectionGuard;
+import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteEconomyDatabase;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.storage.LevelResource;
 
@@ -25,11 +24,9 @@ public final class EconomyDatabase implements AutoCloseable {
         try {
             Path directory = worldRoot.resolve("victoria_economics");
             Files.createDirectories(directory);
-            connection = SqliteConnectionGuard.protect(
-                    DriverManager.getConnection("jdbc:sqlite:" + directory.resolve("economy.sqlite").toAbsolutePath()));
-            EconomySchema.initialize(connection);
+            connection = SqliteEconomyDatabase.open(directory.resolve("economy.sqlite"));
             return new EconomyDatabase(connection);
-        } catch (IOException | SQLException | RuntimeException failure) {
+        } catch (IOException | RuntimeException failure) {
             if (connection != null) try {
                 connection.close();
             } catch (SQLException close) {

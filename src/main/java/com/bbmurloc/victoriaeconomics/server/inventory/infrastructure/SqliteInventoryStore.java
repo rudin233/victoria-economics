@@ -2,7 +2,7 @@ package com.bbmurloc.victoriaeconomics.server.inventory.infrastructure;
 
 import com.bbmurloc.victoriaeconomics.server.production.port.ProductionInventoryPort;
 import com.bbmurloc.victoriaeconomics.server.inventory.domain.GoodsInventory;
-import com.google.gson.Gson;
+import com.bbmurloc.victoriaeconomics.server.storage.sqlite.EconomyStateCodec;
 import java.sql.*;
 import java.util.*;
 import java.util.function.Function;
@@ -13,7 +13,6 @@ import java.util.function.Function;
 public final class SqliteInventoryStore implements ProductionInventoryPort {
     private final Connection connection;
     private final Object lock;
-    private final Gson gson = new Gson();
 
     public SqliteInventoryStore(Connection connection, Object lock) {
         this.connection = connection;
@@ -25,7 +24,7 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
             GoodsInventory inventory = new GoodsInventory(location, capacity);
             try (var statement = connection.prepareStatement("INSERT INTO inventory_locations(location_id, state_json) VALUES(?, ?)")) {
                 statement.setString(1, location.toString());
-                statement.setString(2, gson.toJson(inventory.state()));
+                statement.setString(2, EconomyStateCodec.encodeInventory(inventory.state()));
                 statement.executeUpdate();
             } catch (SQLException e) {
                 throw failure(location, e);
@@ -96,7 +95,7 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
             try (var rows = statement.executeQuery()) {
                 if (!rows.next())
                     throw new IllegalStateException("Storage location has not been configured: " + location);
-                return new GoodsInventory(gson.fromJson(rows.getString(1), GoodsInventory.State.class));
+                return EconomyStateCodec.decodeInventory(location, rows.getString(1));
             }
         } catch (SQLException e) {
             throw failure(location, e);
@@ -108,7 +107,7 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
             GoodsInventory inventory = load(location);
             T result = operation.apply(inventory);
             try (var statement = connection.prepareStatement("UPDATE inventory_locations SET state_json = ? WHERE location_id = ?")) {
-                statement.setString(1, gson.toJson(inventory.state()));
+                statement.setString(1, EconomyStateCodec.encodeInventory(inventory.state()));
                 statement.setString(2, location.toString());
                 if (statement.executeUpdate() != 1) throw new SQLException("Storage location disappeared");
                 return result;
