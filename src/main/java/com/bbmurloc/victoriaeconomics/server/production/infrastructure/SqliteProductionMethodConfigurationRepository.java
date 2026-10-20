@@ -24,19 +24,38 @@ public final class SqliteProductionMethodConfigurationRepository implements Prod
     public ProductionMethodConfiguration load(UUID id) {
         synchronized (lock) {
             SqliteTransactions.requireCommittedReads(connection);
-            try (var statement = connection.prepareStatement("SELECT c.*, b.building_type_id FROM production_method_configurations c JOIN economic_buildings b ON b.id=c.building_id WHERE c.building_id=?")) {
-                statement.setString(1, id.toString());
-                try (var rows = statement.executeQuery()) {
-                    if (!rows.next()) throw new IllegalStateException("Production configuration missing: " + id);
-                    String pending = rows.getString("pending_json");
-                    return new ProductionMethodConfiguration(id, recipes.rulesFor(rows.getString("building_type_id")),
-                            gson.fromJson(rows.getString("effective_json"), Selections.class).methods(),
-                            pending == null ? null : gson.fromJson(pending, Selections.class).methods(),
-                            rows.getLong("configuration_revision"), rows.getLong("effective_revision"));
-                }
-            } catch (SQLException failure) {
-                throw new IllegalStateException("Cannot read production configuration: " + id, failure);
+            return read(id);
+        }
+    }
+
+    public ProductionMethodConfigurationRepository.Session inTransaction(SqliteTransactions.WriteSession session) {
+        session.requireConnection(connection);
+        return new ProductionMethodConfigurationRepository.Session() {
+            @Override public ProductionMethodConfiguration load(UUID id) {
+                session.requireConnection(connection);
+                return read(id);
             }
+            @Override public void save(ProductionMethodConfiguration changed, long expectedRevision) {
+                session.requireConnection(connection);
+                try { persist(changed, expectedRevision); }
+                catch (SQLException failure) { throw new IllegalStateException("Cannot save production configuration", failure); }
+            }
+        };
+    }
+
+    private ProductionMethodConfiguration read(UUID id) {
+        try (var statement = connection.prepareStatement("SELECT c.*, b.building_type_id FROM production_method_configurations c JOIN economic_buildings b ON b.id=c.building_id WHERE c.building_id=?")) {
+            statement.setString(1, id.toString());
+            try (var rows = statement.executeQuery()) {
+                if (!rows.next()) throw new IllegalStateException("Production configuration missing: " + id);
+                String pending = rows.getString("pending_json");
+                return new ProductionMethodConfiguration(id, recipes.rulesFor(rows.getString("building_type_id")),
+                        gson.fromJson(rows.getString("effective_json"), Selections.class).methods(),
+                        pending == null ? null : gson.fromJson(pending, Selections.class).methods(),
+                        rows.getLong("configuration_revision"), rows.getLong("effective_revision"));
+            }
+        } catch (SQLException failure) {
+            throw new IllegalStateException("Cannot read production configuration: " + id, failure);
         }
     }
 
@@ -61,21 +80,26 @@ public final class SqliteProductionMethodConfigurationRepository implements Prod
 
     @Override
     public void save(ProductionMethodConfiguration changed, long expectedRevision) {
-        if (changed.configurationRevision() != Math.incrementExact(expectedRevision))
-            throw new IllegalArgumentException("Save exactly one configuration change per commit");
         synchronized (lock) {
+            SqliteTransactions.requireCommittedReads(connection);
             SqliteTransactions.run(connection, () -> {
-                try (var statement = connection.prepareStatement("UPDATE production_method_configurations SET effective_json=?,pending_json=?,configuration_revision=?,effective_revision=? WHERE building_id=? AND configuration_revision=?")) {
-                    statement.setString(1, gson.toJson(new Selections(changed.effective().methods())));
-                    statement.setString(2, changed.pending().map(p -> gson.toJson(new Selections(p.methods()))).orElse(null));
-                    statement.setLong(3, changed.configurationRevision());
-                    statement.setLong(4, changed.effectiveRevision());
-                    statement.setString(5, changed.buildingId().toString());
-                    statement.setLong(6, expectedRevision);
-                    if (statement.executeUpdate() != 1) throw new ProductionRevisionConflict("Configuration missing or stale: " + changed.buildingId());
-                }
+                persist(changed, expectedRevision);
                 return null;
             });
+        }
+    }
+
+    private void persist(ProductionMethodConfiguration changed, long expectedRevision) throws SQLException {
+        if (changed.configurationRevision() != Math.incrementExact(expectedRevision))
+            throw new IllegalArgumentException("Save exactly one configuration change per commit");
+        try (var statement = connection.prepareStatement("UPDATE production_method_configurations SET effective_json=?,pending_json=?,configuration_revision=?,effective_revision=? WHERE building_id=? AND configuration_revision=?")) {
+            statement.setString(1, gson.toJson(new Selections(changed.effective().methods())));
+            statement.setString(2, changed.pending().map(p -> gson.toJson(new Selections(p.methods()))).orElse(null));
+            statement.setLong(3, changed.configurationRevision());
+            statement.setLong(4, changed.effectiveRevision());
+            statement.setString(5, changed.buildingId().toString());
+            statement.setLong(6, expectedRevision);
+            if (statement.executeUpdate() != 1) throw new ProductionRevisionConflict("Configuration missing or stale: " + changed.buildingId());
         }
     }
 }

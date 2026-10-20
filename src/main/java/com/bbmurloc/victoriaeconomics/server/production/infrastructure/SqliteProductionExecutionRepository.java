@@ -22,25 +22,45 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
     public ProductionExecution load(UUID id) {
         synchronized (lock) {
             SqliteTransactions.requireCommittedReads(connection);
-            return SqliteTransactions.run(connection, () -> {
-                try (var statement = connection.prepareStatement("SELECT * FROM production_executions WHERE building_id=?")) {
-                    statement.setString(1, id.toString());
-                    try (var rows = statement.executeQuery()) {
-                        if (!rows.next()) throw new IllegalStateException("Production execution missing: " + id);
-                        var execution = ProductionExecution.rehydrate(id, loadBatch(rows.getString("current_batch_id")),
-                                loadBatch(rows.getString("last_batch_id")), ProductionExecution.Boundary.valueOf(rows.getString("boundary")),
-                                rows.getInt("automatic") != 0, rows.getLong("execution_revision"), rows.getLong("methods_effective_revision"));
-                        try (var active = connection.prepareStatement("SELECT batch_id FROM production_batches WHERE building_id=? AND status IN ('ACTIVE','PAUSED','SETTLING_COMPLETED','SETTLING_ABORTED')")) {
-                            active.setString(1, id.toString());
-                            try (var batches = active.executeQuery()) {
-                                if (batches.next() && (!execution.hasUnfinishedBatch() || !execution.batch().getId().toString().equals(batches.getString(1))))
-                                    throw new IllegalStateException("Unreferenced unfinished production batch: " + id);
-                            }
-                        }
-                        return execution;
+            return SqliteTransactions.run(connection, () -> read(id));
+        }
+    }
+
+    /** Only a live capability for this exact connection can read transaction-local facts. */
+    public ProductionExecutionRepository.Session inTransaction(SqliteTransactions.WriteSession session) {
+        session.requireConnection(connection);
+        return new ProductionExecutionRepository.Session() {
+            @Override public ProductionExecution load(UUID id) {
+                session.requireConnection(connection);
+                try { return read(id); }
+                catch (SQLException failure) { throw new IllegalStateException("Cannot read production execution: " + id, failure); }
+            }
+            @Override public void save(ProductionExecution changed, long expectedRevision) {
+                session.requireConnection(connection);
+                try { persist(changed, expectedRevision); }
+                catch (SQLException failure) { throw new IllegalStateException("Cannot save production execution", failure); }
+                // The owning UoW, not a savepoint, acknowledges the outer commit.
+            }
+        };
+    }
+
+    private ProductionExecution read(UUID id) throws SQLException {
+        try (var statement = connection.prepareStatement("SELECT * FROM production_executions WHERE building_id=?")) {
+            statement.setString(1, id.toString());
+            try (var rows = statement.executeQuery()) {
+                if (!rows.next()) throw new IllegalStateException("Production execution missing: " + id);
+                var execution = ProductionExecution.rehydrate(id, loadBatch(rows.getString("current_batch_id")),
+                        loadBatch(rows.getString("last_batch_id")), ProductionExecution.Boundary.valueOf(rows.getString("boundary")),
+                        rows.getInt("automatic") != 0, rows.getLong("execution_revision"), rows.getLong("methods_effective_revision"));
+                try (var active = connection.prepareStatement("SELECT batch_id FROM production_batches WHERE building_id=? AND status IN ('ACTIVE','PAUSED','SETTLING_COMPLETED','SETTLING_ABORTED')")) {
+                    active.setString(1, id.toString());
+                    try (var batches = active.executeQuery()) {
+                        if (batches.next() && (!execution.hasUnfinishedBatch() || !execution.batch().getId().toString().equals(batches.getString(1))))
+                            throw new IllegalStateException("Unreferenced unfinished production batch: " + id);
                     }
                 }
-            });
+                return execution;
+            }
         }
     }
 
@@ -62,26 +82,31 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
 
     @Override
     public void save(ProductionExecution changed, long expectedRevision) {
-        if (changed.executionRevision() != expectedRevision) throw new ProductionRevisionConflict("Stale execution object");
         synchronized (lock) {
+            SqliteTransactions.requireCommittedReads(connection);
             SqliteTransactions.run(connection, () -> {
-                try (var statement = connection.prepareStatement("UPDATE production_executions SET current_batch_id=?,last_batch_id=?,boundary=?,automatic=?,execution_revision=?,methods_effective_revision=? WHERE building_id=? AND execution_revision=?")) {
-                    statement.setString(1, batchId(changed.batch()));
-                    statement.setString(2, batchId(changed.lastBatch()));
-                    statement.setString(3, changed.boundary().name());
-                    statement.setInt(4, changed.automatic() ? 1 : 0);
-                    statement.setLong(5, Math.incrementExact(expectedRevision));
-                    statement.setLong(6, changed.methodsEffectiveRevision());
-                    statement.setString(7, changed.buildingId().toString());
-                    statement.setLong(8, expectedRevision);
-                    if (statement.executeUpdate() != 1) throw new ProductionRevisionConflict("Execution missing or stale: " + changed.buildingId());
-                }
-                saveBatch(changed.batch());
-                saveBatch(changed.lastBatch());
+                persist(changed, expectedRevision);
                 return null;
             });
             changed.acknowledgeCommit(expectedRevision);
         }
+    }
+
+    private void persist(ProductionExecution changed, long expectedRevision) throws SQLException {
+        if (changed.executionRevision() != expectedRevision) throw new ProductionRevisionConflict("Stale execution object");
+        try (var statement = connection.prepareStatement("UPDATE production_executions SET current_batch_id=?,last_batch_id=?,boundary=?,automatic=?,execution_revision=?,methods_effective_revision=? WHERE building_id=? AND execution_revision=?")) {
+            statement.setString(1, batchId(changed.batch()));
+            statement.setString(2, batchId(changed.lastBatch()));
+            statement.setString(3, changed.boundary().name());
+            statement.setInt(4, changed.automatic() ? 1 : 0);
+            statement.setLong(5, Math.incrementExact(expectedRevision));
+            statement.setLong(6, changed.methodsEffectiveRevision());
+            statement.setString(7, changed.buildingId().toString());
+            statement.setLong(8, expectedRevision);
+            if (statement.executeUpdate() != 1) throw new ProductionRevisionConflict("Execution missing or stale: " + changed.buildingId());
+        }
+        saveBatch(changed.batch());
+        saveBatch(changed.lastBatch());
     }
 
     private static String batchId(ProductionBatch batch) { return batch == null ? null : batch.getId().toString(); }

@@ -1,12 +1,53 @@
 package com.bbmurloc.victoriaeconomics.server.storage.sqlite;
 
 import java.sql.*;
+import org.sqlite.SQLiteConfig.TransactionMode;
 
 /** Shared SQLite transaction/savepoint helper. Commit acknowledgement failures remain distinguishable. */
 public final class SqliteTransactions {
     private SqliteTransactions() {}
     @FunctionalInterface
     public interface Work<T> { T run() throws SQLException; }
+
+    @FunctionalInterface
+    public interface WriteWork<T> { T run(WriteSession session) throws SQLException; }
+
+    /** Unforgeable, thread-confined capability for explicit transaction-local repository access. */
+    public static final class WriteSession {
+        private final Connection connection;
+        private final Thread owner = Thread.currentThread();
+        private boolean active = true;
+
+        private WriteSession(Connection connection) { this.connection = connection; }
+
+        public void requireConnection(Connection candidate) {
+            if (!active || owner != Thread.currentThread()) throw new IllegalStateException("SQLite write session is closed or belongs to another thread");
+            if (candidate != connection) throw new IllegalArgumentException("Repository belongs to another SQLite connection");
+            SqliteConnectionGuard.requireTrusted(connection);
+        }
+    }
+
+    /** Owns an IMMEDIATE JDBC transaction; nesting cannot establish the required lock-before-read order. */
+    public static <T> T write(Connection connection, WriteWork<T> work) {
+        requireCommittedReads(connection);
+        var config = SqliteConnectionGuard.transactionConfig(connection);
+        TransactionMode previous = config.getTransactionMode();
+        config.setTransactionMode(TransactionMode.IMMEDIATE);
+        try {
+            return run(connection, () -> {
+                // Xerial 3.46.1.0 already executed BEGIN IMMEDIATE in setAutoCommit(false).
+                // commit()/rollback() issue another BEGIN: use DEFERRED for that empty transaction so
+                // cleanup cannot acquire a second write lock after the business transaction ends.
+                config.setTransactionMode(TransactionMode.DEFERRED);
+                var session = new WriteSession(connection);
+                try { return work.run(session); }
+                finally { session.active = false; }
+            });
+        } finally {
+            // Local driver configuration only, including after quarantine; no JDBC reset/SQL here.
+            config.setTransactionMode(previous);
+        }
+    }
 
     /** Standalone authority queries must never mistake an unresolved local transaction for a committed fact. */
     public static void requireCommittedReads(Connection connection) {

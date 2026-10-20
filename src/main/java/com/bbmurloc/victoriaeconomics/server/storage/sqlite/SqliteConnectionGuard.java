@@ -1,5 +1,7 @@
 package com.bbmurloc.victoriaeconomics.server.storage.sqlite;
 
+import org.sqlite.SQLiteConnection;
+import org.sqlite.SQLiteConnectionConfig;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
@@ -16,6 +18,7 @@ public final class SqliteConnectionGuard {
 
     private static final class State {
         volatile Throwable failure;
+        SQLiteConnectionConfig transactionConfig;
     }
 
     private record Tracked(WeakReference<Connection> connection, State state) {}
@@ -47,6 +50,15 @@ public final class SqliteConnectionGuard {
 
     static boolean isQuarantined(Connection connection) {
         return stateOf(connection).failure != null;
+    }
+
+    /** Internal mode control only: never exposes the physical connection through unwrap. */
+    static SQLiteConnectionConfig transactionConfig(Connection connection) {
+        State state = stateOf(connection);
+        requireTrusted(state);
+        if (state.transactionConfig == null)
+            throw new IllegalArgumentException("Register the Xerial SQLite connection with protect before adding JDBC wrappers");
+        return state.transactionConfig;
     }
 
     static void quarantine(Connection connection, Throwable failure) {
@@ -81,6 +93,7 @@ public final class SqliteConnectionGuard {
             if (state != null) return state;
             state = find(unwrapped);
             if (state == null) state = new State();
+            if (connection instanceof SQLiteConnection sqlite) state.transactionConfig = sqlite.getConnectionConfig();
             STATES.add(new Tracked(new WeakReference<>(connection), state));
             if (unwrapped != connection) STATES.add(new Tracked(new WeakReference<>(unwrapped), state));
             return state;
