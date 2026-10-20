@@ -9,7 +9,7 @@ import java.util.*;
 import java.util.function.*;
 
 /**
- * Employment owns position admission/reservations. Equipment only limits participation.
+ * Employment owns NPC position admission, qualifications and reservations until M3.1.
  */
 public final class EmploymentService implements WorkforcePort {
     private final EmploymentRegistry employment;

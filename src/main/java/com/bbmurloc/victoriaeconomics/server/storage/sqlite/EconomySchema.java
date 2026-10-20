@@ -5,11 +5,11 @@ import java.util.*;
 
 /** Fresh B-prime schema. Existing incompatible worlds are rejected, never converted or cleared. */
 public final class EconomySchema {
-    public static final int VERSION = 3;
+    public static final int VERSION = 4;
     private EconomySchema() {}
 
-    // The same v3 DDL defines both creation and compatibility, including keys/checks/indexes.
-    // v3 adds inventory CAS and explicitly versioned integer snapshots; no legacy migration.
+    // v4 removes dedicated equipment persistence and snapshots; NPC UUID employment remains.
+    // Creation and compatibility use the same DDL, with no legacy migration.
     private static final List<String> DDL = List.of(
             "CREATE TABLE economy_schema_migrations(version INTEGER PRIMARY KEY)",
             "CREATE TABLE economic_buildings(id TEXT PRIMARY KEY, building_type_id TEXT NOT NULL, status TEXT NOT NULL)",
@@ -19,7 +19,6 @@ public final class EconomySchema {
             "CREATE TABLE production_executions(building_id TEXT PRIMARY KEY REFERENCES economic_buildings(id), current_batch_id TEXT, last_batch_id TEXT, boundary TEXT NOT NULL CHECK(boundary IN ('NONE','METHODS','EQUIPMENT','WORKFORCE')), automatic INTEGER NOT NULL CHECK(automatic IN (0,1)), execution_revision INTEGER NOT NULL CHECK(execution_revision >= 0), methods_effective_revision INTEGER NOT NULL CHECK(methods_effective_revision >= 0), CHECK(current_batch_id IS NULL OR last_batch_id IS NULL OR current_batch_id <> last_batch_id), FOREIGN KEY(current_batch_id, building_id) REFERENCES production_batches(batch_id, building_id) DEFERRABLE INITIALLY DEFERRED, FOREIGN KEY(last_batch_id, building_id) REFERENCES production_batches(batch_id, building_id) DEFERRABLE INITIALLY DEFERRED)",
             "CREATE TABLE production_start_intents(batch_id TEXT PRIMARY KEY, building_id TEXT NOT NULL UNIQUE REFERENCES economic_buildings(id))",
             "CREATE TABLE inventory_locations(location_id TEXT PRIMARY KEY, state_json TEXT NOT NULL, revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision >= 0))",
-            "CREATE TABLE equipment_holdings(building_id TEXT PRIMARY KEY, state_json TEXT NOT NULL)",
             "CREATE TABLE employment_state(id INTEGER PRIMARY KEY CHECK(id=1), state_json TEXT NOT NULL)");
 
     public static void initialize(Connection connection) {

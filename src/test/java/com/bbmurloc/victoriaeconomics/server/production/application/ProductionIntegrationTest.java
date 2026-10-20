@@ -1,7 +1,6 @@
 package com.bbmurloc.victoriaeconomics.server.production.application;
 
 import com.bbmurloc.victoriaeconomics.server.inventory.domain.GoodsInventory;
-import com.bbmurloc.victoriaeconomics.server.inventory.domain.EquipmentConfigurationRequest;
 import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionBatch;
 import com.bbmurloc.victoriaeconomics.server.production.port.*;
 import org.junit.jupiter.api.Test;
@@ -43,27 +42,23 @@ class ProductionIntegrationTest {
     }
 
     @Test
-    void pmIsDeferredThroughPauseAndSettlementThenAppliedBeforeEquipment() throws Exception {
+    void pmIsDeferredThroughPauseAndSettlementThenAppliedBeforeTheNextBatch() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
             var original = e.production.startBatch(e.id);
             e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
-            e.equipment.uninstall(e.id, 80);
             assertEquals("crude_tools", e.methods().effective().methods().get("tooling_workshop_base"));
             e.payroll.set(BuildingPayrollPort.State.RECOVERY);
             e.ticks(50);
-            assertEquals(100, e.equipment.getHolding(e.id).getInstalledQuantity());
             assertEquals(ProductionBatch.Status.PAUSED, e.execution().batch().getStatus());
             e.payroll.set(BuildingPayrollPort.State.CURRENT);
             e.ticks(199);
             assertEquals("crude_tools", e.methods().effective().methods().get("tooling_workshop_base"));
-            // Stop the method checkpoint once: no equipment changes can precede a durable PM boundary.
+            // Refuse the completion checkpoint once: the old frozen recipe and pending PM must remain protected.
             e.repository.failCompletedSave = true;
             e.ticks(1);
             assertTrue(e.execution().batch().needsSettlement());
-            assertEquals(100, e.equipment.getHolding(e.id).getInstalledQuantity());
             e.production.retry(e.id);
             assertEquals("efficient_tools", e.methods().effective().methods().get("tooling_workshop_base"));
-            assertEquals(20, e.equipment.getHolding(e.id).getInstalledQuantity());
             assertEquals("crude_tools", original.getConfiguration().productionMethodSelections().get("tooling_workshop_base"));
             assertEquals(30, e.quantity("tools"));
         }
@@ -87,17 +82,15 @@ class ProductionIntegrationTest {
     }
 
     @Test
-    void hiringIsLimitedByPmPositionsAndReservationsRatherThanEquipment() throws Exception {
+    void hiringIsLimitedByPmPositionsAndJobReservations() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
-            e.equipment.uninstall(e.id, 90);
             UUID worker = new UUID(1, 1);
             e.employment.fire(worker);
             var reservation = e.employment.reservePosition(worker, e.id, "laborer");
             assertThrows(IllegalStateException.class, () -> e.employment.hire(UUID.randomUUID(), e.id, "laborer"));
             e.employment.acceptPosition(reservation.id());
             assertEquals(10, e.employment.countWorkers(e.id, "laborer"));
-            assertEquals(10, e.equipment.getHolding(e.id).getInstalledQuantity());
-            assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id)); // machinist: floor(.1 * 4)=0
+            assertEquals(1.0, e.production.startBatch(e.id).getConfiguration().productionSpeed());
         }
     }
 
@@ -129,13 +122,12 @@ class ProductionIntegrationTest {
     }
 
     @Test
-    void failedFinalCommitReleasesMaterialsAndEquipmentProtection() throws Exception {
+    void failedFinalCommitReleasesAllMaterialReservations() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
             e.repository.failNextSave = true;
             assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
             assertNull(e.execution().batch());
             assertTrue(e.stockState().reservations().isEmpty());
-            assertNull(e.equipment.getHolding(e.id).state().protectedByBatch());
             assertTrue(e.journal.pendingStarts().isEmpty());
             e.production.startBatch(e.id);
         }
@@ -275,23 +267,19 @@ class ProductionIntegrationTest {
     }
 
     @Test
-    void restartPreservesProgressMethodsEquipmentRequestsAndMaterialLocks() throws Exception {
-        UUID batchId, requestId;
+    void restartPreservesProgressMethodsAndMaterialLocks() throws Exception {
+        UUID batchId;
         try (var e = new TestEconomy(database(), true)) {
             batchId = e.production.startBatch(e.id).getId();
             e.ticks(60);
             e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
-            requestId = e.equipment.uninstall(e.id, 50).id();
         }
         try (var e = new TestEconomy(database(), false)) {
             assertEquals(batchId, e.execution().batch().getId());
             assertEquals(0.3, e.execution().batch().getProgress());
             assertEquals(14, e.employees.getAll().size());
-            assertEquals(100, e.equipment.getHolding(e.id).getInstalledQuantity());
-            assertEquals(EquipmentConfigurationRequest.Status.PENDING, e.equipment.getHolding(e.id).find(requestId).status());
             assertEquals(30, new GoodsInventory(e.stockState()).reserved("wood"));
             e.ticks(140);
-            assertEquals(50, e.equipment.getHolding(e.id).getInstalledQuantity());
             assertEquals("efficient_tools", e.methods().effective().methods().get("tooling_workshop_base"));
             assertEquals(30, e.quantity("tools"));
         }

@@ -39,35 +39,32 @@ class BoundaryRecoveryTest {
         }
     }
 
-    @Test void restartFindsPendingAtEquipmentWithoutReplayingTheExecutedRequest() throws Exception {
+    @Test void restartFindsPendingAtLegacyTransitionAfterMethodsReentryFailed() throws Exception {
         UUID batch;
         try (var e = new TestEconomy(database(), true)) {
             batch = e.production.startBatch(e.id).getId();
-            e.equipment.uninstall(e.id, 20);
-            e.repository.failEquipmentBoundarySave = true;
+            e.repository.failLegacyBoundarySave = true;
             e.ticks(200);
             assertEquals(ProductionExecution.Boundary.EQUIPMENT, e.execution().boundary());
-            assertEquals(80, e.equipment.getHolding(e.id).getInstalledQuantity());
+            assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
             e.repository.failReturnMethodsSave = true;
             assertThrows(IllegalStateException.class, () -> e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools"));
             assertEquals(ProductionExecution.Boundary.EQUIPMENT, e.execution().boundary());
-            assertThrows(IllegalStateException.class, () -> e.equipment.flushPendingOperationsForBuilding(e.id, batch));
         }
         try (var e = new TestEconomy(database(), false)) {
             assertEquals("efficient_tools", effective(e));
             assertNull(e.execution().batch());
-            assertEquals(80, e.equipment.getHolding(e.id).getInstalledQuantity());
             assertEquals(30, e.quantity("tools"));
             e.production.retry(e.id);
-            assertEquals(80, e.equipment.getHolding(e.id).getInstalledQuantity());
+            assertEquals(batch, e.execution().lastBatch().getId());
+            assertEquals(1, e.stockState().settlements().size());
         }
     }
 
-    @Test void effectiveRevisionMismatchRejectsEquipmentEvenWithoutPending() throws Exception {
+    @Test void effectiveRevisionMismatchRevisitsMethodsBeforeLeavingLegacyBoundary() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
             UUID batch = e.production.startBatch(e.id).getId();
-            e.equipment.uninstall(e.id, 20);
-            e.repository.failEquipmentBoundarySave = true;
+            e.repository.failLegacyBoundarySave = true;
             e.ticks(200);
             // Build an independently committed intermediate state to test the guard and recovery, not a public PM command.
             var configuration = e.methods();
@@ -76,11 +73,9 @@ class BoundaryRecoveryTest {
             e.configurations.save(configuration, revision);
             assertTrue(e.methods().pending().isEmpty());
             assertNotEquals(e.methods().effectiveRevision(), e.execution().methodsEffectiveRevision());
-            assertThrows(IllegalStateException.class, () -> e.equipment.flushPendingOperationsForBuilding(e.id, batch));
             e.production.recoverBoundaries();
             assertNull(e.execution().batch());
             assertEquals(1, e.execution().methodsEffectiveRevision());
-            assertEquals(80, e.equipment.getHolding(e.id).getInstalledQuantity());
         }
     }
 
@@ -156,30 +151,31 @@ class BoundaryRecoveryTest {
         }
     }
 
-    @Test void equipmentRequiresDurableEndedBoundaryAndOldBatchCannotReleaseNewProtection() throws Exception {
+    @Test void legacyTransitionCannotBypassActivePausedSettlingOrUnknownExecution() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
             UUID batch = e.production.startBatch(e.id).getId();
-            e.equipment.uninstall(e.id, 50);
-            assertThrows(IllegalStateException.class, () -> e.equipment.flushPendingOperationsForBuilding(e.id, batch));
+            assertThrows(IllegalStateException.class, () -> e.execution().advanceLegacyBoundary());
             e.payroll.set(BuildingPayrollPort.State.RECOVERY);
             e.ticks(1);
             assertEquals(ProductionBatch.Status.PAUSED, e.execution().batch().getStatus());
-            assertThrows(IllegalStateException.class, () -> e.equipment.flushPendingOperationsForBuilding(e.id, batch));
+            assertThrows(IllegalStateException.class, () -> e.execution().advanceLegacyBoundary());
             e.payroll.set(BuildingPayrollPort.State.CURRENT);
             e.ticks(199);
             e.repository.failCompletedSave = true;
             e.ticks(1);
             assertEquals(ProductionBatch.Status.SETTLING_COMPLETED, e.execution().batch().getStatus());
-            assertThrows(IllegalStateException.class, () -> e.equipment.flushPendingOperationsForBuilding(e.id, batch));
-            assertEquals(100, e.equipment.getHolding(e.id).getInstalledQuantity());
+            assertThrows(IllegalStateException.class, () -> e.execution().advanceLegacyBoundary());
+            assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
             e.repository.failLoad = true;
-            assertThrows(IllegalStateException.class, () -> e.equipment.flushPendingOperationsForBuilding(e.id, batch));
+            assertThrows(IllegalStateException.class, () -> e.production.retry(e.id));
+            assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
             e.repository.failLoad = false;
             e.production.retry(e.id);
             UUID next = e.production.startBatch(e.id).getId();
-            assertThrows(IllegalStateException.class, () -> e.equipment.flushPendingOperationsForBuilding(e.id, batch));
-            assertEquals(next, e.equipment.getHolding(e.id).state().protectedByBatch());
-            assertEquals(50, e.equipment.getHolding(e.id).getInstalledQuantity());
+            assertNotEquals(batch, next);
+            assertEquals(batch, e.execution().lastBatch().getId());
+            assertEquals(Set.of(next), e.stockState().reservations().keySet());
+            assertThrows(IllegalStateException.class, () -> e.execution().advanceLegacyBoundary());
         }
     }
 
@@ -197,7 +193,6 @@ class BoundaryRecoveryTest {
             assertNull(e.execution().batch());
             assertTrue(e.stockState().reservations().isEmpty());
             assertTrue(e.journal.pendingStarts().isEmpty());
-            assertNull(e.equipment.getHolding(e.id).state().protectedByBatch());
         }
     }
 
@@ -218,6 +213,6 @@ class BoundaryRecoveryTest {
     }
 
     private ProductionService production(TestEconomy e, WorkforcePort workforce, BuildingPayrollPort payroll) {
-        return new ProductionService(e.buildings, e.configurations, e.repository, e.equipment, e.inventory, payroll, workforce, e.journal, e.lock);
+        return new ProductionService(e.buildings, e.configurations, e.repository, e.inventory, payroll, workforce, e.journal, e.lock);
     }
 }

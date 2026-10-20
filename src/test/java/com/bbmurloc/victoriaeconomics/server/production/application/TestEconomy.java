@@ -7,15 +7,12 @@ import com.bbmurloc.victoriaeconomics.common.definition.production.*;
 import com.bbmurloc.victoriaeconomics.server.building.*;
 import com.bbmurloc.victoriaeconomics.server.production.port.ProductionInventoryPort;
 import com.bbmurloc.victoriaeconomics.server.inventory.domain.GoodsInventory;
-import com.bbmurloc.victoriaeconomics.server.inventory.application.ProductionEquipmentRegistry;
 import com.bbmurloc.victoriaeconomics.server.production.port.*;
 import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionRecipeResolver;
-import com.bbmurloc.victoriaeconomics.server.inventory.application.ProductionEquipmentService;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.EconomySchema;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.CommitOutcomeUnknownException;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteEmploymentRepository;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteBuildingRepository;
-import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteEquipmentRepository;
 import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore;
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.*;
 import com.bbmurloc.victoriaeconomics.server.workforce.employment.*;
@@ -36,7 +33,6 @@ final class TestEconomy implements AutoCloseable {
     final ProductionMethodRegistry methods = new ProductionMethodRegistry();
     final ProductionMethodGroupRegistry groups = new ProductionMethodGroupRegistry();
     final EmploymentRegistry employees = new EmploymentRegistry();
-    final ProductionEquipmentRegistry holdings = new ProductionEquipmentRegistry();
     final OccupationRegistry occupations = new OccupationRegistry();
     final AtomicReference<BuildingPayrollPort.State> payroll = new AtomicReference<>(BuildingPayrollPort.State.CURRENT);
     final BuildingRepository buildingRepository;
@@ -45,7 +41,6 @@ final class TestEconomy implements AutoCloseable {
     final RepositoryProductionFacts facts;
     final FaultJournal journal;
     final FaultInventory inventory;
-    final ProductionEquipmentService equipment;
     final EmploymentService employment;
     final BuildingService buildingService;
     final ProductionService production;
@@ -76,9 +71,6 @@ final class TestEconomy implements AutoCloseable {
         repository = new FaultExecutionRepository(new SqliteProductionExecutionRepository(connection, lock));
         facts = new RepositoryProductionFacts(configurations, repository, lock);
         buildingRepository.loadAll().forEach(buildings::add);
-        var equipmentRepository = new SqliteEquipmentRepository(connection);
-        equipmentRepository.loadAll().forEach(holdings::register);
-        equipment = new ProductionEquipmentService(buildings, types, holdings, equipmentRepository::saveAll, facts, lock);
         var employmentRepository = new SqliteEmploymentRepository(connection);
         employees.replace(employmentRepository.load());
         employment = new EmploymentService(employees, buildings, occupations, (npc, occupation) -> true, employmentRepository::save, facts, lock);
@@ -87,14 +79,12 @@ final class TestEconomy implements AutoCloseable {
         journal = new FaultJournal(new SqliteProductionJournal(connection));
         var initializer = new ProductionBuildingInitializer(connection, lock, buildingRepository, configurations, repository, resolver);
         buildingService = new BuildingService(buildings, buildingRepository, types, initializer::initialize, lock);
-        production = new ProductionService(buildings, configurations, repository, equipment, inventory, (building) -> payroll.get(), employment, journal, lock);
+        production = new ProductionService(buildings, configurations, repository, inventory, (building) -> payroll.get(), employment, journal, lock);
         clock = new EconomicClock(production::onEconomicTick);
         if (create) {
             id = buildingService.createBuilding("tooling_workshop").getId();
             stock.createLocation(id, capacity);
             stock.deposit(id, Map.of("wood", 100L, "iron", 100L));
-            equipment.addUninstalledEquipment(id, 100);
-            equipment.install(id, 100);
             for (int i = 0; i < 10; i++) employment.hire(new UUID(1, i + 1), id, "laborer");
             for (int i = 0; i < 4; i++) employment.hire(new UUID(2, i + 1), id, "machinist");
         } else {
@@ -133,7 +123,7 @@ final class TestEconomy implements AutoCloseable {
 
     static final class FaultExecutionRepository implements ProductionExecutionRepository {
         final ProductionExecutionRepository delegate;
-        boolean failNextSave, failCompletedSave, failMethodsSave, failEquipmentBoundarySave;
+        boolean failNextSave, failCompletedSave, failMethodsSave, failLegacyBoundarySave;
         boolean loseStartAcknowledgement, failLoad, failProgressSave, failReturnMethodsSave;
         Runnable afterSave = () -> {};
         FaultExecutionRepository(ProductionExecutionRepository delegate) { this.delegate = delegate; }
@@ -156,8 +146,8 @@ final class TestEconomy implements AutoCloseable {
                 failMethodsSave = false;
                 throw new IllegalStateException("Injected METHODS checkpoint failure");
             }
-            if (failEquipmentBoundarySave && execution.boundary() == ProductionExecution.Boundary.WORKFORCE) {
-                failEquipmentBoundarySave = false;
+            if (failLegacyBoundarySave && execution.boundary() == ProductionExecution.Boundary.WORKFORCE) {
+                failLegacyBoundarySave = false;
                 throw new IllegalStateException("Injected EQUIPMENT checkpoint failure");
             }
             if (failReturnMethodsSave && execution.boundary() == ProductionExecution.Boundary.METHODS) {

@@ -27,7 +27,7 @@ class WorkforceContractTest {
     }
 
     private ProductionService production(TestEconomy economy, EmploymentService workforce) {
-        return new ProductionService(economy.buildings, economy.configurations, economy.repository, economy.equipment, economy.inventory,
+        return new ProductionService(economy.buildings, economy.configurations, economy.repository, economy.inventory,
                 building -> economy.payroll.get(), workforce, economy.journal, economy.lock);
     }
 
@@ -49,7 +49,7 @@ class WorkforceContractTest {
             assertThrows(UnsupportedOperationException.class, facts::clear);
 
             var plan = new WorkforcePlanningService().plan(economy.id, Map.of("laborer", 10, "machinist", 4),
-                    100, 100, facts, workforce::qualified);
+                    facts, workforce::qualified);
             assertEquals(0.8, plan.speed());
             assertEquals(8, plan.employees().get("laborer").size());
             assertEquals(4, plan.employees().get("machinist").size());
@@ -74,7 +74,6 @@ class WorkforceContractTest {
             assertNull(economy.execution().batch());
             assertTrue(economy.stockState().reservations().isEmpty());
             assertTrue(economy.journal.pendingStarts().isEmpty());
-            assertNull(economy.equipment.getHolding(economy.id).state().protectedByBatch());
             assertEquals(100, economy.quantity("wood"));
         }
     }
@@ -92,7 +91,6 @@ class WorkforceContractTest {
             assertNull(economy.execution().batch());
             assertTrue(economy.stockState().reservations().isEmpty());
             assertTrue(economy.journal.pendingStarts().isEmpty());
-            assertNull(economy.equipment.getHolding(economy.id).state().protectedByBatch());
 
             economy.inventory.afterReserve = () -> {};
             qualified.set(true);

@@ -6,20 +6,16 @@ import com.bbmurloc.victoriaeconomics.common.definition.good.*;
 import com.bbmurloc.victoriaeconomics.common.definition.industry.*;
 import com.bbmurloc.victoriaeconomics.common.definition.occupation.*;
 import com.bbmurloc.victoriaeconomics.common.definition.production.*;
-import com.bbmurloc.victoriaeconomics.common.definition.productionequipment.*;
 import com.bbmurloc.victoriaeconomics.server.building.*;
-import com.bbmurloc.victoriaeconomics.server.inventory.application.ProductionEquipmentRegistry;
 import com.bbmurloc.victoriaeconomics.server.production.application.ProductionService;
 import com.bbmurloc.victoriaeconomics.server.production.application.EconomicClock;
 import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionRecipeResolver;
 import com.bbmurloc.victoriaeconomics.server.production.port.*;
-import com.bbmurloc.victoriaeconomics.server.inventory.application.ProductionEquipmentService;
 import com.bbmurloc.victoriaeconomics.server.workforce.employment.*;
 import com.bbmurloc.victoriaeconomics.server.production.application.StaffingCalculator;
 import com.bbmurloc.victoriaeconomics.server.storage.*;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteEmploymentRepository;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteBuildingRepository;
-import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteEquipmentRepository;
 import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore;
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionJournal;
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionMethodConfigurationRepository;
@@ -38,13 +34,10 @@ public final class ServerEconomyContext implements AutoCloseable {
     private final ProductionMethodRegistry methods = new ProductionMethodRegistry();
     private final ProductionMethodGroupRegistry groups = new ProductionMethodGroupRegistry();
     private final OccupationRegistry occupations = new OccupationRegistry();
-    private final ProductionEquipmentDefinitionRegistry equipmentDefinitions = new ProductionEquipmentDefinitionRegistry();
     private final BuildingRegistry buildings = new BuildingRegistry();
     private final EmploymentRegistry employment = new EmploymentRegistry();
-    private final ProductionEquipmentRegistry equipment = new ProductionEquipmentRegistry();
     private final BuildingService buildingService;
     private final ProductionRecipeResolver recipes;
-    private final ProductionEquipmentService equipmentService;
     private final EmploymentService employmentService;
     private final StaffingCalculator staffing;
     private final ProductionService production;
@@ -60,11 +53,10 @@ public final class ServerEconomyContext implements AutoCloseable {
         DefaultDefinitions.registerIndustries(industries);
         DefaultDefinitions.registerGoods(goods);
         DefaultDefinitions.registerOccupations(occupations);
-        DefaultDefinitions.registerProductionEquipmentDefinitions(equipmentDefinitions);
         DefaultDefinitions.registerProductionMethods(methods);
         DefaultDefinitions.registerProductionMethodGroups(groups);
         DefaultDefinitions.registerBuildingTypes(types);
-        DefinitionValidator.validateAll(industries, goods, occupations, equipmentDefinitions, types, groups, methods);
+        DefinitionValidator.validateAll(industries, goods, occupations, types, groups, methods);
         recipes = new ProductionRecipeResolver(types, groups, methods);
         database = EconomyDatabase.open(server);
         try {
@@ -75,9 +67,6 @@ public final class ServerEconomyContext implements AutoCloseable {
             repository.loadAll().forEach(buildings::add);
             buildings.getAll().forEach(b -> { methodRepository.load(b.getId()); executionRepository.load(b.getId()); });
             var productionFacts = new RepositoryProductionFacts(methodRepository, executionRepository, economyLock);
-            var equipmentRepository = new SqliteEquipmentRepository(connection);
-            equipmentRepository.loadAll().forEach(equipment::register);
-            equipmentService = new ProductionEquipmentService(buildings, types, equipment, equipmentRepository::saveAll, productionFacts, economyLock);
             var employmentRepository = new SqliteEmploymentRepository(connection);
             employment.replace(employmentRepository.load());
             // No NPC qualification registry or payroll/finance authority exists yet: production must fail closed.
@@ -85,8 +74,8 @@ public final class ServerEconomyContext implements AutoCloseable {
             inventory = new SqliteInventoryStore(connection, economyLock);
             var initializer = new ProductionBuildingInitializer(connection, economyLock, repository, methodRepository, executionRepository, recipes);
             buildingService = new BuildingService(buildings, repository, types, initializer::initialize, economyLock);
-            staffing = new StaffingCalculator(employment, types, methodRepository, equipment);
-            production = new ProductionService(buildings, methodRepository, executionRepository, equipmentService, inventory, payroll,
+            staffing = new StaffingCalculator(employment, types, methodRepository);
+            production = new ProductionService(buildings, methodRepository, executionRepository, inventory, payroll,
                     employmentService, new SqliteProductionJournal(connection), economyLock);
             production.recoverStarts();
             production.recoverBoundaries();
@@ -137,18 +126,6 @@ public final class ServerEconomyContext implements AutoCloseable {
 
     public ProductionService getProductionService() {
         return production;
-    }
-
-    public ProductionEquipmentDefinitionRegistry getProductionEquipmentDefinitionRegistry() {
-        return equipmentDefinitions;
-    }
-
-    public ProductionEquipmentRegistry getProductionEquipmentRegistry() {
-        return equipment;
-    }
-
-    public ProductionEquipmentService getProductionEquipmentService() {
-        return equipmentService;
     }
 
     public SqliteInventoryStore getInventoryStore() {

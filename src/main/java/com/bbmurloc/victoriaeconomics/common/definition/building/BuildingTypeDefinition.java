@@ -6,8 +6,6 @@ import java.util.Objects;
 public record BuildingTypeDefinition(
         String id,
         String industryId,
-        String productionEquipmentTypeId,
-        int maxProductionEquipment,
         List<String> productionMethodGroupIds
 ) {
     public BuildingTypeDefinition {
@@ -23,20 +21,9 @@ public record BuildingTypeDefinition(
         );
 
         Objects.requireNonNull(
-                productionEquipmentTypeId,
-                "productionEquipmentTypeId cannot be null"
-        );
-
-        Objects.requireNonNull(
                 productionMethodGroupIds,
                 "productionMethodGroupIds cannot be null"
         );
-
-        if (maxProductionEquipment <= 0) {
-            throw new IllegalArgumentException(
-                    "maxProductionEquipment must be positive"
-            );
-        }
 
         productionMethodGroupIds =
                 List.copyOf(

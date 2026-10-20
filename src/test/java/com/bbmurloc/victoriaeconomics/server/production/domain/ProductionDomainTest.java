@@ -9,7 +9,7 @@ import com.bbmurloc.victoriaeconomics.server.production.application.EconomicCloc
 
 class ProductionDomainTest {
     private ProductionMethodRules rules() {
-        return new ProductionMethodRules(new BuildingTypeDefinition("factory", "industry", "equipment", 100, List.of("base", "later")),
+        return new ProductionMethodRules(new BuildingTypeDefinition("factory", "industry", List.of("base", "later")),
                 List.of(new ProductionMethodGroupDefinition("base", "factory", List.of("base1", "base2")),
                         new ProductionMethodGroupDefinition("later", "factory", List.of("later1", "later2"))),
                 List.of(new ProductionMethodDefinition("base1", "base", 1, Map.of("ore", 10L), Map.of("metal", 10L), Map.of("worker", 10)),
@@ -62,11 +62,11 @@ class ProductionDomainTest {
         UUID building = UUID.randomUUID();
         var employees = new ArrayList<>(workers(building, "laborer", 90, 0));
         employees.addAll(workers(building, "engineer", 3, 100));
-        var plan = new WorkforcePlanningService().plan(building, Map.of("laborer", 100, "engineer", 10), 100, 100, employees, (id, role) -> true);
+        var plan = new WorkforcePlanningService().plan(building, Map.of("laborer", 100, "engineer", 10), employees, (id, role) -> true);
         assertEquals(0.3, plan.speed());
         assertEquals(30, plan.employees().get("laborer").size());
         assertEquals(3, plan.employees().get("engineer").size());
-        var odd = new WorkforcePlanningService().plan(building, Map.of("laborer", 11, "engineer", 10), 100, 100, employees, (id, role) -> true);
+        var odd = new WorkforcePlanningService().plan(building, Map.of("laborer", 11, "engineer", 10), employees, (id, role) -> true);
         assertEquals(4, odd.employees().get("laborer").size());
     }
 
@@ -74,18 +74,18 @@ class ProductionDomainTest {
     void tenPercentThresholdUsesIntegerBoundaries() {
         UUID building = UUID.randomUUID();
         var planner = new WorkforcePlanningService();
-        assertThrows(IllegalStateException.class, () -> planner.plan(building, Map.of("worker", 11), 100, 100, workers(building, "worker", 1, 0), (id, role) -> true));
-        assertEquals(2.0 / 11, planner.plan(building, Map.of("worker", 11), 100, 100, workers(building, "worker", 2, 0), (id, role) -> true).speed());
-        assertEquals(0.1, planner.plan(building, Map.of("worker", 10), 100, 100, workers(building, "worker", 1, 0), (id, role) -> true).speed());
-        assertThrows(IllegalStateException.class, () -> planner.plan(building, Map.of("worker", 4), 24, 100, workers(building, "worker", 4, 0), (id, role) -> true));
+        assertThrows(IllegalStateException.class, () -> planner.plan(building, Map.of("worker", 11), workers(building, "worker", 1, 0), (id, role) -> true));
+        assertEquals(2.0 / 11, planner.plan(building, Map.of("worker", 11), workers(building, "worker", 2, 0), (id, role) -> true).speed());
+        assertEquals(0.1, planner.plan(building, Map.of("worker", 10), workers(building, "worker", 1, 0), (id, role) -> true).speed());
+        assertThrows(IllegalStateException.class, () -> planner.plan(building, Map.of("worker", 10), workers(building, "worker", 0, 0), (id, role) -> true));
     }
 
     @Test
-    void equipmentCapsParticipationWithoutAnExtraSpeedMultiplier() {
+    void participationIsLimitedOnlyByFormalDemandWithoutAnAssetFactor() {
         UUID building = UUID.randomUUID();
-        var plan = new WorkforcePlanningService().plan(building, Map.of("worker", 10), 50, 100, workers(building, "worker", 10, 0), (id, role) -> true);
-        assertEquals(5, plan.employees().get("worker").size());
-        assertEquals(0.5, plan.speed());
+        var plan = new WorkforcePlanningService().plan(building, Map.of("worker", 10), workers(building, "worker", 12, 0), (id, role) -> true);
+        assertEquals(10, plan.employees().get("worker").size());
+        assertEquals(1.0, plan.speed());
     }
 
     @Test
@@ -94,7 +94,7 @@ class ProductionDomainTest {
         var employees = new ArrayList<>(workers(building, "worker", 4, 0));
         employees.addAll(workers(building, "other", 10, 100));
         employees.addAll(workers(UUID.randomUUID(), "worker", 10, 200));
-        var plan = new WorkforcePlanningService().plan(building, Map.of("worker", 10), 100, 100, employees, (id, role) -> id.getLeastSignificantBits() != 1);
+        var plan = new WorkforcePlanningService().plan(building, Map.of("worker", 10), employees, (id, role) -> id.getLeastSignificantBits() != 1);
         assertEquals(3, plan.employees().get("worker").size());
         assertFalse(plan.employees().get("worker").contains(new UUID(0, 1)));
         assertThrows(UnsupportedOperationException.class, () -> plan.employees().get("worker").clear());
@@ -106,7 +106,7 @@ class ProductionDomainTest {
         var employees = new ArrayList<>(workers(building, "worker", 3, 0));
         employees.addAll(employees.subList(0, 3));
         Collections.reverse(employees);
-        var plan = new WorkforcePlanningService().plan(building, Map.of("worker", 10), 100, 100,
+        var plan = new WorkforcePlanningService().plan(building, Map.of("worker", 10),
                 employees, (id, role) -> true);
         assertEquals(0.3, plan.speed());
         assertEquals(List.of(new UUID(0, 1), new UUID(0, 2), new UUID(0, 3)), plan.employees().get("worker"));
@@ -118,14 +118,14 @@ class ProductionDomainTest {
         var facts = List.of(new EmploymentFact(employee, building, "worker"),
                 new EmploymentFact(employee, building, "engineer"));
         assertThrows(IllegalArgumentException.class, () -> new WorkforcePlanningService().plan(building,
-                Map.of("worker", 10, "engineer", 10), 100, 100, facts, (id, role) -> true));
+                Map.of("worker", 10, "engineer", 10), facts, (id, role) -> true));
     }
 
     private ProductionBatchConfiguration configuration(int selected, int demand) {
         UUID building = UUID.randomUUID();
-        var plan = new WorkforcePlanningService().plan(building, Map.of("worker", demand), 100, 100,
+        var plan = new WorkforcePlanningService().plan(building, Map.of("worker", demand),
                 workers(building, "worker", selected, 0), (id, role) -> true);
-        return new ProductionBatchConfiguration(Map.of("base", "base1"), new ResolvedProductionRecipe(Map.of("ore", 10L), Map.of("metal", 10L), Map.of("worker", demand)), 100, 100, plan);
+        return new ProductionBatchConfiguration(Map.of("base", "base1"), new ResolvedProductionRecipe(Map.of("ore", 10L), Map.of("metal", 10L), Map.of("worker", demand)), plan);
     }
 
     @Test
@@ -143,7 +143,7 @@ class ProductionDomainTest {
         execution.settlementCompleted(id);
         assertFalse(execution.hasUnfinishedBatch());
         execution.methodsApplied();
-        execution.equipmentApplied();
+        execution.advanceLegacyBoundary();
         execution.workforceReconciled();
         assertTrue(execution.lastBatch().isCompleted());
         assertNull(execution.batch());
@@ -204,7 +204,7 @@ class ProductionDomainTest {
     }
 
     private ProductionMethodRules deltaRules(long initialInput, long inputDelta, long outputDelta, int workerDelta) {
-        return new ProductionMethodRules(new BuildingTypeDefinition("delta", "industry", "equipment", 100, List.of("base", "modifier")),
+        return new ProductionMethodRules(new BuildingTypeDefinition("delta", "industry", List.of("base", "modifier")),
                 List.of(new ProductionMethodGroupDefinition("base", "delta", List.of("base")),
                         new ProductionMethodGroupDefinition("modifier", "delta", List.of("modifier"))),
                 List.of(new ProductionMethodDefinition("base", "base", 1, Map.of("ore", initialInput), Map.of("metal", 5L), Map.of("worker", 5)),

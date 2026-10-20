@@ -9,10 +9,6 @@ import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMet
 import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMethodGroupDefinition;
 import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMethodGroupRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.production.ProductionMethodRegistry;
-import com.bbmurloc.victoriaeconomics.common.definition.productionequipment.ProductionEquipmentDefinitionRegistry;
-
-import java.util.HashMap;
-import java.util.Map;
 
 public final class DefinitionValidator {
 
@@ -23,7 +19,6 @@ public final class DefinitionValidator {
             IndustryRegistry industryRegistry,
             GoodRegistry goodRegistry,
             OccupationRegistry occupationRegistry,
-            ProductionEquipmentDefinitionRegistry productionEquipmentDefinitionRegistry,
             BuildingTypeRegistry buildingTypeRegistry,
             ProductionMethodGroupRegistry productionMethodGroupRegistry,
             ProductionMethodRegistry productionMethodRegistry
@@ -32,7 +27,6 @@ public final class DefinitionValidator {
     ) {
         validateBuildingTypes(
                 industryRegistry,
-                productionEquipmentDefinitionRegistry,
                 buildingTypeRegistry,
                 productionMethodGroupRegistry
         );
@@ -60,13 +54,9 @@ public final class DefinitionValidator {
      */
     private static void validateBuildingTypes(
             IndustryRegistry industryRegistry,
-            ProductionEquipmentDefinitionRegistry productionEquipmentDefinitionRegistry,
             BuildingTypeRegistry buildingTypeRegistry,
             ProductionMethodGroupRegistry productionMethodGroupRegistry
     ) {
-        Map<String, String> equipmentTypeOwners =
-                new HashMap<>();
-
         for (BuildingTypeDefinition buildingType
                 : buildingTypeRegistry.getAll()) {
 
@@ -78,36 +68,6 @@ public final class DefinitionValidator {
                                 + buildingType.id()
                                 + "' references unknown industry '"
                                 + buildingType.industryId()
-                                + "'"
-                );
-            }
-
-            if (!productionEquipmentDefinitionRegistry.contains(
-                    buildingType.productionEquipmentTypeId()
-            )) {
-                throw new IllegalStateException(
-                        "Building type '"
-                                + buildingType.id()
-                                + "' references unknown production equipment type '"
-                                + buildingType.productionEquipmentTypeId()
-                                + "'"
-                );
-            }
-
-            String previousBuildingTypeId =
-                    equipmentTypeOwners.putIfAbsent(
-                            buildingType.productionEquipmentTypeId(),
-                            buildingType.id()
-                    );
-
-            if (previousBuildingTypeId != null) {
-                throw new IllegalStateException(
-                        "Production equipment type '"
-                                + buildingType.productionEquipmentTypeId()
-                                + "' is referenced by both building type '"
-                                + previousBuildingTypeId
-                                + "' and building type '"
-                                + buildingType.id()
                                 + "'"
                 );
             }

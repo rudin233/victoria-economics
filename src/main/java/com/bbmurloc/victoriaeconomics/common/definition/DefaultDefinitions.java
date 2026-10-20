@@ -10,8 +10,6 @@ import com.bbmurloc.victoriaeconomics.common.definition.industry.IndustryRegistr
 import com.bbmurloc.victoriaeconomics.common.definition.occupation.OccupationDefinition;
 import com.bbmurloc.victoriaeconomics.common.definition.occupation.OccupationRegistry;
 import com.bbmurloc.victoriaeconomics.common.definition.production.*;
-import com.bbmurloc.victoriaeconomics.common.definition.productionequipment.ProductionEquipmentDefinition;
-import com.bbmurloc.victoriaeconomics.common.definition.productionequipment.ProductionEquipmentDefinitionRegistry;
 
 import java.util.List;
 import java.util.Map;
@@ -153,8 +151,6 @@ public final class DefaultDefinitions {
                 new BuildingTypeDefinition(
                         "tooling_workshop",
                         "light_industries",
-                        "tooling_workshop_equipment",
-                        100,
                         List.of(
                                 "tooling_workshop_base",
                                 "tooling_workshop_automation"
@@ -189,25 +185,4 @@ public final class DefaultDefinitions {
         );
     }
 
-    public static void registerProductionEquipmentDefinitions(
-            ProductionEquipmentDefinitionRegistry registry
-    ) {
-        registry.register(
-                new ProductionEquipmentDefinition(
-                        "iron_mine_equipment"
-                )
-        );
-
-        registry.register(
-                new ProductionEquipmentDefinition(
-                        "logging_camp_equipment"
-                )
-        );
-
-        registry.register(
-                new ProductionEquipmentDefinition(
-                        "tooling_workshop_equipment"
-                )
-        );
-    }
 }

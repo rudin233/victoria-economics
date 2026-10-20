@@ -1,8 +1,7 @@
 /**
  * Inventory & Storage（库存与存储）限界上下文。
  * <p>
- * domain 分别保护单地点商品库存和设备持有；application 协调设备请求与索引发布；
- * infrastructure 提供现有 SQLite 保存与加载。商品与设备使用独立聚合及容量体系。
+ * domain 保护单地点整数商品库存、容量、排他预留及完整结算回执；
+ * infrastructure 通过受控 SQLite 写事务与地点 revision CAS 保存权威状态。
  */
 package com.bbmurloc.victoriaeconomics.server.inventory;
-

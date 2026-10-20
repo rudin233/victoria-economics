@@ -12,7 +12,7 @@ import java.math.BigDecimal;
 import java.util.*;
 import java.util.function.Function;
 
-/** Schema v3 integer snapshot contract. No legacy reader, migration or numeric coercion. */
+/** Schema v4 integer snapshots without dedicated equipment. NPC UUIDs are retained. */
 public final class EconomyStateCodec {
     private static final Gson GSON = new Gson();
     private static final int FULL_SPEED_TICKS = 200;
@@ -20,8 +20,8 @@ public final class EconomyStateCodec {
 
     /** A future semantic change must replace the schema/codec together, never reinterpret old snapshots in place. */
     public static void requireCurrentFormat() {
-        if (EconomySchema.VERSION != 3 || ProductionBatch.FULL_SPEED_TICKS != FULL_SPEED_TICKS)
-            throw new IllegalStateException("Schema v3 codec requires integer goods and 200-tick batches; change schema and codec together");
+        if (EconomySchema.VERSION != 4 || ProductionBatch.FULL_SPEED_TICKS != FULL_SPEED_TICKS)
+            throw new IllegalStateException("Schema v4 codec requires integer goods and 200-tick batches; change schema and codec together");
     }
 
     public static ProductionBatchConfiguration decodeBatchConfiguration(String json) {
@@ -30,7 +30,7 @@ public final class EconomyStateCodec {
             var envelope = fields(parse(json), "formatVersion", "fullSpeedTicks", "snapshot");
             requireVersion(envelope);
             if (integer(envelope.get("fullSpeedTicks")) != FULL_SPEED_TICKS) throw invalid("Wrong Batch progress basis");
-            var root = fields(envelope.get("snapshot"), "productionMethodSelections", "resolvedRecipe", "installedEquipment", "equipmentCapacity", "workforcePlan", "effectiveRevision");
+            var root = fields(envelope.get("snapshot"), "productionMethodSelections", "resolvedRecipe", "workforcePlan", "effectiveRevision");
             var recipe = fields(root.get("resolvedRecipe"), "inputs", "outputs", "requiredWorkers");
             var workforce = fields(root.get("workforcePlan"), "employees", "speedNumerator", "speedDenominator");
             var employees = map(workforce.get("employees"), value -> {
@@ -42,7 +42,6 @@ public final class EconomyStateCodec {
             return new ProductionBatchConfiguration(map(root.get("productionMethodSelections"), EconomyStateCodec::string),
                     new ResolvedProductionRecipe(quantities(recipe.get("inputs")), quantities(recipe.get("outputs")),
                             map(recipe.get("requiredWorkers"), value -> Math.toIntExact(integer(value)))),
-                    Math.toIntExact(integer(root.get("installedEquipment"))), Math.toIntExact(integer(root.get("equipmentCapacity"))),
                     new WorkforcePlan(employees, Math.toIntExact(integer(workforce.get("speedNumerator"))),
                             Math.toIntExact(integer(workforce.get("speedDenominator")))),
                     integer(root.get("effectiveRevision")));
@@ -117,13 +116,13 @@ public final class EconomyStateCodec {
 
     private static JsonObject envelope(JsonElement snapshot) {
         var result = new JsonObject();
-        result.addProperty("formatVersion", 3);
+        result.addProperty("formatVersion", 4);
         result.add("snapshot", snapshot);
         return result;
     }
 
     private static void requireVersion(JsonObject envelope) {
-        if (integer(envelope.get("formatVersion")) != 3) throw invalid("Unknown snapshot format version");
+        if (integer(envelope.get("formatVersion")) != 4) throw invalid("Unknown snapshot format version");
     }
 
     private static BigDecimal number(JsonElement value) {
@@ -182,7 +181,7 @@ public final class EconomyStateCodec {
     // Gson 2.10.1 JsonParser/fromJson enable lenient parsing and discard duplicate object names.
     // Read strictly before typed decoding; these two fixed formats need no extensible serializer system.
     private static JsonElement read(JsonReader reader, int depth) throws IOException {
-        if (depth > 16) throw invalid("Snapshot nesting exceeds the v3 format");
+        if (depth > 16) throw invalid("Snapshot nesting exceeds the v4 format");
         return switch (reader.peek()) {
             case BEGIN_OBJECT -> {
                 reader.beginObject();
@@ -214,6 +213,6 @@ public final class EconomyStateCodec {
 
     private static IllegalArgumentException invalid(String message) { return new IllegalArgumentException(message); }
     private static IllegalStateException incompatible(String kind, RuntimeException failure) {
-        return new IllegalStateException("Invalid or incompatible Schema v3 " + kind + "; no conversion was attempted", failure);
+        return new IllegalStateException("Invalid or incompatible Schema v4 " + kind + "; no conversion was attempted", failure);
     }
 }

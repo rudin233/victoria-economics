@@ -1,43 +1,13 @@
 package com.bbmurloc.victoriaeconomics.server.production.application;
 
 import java.util.Map;
-import java.util.Objects;
 
-/**
- * 某栋建筑当前整体人员配置的只读计算结果。
- */
-public record StaffingSnapshot(
-        double equipmentCapacity,
-        Map<String, OccupationStaffingSnapshot> occupations,
-        boolean canStart,
-        double productionSpeed
-) {
+/** Read-only staffing diagnostics; no authority to start a batch or bypass qualification checks. */
+public record StaffingSnapshot(Map<String, OccupationStaffingSnapshot> occupations,
+                               boolean canStart, double productionSpeed) {
     public StaffingSnapshot {
-
-        Objects.requireNonNull(
-                occupations,
-                "occupations cannot be null"
-        );
-
-        occupations =
-                Map.copyOf(
-                        occupations
-                );
-
-        if (equipmentCapacity < 0.0
-                || equipmentCapacity > 1.0) {
-
-            throw new IllegalArgumentException(
-                    "equipmentCapacity must be between 0 and 1"
-            );
-        }
-
-        if (productionSpeed < 0.0
-                || productionSpeed > 1.0) {
-
-            throw new IllegalArgumentException(
-                    "productionSpeed must be between 0 and 1"
-            );
-        }
+        occupations = Map.copyOf(occupations);
+        if (!Double.isFinite(productionSpeed) || productionSpeed < 0 || productionSpeed > 1)
+            throw new IllegalArgumentException("Production speed must be between 0 and 1");
     }
 }

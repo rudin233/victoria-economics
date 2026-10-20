@@ -8,20 +8,16 @@ import java.util.*;
 public record ProductionBatchConfiguration(
         Map<String, String> productionMethodSelections,
         ResolvedProductionRecipe resolvedRecipe,
-        int installedEquipment, int equipmentCapacity,
         WorkforcePlan workforcePlan, long effectiveRevision) {
     public ProductionBatchConfiguration(Map<String, String> selections, ResolvedProductionRecipe recipe,
-                                        int installed, int capacity, WorkforcePlan plan) {
-        this(selections, recipe, installed, capacity, plan, 0);
+                                        WorkforcePlan plan) {
+        this(selections, recipe, plan, 0);
     }
     public ProductionBatchConfiguration {
         if (effectiveRevision < 0) throw new IllegalArgumentException("Negative effective revision");
         productionMethodSelections = Map.copyOf(productionMethodSelections);
         Objects.requireNonNull(resolvedRecipe);
         Objects.requireNonNull(workforcePlan);
-        if (equipmentCapacity <= 0 || installedEquipment < 0 || installedEquipment > equipmentCapacity) {
-            throw new IllegalArgumentException("Invalid batch equipment");
-        }
         if (!resolvedRecipe.requiredWorkers().keySet().equals(workforcePlan.employees().keySet())) {
             throw new IllegalArgumentException("Workforce does not match recipe occupations");
         }
@@ -29,8 +25,7 @@ public record ProductionBatchConfiguration(
         for (var entry : resolvedRecipe.requiredWorkers().entrySet()) {
             int required = entry.getValue();
             int selected = workforcePlan.employees().get(entry.getKey()).size();
-            int limit = (int) ((long) installedEquipment * required / equipmentCapacity);
-            if ((long) selected * 10 < required || selected > limit) {
+            if ((long) selected * 10 < required || selected > required) {
                 throw new IllegalArgumentException("Invalid participation: " + entry.getKey());
             }
             if ((long) selected * denominator < (long) numerator * required) {

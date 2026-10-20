@@ -3,7 +3,7 @@ package com.bbmurloc.victoriaeconomics.server.inventory.domain;
 import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionSettlement;
 import java.util.*;
 
-/** Integer goods authority. Equipment remains a separate aggregate and capacity system. */
+/** Integer goods authority for balances, capacity, exclusive reservations and settlement receipts. */
 public final class GoodsInventory {
     public record Settlement(ProductionSettlement command) {
         public Settlement { Objects.requireNonNull(command); }

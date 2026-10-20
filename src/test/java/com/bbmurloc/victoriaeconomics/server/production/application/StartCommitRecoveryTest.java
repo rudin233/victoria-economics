@@ -75,32 +75,28 @@ class StartCommitRecoveryTest {
             assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
             assertNull(e.execution().batch());
             assertEquals(1, e.journal.pendingStarts().size());
-            assertNotNull(e.equipment.getHolding(e.id).state().protectedByBatch());
             e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
             assertEquals("efficient_tools", e.methods().effective().methods().get("tooling_workshop_base"));
             assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
         }
         try (var e = new TestEconomy(database(), false)) {
             assertTrue(e.stockState().reservations().isEmpty());
-            assertNull(e.equipment.getHolding(e.id).state().protectedByBatch());
             assertTrue(e.journal.pendingStarts().isEmpty());
             assertEquals("efficient_tools", e.production.startBatch(e.id).getConfiguration().productionMethodSelections().get("tooling_workshop_base"));
         }
     }
 
-    @Test void unconfirmedFailedStartFreezesPmAndKeepsBothCommitmentsUntilVerification() throws Exception {
+    @Test void unconfirmedFailedStartFreezesPmAndKeepsMaterialsUntilVerification() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
             e.repository.failNextSave = true;
             e.journal.failContains = true;
             assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
             assertFalse(e.stockState().reservations().isEmpty());
-            assertNotNull(e.equipment.getHolding(e.id).state().protectedByBatch());
             assertThrows(IllegalStateException.class, () -> e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools"));
             assertEquals(0, e.methods().configurationRevision());
             e.journal.failContains = false;
             e.production.recoverStarts();
             assertTrue(e.stockState().reservations().isEmpty());
-            assertNull(e.equipment.getHolding(e.id).state().protectedByBatch());
         }
     }
 
@@ -117,7 +113,6 @@ class StartCommitRecoveryTest {
         try (var e = new TestEconomy(database(), false)) {
             assertEquals(batch, e.execution().batch().getId());
             assertEquals(Set.of(batch), e.stockState().reservations().keySet());
-            assertEquals(batch, e.equipment.getHolding(e.id).state().protectedByBatch());
             assertTrue(e.journal.pendingStarts().isEmpty());
         }
     }
@@ -171,7 +166,6 @@ class StartCommitRecoveryTest {
             assertTrue(e.execution().automatic());
             assertNull(e.execution().batch());
             assertTrue(e.stockState().reservations().isEmpty());
-            assertNull(e.equipment.getHolding(e.id).state().protectedByBatch());
             assertTrue(e.journal.pendingStarts().isEmpty());
         }
     }

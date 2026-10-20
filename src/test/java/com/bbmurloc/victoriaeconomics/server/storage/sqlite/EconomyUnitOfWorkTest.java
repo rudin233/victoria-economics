@@ -45,7 +45,7 @@ class EconomyUnitOfWorkTest {
         var types = new BuildingTypeRegistry();
         var groups = new ProductionMethodGroupRegistry();
         var definitions = new ProductionMethodRegistry();
-        types.register(new BuildingTypeDefinition("factory", "industry", "equipment", 100, List.of("base")));
+        types.register(new BuildingTypeDefinition("factory", "industry", List.of("base")));
         groups.register(new ProductionMethodGroupDefinition("base", "factory", List.of("a", "b")));
         definitions.register(new ProductionMethodDefinition("a", "base", 1, Map.of("ore", 10L), Map.of("metal", 10L), Map.of("worker", 10)));
         definitions.register(new ProductionMethodDefinition("b", "base", 2, Map.of("ore", 10L), Map.of("metal", 20L), Map.of("worker", 10)));
@@ -492,8 +492,8 @@ class EconomyUnitOfWorkTest {
         var employees = new ArrayList<EmploymentFact>();
         for (int i = 0; i < 10; i++) employees.add(new EmploymentFact(new UUID(0, i + 1), id, "worker"));
         var recipe = pm.recipe();
-        var plan = new WorkforcePlanningService().plan(id, recipe.requiredWorkers(), 100, 100, employees, (npc, role) -> true);
-        return new ProductionBatchConfiguration(pm.effective().methods(), recipe, 100, 100, plan, pm.effectiveRevision());
+        var plan = new WorkforcePlanningService().plan(id, recipe.requiredWorkers(), employees, (npc, role) -> true);
+        return new ProductionBatchConfiguration(pm.effective().methods(), recipe, plan, pm.effectiveRevision());
     }
 
     private void assertCommittedPair(long revision, String method, boolean automatic) {

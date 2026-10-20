@@ -1,323 +1,54 @@
 package com.bbmurloc.victoriaeconomics.server.production.application;
 
-import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeDefinition;
 import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeRegistry;
 import com.bbmurloc.victoriaeconomics.server.building.EconomicBuilding;
 import com.bbmurloc.victoriaeconomics.server.building.department.hr.StaffingExpectation;
 import com.bbmurloc.victoriaeconomics.server.workforce.employment.EmploymentRegistry;
-import com.bbmurloc.victoriaeconomics.server.production.domain.EquipmentCapacityCalculator;
-import com.bbmurloc.victoriaeconomics.server.production.domain.ResolvedProductionRecipe;
 import com.bbmurloc.victoriaeconomics.server.production.port.ProductionMethodConfigurationRepository;
-import com.bbmurloc.victoriaeconomics.server.inventory.application.ProductionEquipmentRegistry;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
+/** Read-only HR diagnostics. Admission and qualified participant selection remain authoritative in ProductionService. */
 public final class StaffingCalculator {
-
-    /**
-     * 每一种必需职业至少达到 10%，
-     * 才允许开始生产。
-     */
-    public static final double MINIMUM_START_RATIO =
-            0.10;
-
-    private static final double EPSILON =
-            1.0E-9;
-
-    private final EmploymentRegistry
-            employmentRegistry;
-
-    private final BuildingTypeRegistry
-            buildingTypeRegistry;
-
+    public static final double MINIMUM_START_RATIO = 0.10;
+    private static final double EPSILON = 1.0E-9;
+    private final EmploymentRegistry employmentRegistry;
+    private final BuildingTypeRegistry buildingTypeRegistry;
     private final ProductionMethodConfigurationRepository configurations;
 
-    private final ProductionEquipmentRegistry
-            productionEquipmentRegistry;
-
-    public StaffingCalculator(
-            EmploymentRegistry employmentRegistry,
-            BuildingTypeRegistry buildingTypeRegistry,
-            ProductionMethodConfigurationRepository configurations,
-            ProductionEquipmentRegistry productionEquipmentRegistry
-    ) {
-        this.employmentRegistry =
-                Objects.requireNonNull(
-                        employmentRegistry
-                );
-
-        this.buildingTypeRegistry =
-                Objects.requireNonNull(
-                        buildingTypeRegistry
-                );
-
+    public StaffingCalculator(EmploymentRegistry employmentRegistry, BuildingTypeRegistry buildingTypeRegistry,
+                              ProductionMethodConfigurationRepository configurations) {
+        this.employmentRegistry = Objects.requireNonNull(employmentRegistry);
+        this.buildingTypeRegistry = Objects.requireNonNull(buildingTypeRegistry);
         this.configurations = Objects.requireNonNull(configurations);
-
-        this.productionEquipmentRegistry =
-                Objects.requireNonNull(
-                        productionEquipmentRegistry,
-                        "productionEquipmentRegistry cannot be null"
-                );
     }
 
-    public StaffingSnapshot calculate(
-            EconomicBuilding building
-    ) {
+    public StaffingSnapshot calculate(EconomicBuilding building) {
         return calculate(building, StaffingExpectation.fullStaffing());
     }
 
-    public StaffingSnapshot calculate(EconomicBuilding building, StaffingExpectation staffingExpectation) {
-        Objects.requireNonNull(
-                building,
-                "building cannot be null"
-        );
-
-        /*
-         * 当前 Live PM 配置解析出来的 Recipe。
-         */
-        ResolvedProductionRecipe recipe = configurations.load(building.getId()).recipe();
-
-        BuildingTypeDefinition buildingType =
-                buildingTypeRegistry.get(
-                        building.getBuildingTypeId()
-                );
-
-        if (buildingType == null) {
-            throw new IllegalStateException(
-                    "Unknown building type: "
-                            + building.getBuildingTypeId()
-            );
+    public StaffingSnapshot calculate(EconomicBuilding building, StaffingExpectation expectation) {
+        Objects.requireNonNull(building);
+        Objects.requireNonNull(expectation);
+        if (buildingTypeRegistry.get(building.getBuildingTypeId()) == null)
+            throw new IllegalStateException("Unknown building type: " + building.getBuildingTypeId());
+        var recipe = configurations.load(building.getId()).recipe();
+        Map<String, OccupationStaffingSnapshot> snapshots = new HashMap<>();
+        boolean canStart = !recipe.requiredWorkers().isEmpty();
+        double minimum = 1.0;
+        for (var entry : recipe.requiredWorkers().entrySet()) {
+            int required = entry.getValue();
+            if (required <= 0) throw new IllegalStateException("Resolved worker demand must be positive");
+            double targetRatio = expectation.targetRatio(entry.getKey());
+            // Legacy HR ratio targets remain query data until M2.2; they do not create participants.
+            int target = targetRatio <= 0 ? 0 : Math.min(required, (int) Math.ceil(required * targetRatio - EPSILON));
+            int employed = employmentRegistry.count(building.getId(), entry.getKey());
+            int effective = Math.min(employed, required);
+            double ratio = (double) effective / required;
+            minimum = Math.min(minimum, ratio);
+            if (10L * effective < required) canStart = false;
+            snapshots.put(entry.getKey(), new OccupationStaffingSnapshot(entry.getKey(), required, targetRatio,
+                    target, target, employed, effective, ratio));
         }
-
-        /*
-         * e = installedProductionEquipment / maxEquipment
-         */
-        int installedProductionEquipment =
-                productionEquipmentRegistry
-                        .getInstalledQuantity(
-                                building.getId()
-                        );
-
-        double equipmentCapacity =
-                EquipmentCapacityCalculator.calculate(
-                        installedProductionEquipment,
-                        buildingType.maxProductionEquipment()
-                );
-
-        Objects.requireNonNull(staffingExpectation);
-
-        Map<String, OccupationStaffingSnapshot>
-                occupationSnapshots =
-                new HashMap<>();
-
-        /*
-         * 如果当前 Recipe 不需要任何员工，
-         * staffing 本身不构成生产限制。
-         */
-        if (recipe.requiredWorkers().isEmpty()) {
-
-            return new StaffingSnapshot(
-                    equipmentCapacity,
-                    occupationSnapshots,
-                    true,
-                    1.0
-            );
-        }
-
-        boolean canStart =
-                true;
-
-        double minimumStaffingRatio =
-                1.0;
-
-        for (Map.Entry<String, Integer> entry
-                : recipe.requiredWorkers()
-                .entrySet()) {
-
-            String occupationId =
-                    entry.getKey();
-
-            int requiredWorkers =
-                    entry.getValue();
-
-            if (requiredWorkers <= 0) {
-                throw new IllegalStateException(
-                        "Resolved required worker count must be positive: "
-                                + occupationId
-                );
-            }
-
-            /*
-             * HR希望达到多少比例。
-             */
-            double targetRatio =
-                    staffingExpectation.targetRatio(
-                            occupationId
-                    );
-
-            /*
-             * 例如：
-             *
-             * N = 10
-             * target = 0.75
-             *
-             * ceil(7.5) = 8
-             *
-             * 因为目标是“至少达到75%”。
-             */
-            int targetWorkers =
-                    calculateTargetWorkers(
-                            requiredWorkers,
-                            targetRatio
-                    );
-
-            /*
-             * floor(e * N_i)
-             */
-            int equipmentLimitedMaximum =
-                    calculateEquipmentLimit(
-                            requiredWorkers,
-                            equipmentCapacity
-                    );
-
-            /*
-             * 招聘目标不受设备限制。设备上限仅用于本批实际参产人数。
-             */
-            int hiringTargetWorkers =
-                    targetWorkers;
-
-            /*
-             * 实际劳动关系中有多少员工。
-             */
-            int employedWorkers =
-                    employmentRegistry.count(
-                            building.getId(),
-                            occupationId
-                    );
-
-            /*
-             * 如果因为换 PM / 出售设备等原因
-             * 当前实际员工超过设备上限，
-             * 超出的员工暂时不能提供有效生产力。
-             */
-            int effectiveWorkers =
-                    Math.min(
-                            employedWorkers,
-                            equipmentLimitedMaximum
-                    );
-
-            /*
-             * 真正生产用的满足率：
-             *
-             * r_i = effectiveWorkers / N_i
-             *
-             * 注意：
-             * 这里完全不使用 targetRatio。
-             *
-             * HR目标不会凭空制造生产力。
-             */
-            double staffingRatio =
-                    (double) effectiveWorkers
-                            / requiredWorkers;
-
-            staffingRatio =
-                    Math.min(
-                            staffingRatio,
-                            1.0
-                    );
-
-            minimumStaffingRatio =
-                    Math.min(
-                            minimumStaffingRatio,
-                            staffingRatio
-                    );
-
-            /*
-             * 所有必需职业都必须至少达到10%。
-             */
-            if (staffingRatio
-                    + EPSILON
-                    < MINIMUM_START_RATIO) {
-
-                canStart =
-                        false;
-            }
-
-            OccupationStaffingSnapshot snapshot =
-                    new OccupationStaffingSnapshot(
-                            occupationId,
-                            requiredWorkers,
-                            targetRatio,
-                            targetWorkers,
-                            equipmentLimitedMaximum,
-                            hiringTargetWorkers,
-                            employedWorkers,
-                            effectiveWorkers,
-                            staffingRatio
-                    );
-
-            occupationSnapshots.put(
-                    occupationId,
-                    snapshot
-            );
-        }
-
-        /*
-         * 只有满足最低开工条件以后：
-         *
-         * s = min_i r_i
-         *
-         * 否则：
-         *
-         * s = 0
-         */
-        double productionSpeed =
-                canStart
-                        ? minimumStaffingRatio
-                        : 0.0;
-
-        return new StaffingSnapshot(
-                equipmentCapacity,
-                occupationSnapshots,
-                canStart,
-                productionSpeed
-        );
-    }
-
-    private static int calculateTargetWorkers(
-            int requiredWorkers,
-            double targetRatio
-    ) {
-        if (targetRatio <= 0.0) {
-            return 0;
-        }
-
-        return Math.min(
-                requiredWorkers,
-                (int) Math.ceil(
-                        requiredWorkers
-                                * targetRatio
-                                - EPSILON
-                )
-        );
-    }
-
-    private static int calculateEquipmentLimit(
-            int requiredWorkers,
-            double equipmentCapacity
-    ) {
-        if (equipmentCapacity <= 0.0) {
-            return 0;
-        }
-
-        return Math.min(
-                requiredWorkers,
-                (int) Math.floor(
-                        requiredWorkers
-                                * equipmentCapacity
-                                + EPSILON
-                )
-        );
+        return new StaffingSnapshot(snapshots, canStart, canStart ? minimum : 0.0);
     }
 }

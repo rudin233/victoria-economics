@@ -29,7 +29,7 @@ class ProductionRepositoryTest {
         var types = new BuildingTypeRegistry();
         var groups = new ProductionMethodGroupRegistry();
         var definitions = new ProductionMethodRegistry();
-        types.register(new BuildingTypeDefinition("factory", "industry", "equipment", 100, List.of("base")));
+        types.register(new BuildingTypeDefinition("factory", "industry", List.of("base")));
         groups.register(new ProductionMethodGroupDefinition("base", "factory", List.of("a", "b")));
         definitions.register(new ProductionMethodDefinition("a", "base", 1, Map.of("ore", 10L), Map.of("metal", 10L), Map.of("worker", 10)));
         definitions.register(new ProductionMethodDefinition("b", "base", 2, Map.of("ore", 10L), Map.of("metal", 20L), Map.of("worker", 10)));
@@ -53,8 +53,8 @@ class ProductionRepositoryTest {
         for (int i = 0; i < 10; i++) employees.add(new EmploymentFact(new UUID(0, i + 1), id, "worker"));
         var configuration = methods.load(id);
         var recipe = configuration.recipe();
-        var plan = new WorkforcePlanningService().plan(id, recipe.requiredWorkers(), 100, 100, employees, (npc, role) -> true);
-        return new ProductionBatchConfiguration(configuration.effective().methods(), recipe, 100, 100, plan, configuration.effectiveRevision());
+        var plan = new WorkforcePlanningService().plan(id, recipe.requiredWorkers(), employees, (npc, role) -> true);
+        return new ProductionBatchConfiguration(configuration.effective().methods(), recipe, plan, configuration.effectiveRevision());
     }
 
     private void sql(String text) throws Exception { try (var statement = connection.createStatement()) { statement.executeUpdate(text); } }

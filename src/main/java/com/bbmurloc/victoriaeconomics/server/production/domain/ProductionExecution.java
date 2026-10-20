@@ -6,6 +6,7 @@ import java.util.*;
  * One building's execution aggregate. Settlement and boundary work continue to block new starts.
  */
 public final class ProductionExecution {
+    // EQUIPMENT is a persisted compatibility checkpoint only, until the M3.1 boundary replacement.
     public enum Boundary {NONE, METHODS, EQUIPMENT, WORKFORCE}
 
     private final UUID buildingId;
@@ -200,7 +201,8 @@ public final class ProductionExecution {
         boundary = Boundary.METHODS;
     }
 
-    public void equipmentApplied() {
+    /** Durable compatibility transition only; EQUIPMENT owns no business operation since M1.4. */
+    public void advanceLegacyBoundary() {
         requireBoundary(Boundary.EQUIPMENT);
         boundary = Boundary.WORKFORCE;
     }

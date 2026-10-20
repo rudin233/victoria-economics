@@ -1,6 +1,5 @@
 package com.bbmurloc.victoriaeconomics.server.production.application;
 
-import com.bbmurloc.victoriaeconomics.server.inventory.domain.EquipmentConfigurationRequest;
 import com.bbmurloc.victoriaeconomics.server.production.port.ProductionJournal;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.EconomySchema;
 import org.junit.jupiter.api.Test;
@@ -79,7 +78,6 @@ class RecoveryAndControlsTest {
             e.repository.loseStartAcknowledgement = true;
             batch = e.production.startBatch(e.id).getId();
             assertEquals(Set.of(batch), e.stockState().reservations().keySet());
-            assertEquals(batch, e.equipment.getHolding(e.id).state().protectedByBatch());
             assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
         }
         try (var e = new TestEconomy(database(), false)) {
@@ -90,43 +88,52 @@ class RecoveryAndControlsTest {
     }
 
     @Test
-    void effectivePmSurvivesIndependentCheckpointFailureAndEquipmentWaitsForIt() throws Exception {
+    void effectivePmSurvivesIndependentCheckpointFailureBeforeTheLegacyTransition() throws Exception {
         try (var e = new TestEconomy(database(), true)) {
             e.production.startBatch(e.id);
             e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
-            e.equipment.uninstall(e.id, 50);
             e.repository.failMethodsSave = true;
             e.ticks(200);
             assertEquals(ProductionExecution.Boundary.METHODS, e.execution().boundary());
             assertEquals("efficient_tools", e.methods().effective().methods().get("tooling_workshop_base"));
             assertTrue(e.methods().pending().isEmpty());
-            assertEquals(100, e.equipment.getHolding(e.id).getInstalledQuantity());
             assertEquals(30, e.quantity("tools"));
         }
         try (var e = new TestEconomy(database(), false)) {
             e.production.retry(e.id);
             e.production.retry(e.id);
             assertEquals("efficient_tools", e.methods().effective().methods().get("tooling_workshop_base"));
-            assertEquals(50, e.equipment.getHolding(e.id).getInstalledQuantity());
             assertEquals(30, e.quantity("tools"));
         }
     }
 
     @Test
-    void equipmentBoundaryReplayCannotExecuteAnAlreadyExecutedRequestTwice() throws Exception {
-        UUID request;
+    void legacyTransitionPersistenceFailureBlocksStartsAndRestartDoesNotResettle() throws Exception {
+        UUID batch;
         try (var e = new TestEconomy(database(), true)) {
-            e.production.startBatch(e.id);
-            request = e.equipment.uninstall(e.id, 20).id();
-            e.repository.failEquipmentBoundarySave = true;
+            batch = e.production.startBatch(e.id).getId();
+            try (var statement = e.connection.createStatement()) {
+                statement.executeUpdate("CREATE TRIGGER reject_legacy_transition BEFORE UPDATE ON production_executions WHEN OLD.boundary='EQUIPMENT' AND NEW.boundary='WORKFORCE' BEGIN SELECT RAISE(ABORT,'injected transition failure'); END");
+            }
             e.ticks(200);
             assertEquals(ProductionExecution.Boundary.EQUIPMENT, e.execution().boundary());
-            assertEquals(80, e.equipment.getHolding(e.id).getInstalledQuantity());
+            assertTrue(e.execution().batch().isCompleted());
+            assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
+            assertThrows(IllegalStateException.class, () -> e.production.retry(e.id));
+            assertEquals(ProductionExecution.Boundary.EQUIPMENT, e.execution().boundary());
+            assertEquals(30, e.quantity("tools"));
+            assertEquals(1, e.stockState().settlements().size());
+            try (var statement = e.connection.createStatement()) { statement.executeUpdate("DROP TRIGGER reject_legacy_transition"); }
         }
         try (var e = new TestEconomy(database(), false)) {
             e.production.retry(e.id);
-            assertEquals(80, e.equipment.getHolding(e.id).getInstalledQuantity());
-            assertEquals(EquipmentConfigurationRequest.Status.EXECUTED, e.equipment.getHolding(e.id).find(request).status());
+            e.production.retry(e.id);
+            assertNull(e.execution().batch());
+            assertEquals(batch, e.execution().lastBatch().getId());
+            assertEquals(ProductionExecution.Boundary.NONE, e.execution().boundary());
+            assertEquals(30, e.quantity("tools"));
+            assertEquals(70, e.quantity("wood"));
+            assertEquals(1, e.stockState().settlements().size());
         }
     }
 
@@ -161,32 +168,6 @@ class RecoveryAndControlsTest {
     }
 
     @Test
-    void equipmentTransfersAreAtomicAndRespectInstallationReservationsAndDestinationCapacity() throws Exception {
-        try (var e = new TestEconomy(database(), true)) {
-            var other = e.buildingService.createBuilding("tooling_workshop");
-            e.equipment.addUninstalledEquipment(other.getId(), 90);
-            e.equipment.uninstall(e.id, 20);
-            assertThrows(IllegalStateException.class, () -> e.equipment.transferUninstalledEquipment(e.id, other.getId(), 11));
-            assertEquals(20, e.equipment.getHolding(e.id).getUninstalledQuantity());
-            e.equipment.transferUninstalledEquipment(e.id, other.getId(), 10);
-            assertEquals(90, e.equipment.getHolding(e.id).getTotalQuantity());
-            assertEquals(100, e.equipment.getHolding(other.getId()).getTotalQuantity());
-            e.production.startBatch(e.id);
-            e.equipment.install(e.id, 10);
-            assertThrows(IllegalStateException.class, () -> e.equipment.transferUninstalledEquipment(e.id, other.getId(), 1));
-            e.equipment.removeUninstalledEquipment(other.getId(), 5);
-            try (var statement = e.connection.createStatement()) {
-                statement.executeUpdate("CREATE TRIGGER reject_destination BEFORE UPDATE ON equipment_holdings WHEN NEW.building_id='" + other.getId() + "' BEGIN SELECT RAISE(ABORT, 'injected destination failure'); END");
-            }
-            e.production.abortBatch(e.id); // Material progress zero, pending install is applied.
-            e.equipment.uninstall(e.id, 10);
-            assertThrows(IllegalStateException.class, () -> e.equipment.transferUninstalledEquipment(e.id, other.getId(), 1));
-            assertEquals(90, e.equipment.getHolding(e.id).getTotalQuantity());
-            assertEquals(95, e.equipment.getHolding(other.getId()).getTotalQuantity());
-        }
-    }
-
-    @Test
     void mixedConcurrentControlRequestsNeverLoseTheBatchOrDuplicateItsSettlement() throws Exception {
         try (var e = new TestEconomy(database(), true); var pool = Executors.newFixedThreadPool(4)) {
             e.production.startBatch(e.id);
@@ -200,7 +181,7 @@ class RecoveryAndControlsTest {
                     },
                     () -> {
                         barrier.await();
-                        e.equipment.uninstall(e.id, 40);
+                        e.production.setAutomatic(e.id, false);
                         return null;
                     },
                     () -> {
@@ -223,7 +204,6 @@ class RecoveryAndControlsTest {
             assertEquals(0L, e.quantity("tools"));
             assertEquals(1, e.stockState().settlements().size());
             assertTrue(e.stockState().reservations().isEmpty());
-            assertEquals(60, e.equipment.getHolding(e.id).getInstalledQuantity());
             assertEquals("efficient_tools", e.methods().effective().methods().get("tooling_workshop_base"));
         }
     }
@@ -234,12 +214,10 @@ class RecoveryAndControlsTest {
         try (var e = new TestEconomy(database(), true)) {
             e.journal.recordStart(new ProductionJournal.StartIntent(abandoned, e.id));
             e.stock.reserve(e.id, abandoned, Map.of("wood", 30L));
-            e.equipment.protectForBatch(e.id, abandoned);
         }
         try (var e = new TestEconomy(database(), false)) {
             assertTrue(e.stockState().reservations().isEmpty());
             assertTrue(e.journal.pendingStarts().isEmpty());
-            assertNull(e.equipment.getHolding(e.id).state().protectedByBatch());
             e.production.startBatch(e.id);
         }
     }

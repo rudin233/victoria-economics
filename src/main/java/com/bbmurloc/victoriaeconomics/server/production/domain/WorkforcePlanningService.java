@@ -7,10 +7,8 @@ import java.util.function.BiPredicate;
  * Stateless calculation using formal employment occupation, never substitute qualifications.
  */
 public final class WorkforcePlanningService {
-    public WorkforcePlan plan(UUID building, Map<String, Integer> demand, int installed, int capacity,
+    public WorkforcePlan plan(UUID building, Map<String, Integer> demand,
                               Collection<EmploymentFact> employment, BiPredicate<UUID, String> qualified) {
-        if (capacity <= 0 || installed < 0 || installed > capacity)
-            throw new IllegalArgumentException("Invalid equipment capability");
         if (demand.isEmpty()) throw new IllegalArgumentException("Production requires positive occupation demand");
         int numerator = 1;
         int denominator = 1;
@@ -23,7 +21,7 @@ public final class WorkforcePlanningService {
                     .filter(e -> e.buildingId().equals(building) && e.occupationId().equals(occupation))
                     .filter(e -> qualified.test(e.employeeId(), occupation))
                     .map(EmploymentFact::employeeId).distinct().sorted().toList();
-            int available = Math.min(eligible.size(), (int) ((long) installed * required / capacity));
+            int available = Math.min(eligible.size(), required);
             if ((long) available * 10 < required)
                 throw new IllegalStateException("Minimum 10% staffing not met: " + occupation);
             candidates.put(occupation, eligible.subList(0, available));

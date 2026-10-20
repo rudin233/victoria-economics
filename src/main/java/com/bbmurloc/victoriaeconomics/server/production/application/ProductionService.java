@@ -3,7 +3,6 @@ package com.bbmurloc.victoriaeconomics.server.production.application;
 import com.bbmurloc.victoriaeconomics.server.building.*;
 import com.bbmurloc.victoriaeconomics.server.production.domain.*;
 import com.bbmurloc.victoriaeconomics.server.production.port.*;
-import com.bbmurloc.victoriaeconomics.server.inventory.application.ProductionEquipmentService;
 import java.util.*;
 import java.util.function.Consumer;
 
@@ -13,7 +12,6 @@ public final class ProductionService {
     private final BuildingRegistry buildings;
     private final ProductionMethodConfigurationRepository configurations;
     private final ProductionExecutionRepository executions;
-    private final ProductionEquipmentService equipment;
     private final ProductionInventoryPort inventory;
     private final BuildingPayrollPort payroll;
     private final WorkforcePort workforce;
@@ -25,11 +23,11 @@ public final class ProductionService {
     private String lastRecoveryFailure;
 
     public ProductionService(BuildingRegistry buildings, ProductionMethodConfigurationRepository configurations,
-                             ProductionExecutionRepository executions, ProductionEquipmentService equipment,
+                             ProductionExecutionRepository executions,
                              ProductionInventoryPort inventory, BuildingPayrollPort payroll, WorkforcePort workforce,
                              ProductionJournal journal, Object lock) {
         this.buildings = buildings; this.configurations = configurations; this.executions = executions;
-        this.equipment = equipment; this.inventory = inventory; this.payroll = payroll;
+        this.inventory = inventory; this.payroll = payroll;
         this.workforce = workforce; this.journal = journal; this.lock = lock;
     }
 
@@ -100,7 +98,6 @@ public final class ProductionService {
             boolean committed = false;
             try {
                 inventory.reserve(id, batchId, configuration.resolvedRecipe().inputs());
-                equipment.protectForBatch(id, batchId);
                 // Keep the formal-capacity check before reconciliation; then re-read after its possible mutations.
                 var finalConditions = prepare(building);
                 if (!workforce.reconcile(id, finalConditions.resolvedRecipe().requiredWorkers()))
@@ -127,7 +124,7 @@ public final class ProductionService {
                         }
                     } catch (RuntimeException verification) {
                         failure.addSuppressed(verification);
-                        // No mutable authority is cached. Keep the durable intent and both resource commitments.
+                        // No mutable authority is cached. Keep the durable intent and material commitment.
                         throw failure;
                     }
                     compensateStart(intent);
@@ -149,21 +146,18 @@ public final class ProductionService {
         if (payroll.state(id) != BuildingPayrollPort.State.CURRENT)
             throw new IllegalStateException("Payroll is not CURRENT (or unavailable)");
         if (inventory.storageStatus(id).overCapacity()) throw new IllegalStateException("Storage is over capacity");
-        var holding = equipment.getHolding(id);
-        if (holding.hasPendingRequests()) throw new IllegalStateException("Equipment requests still pending");
         var configuration = configurations.load(id);
         if (configuration.pending().isPresent()) throw new IllegalStateException("Pending production methods not applied");
         if (execution.methodsEffectiveRevision() != configuration.effectiveRevision())
             throw new IllegalStateException("Effective production methods have not been reconciled");
         var recipe = configuration.recipe();
-        var plan = planning.plan(id, recipe.requiredWorkers(), holding.getInstalledQuantity(), holding.getCapacity(),
+        var plan = planning.plan(id, recipe.requiredWorkers(),
                 workforce.effectiveEmployment(id), workforce::qualified);
         Map<String, Integer> counts = new HashMap<>();
         workforce.effectiveEmployment(id).forEach(e -> counts.merge(e.occupationId(), 1, Integer::sum));
         if (!counts.entrySet().stream().allMatch(e -> e.getValue() <= recipe.requiredWorkers().getOrDefault(e.getKey(), 0)))
             throw new IllegalStateException("Employment exceeds current PM capacity; personnel reconciliation required");
-        return new ProductionBatchConfiguration(configuration.effective().methods(), recipe, holding.getInstalledQuantity(),
-                holding.getCapacity(), plan, configuration.effectiveRevision());
+        return new ProductionBatchConfiguration(configuration.effective().methods(), recipe, plan, configuration.effectiveRevision());
     }
 
     /** Logical ticks only; no loaded chunk, GUI, wall-clock or offline catch-up dependency. */
@@ -267,10 +261,10 @@ public final class ProductionService {
                     executions.save(execution, execution.executionRevision());
                 }
                 case EQUIPMENT -> {
-                    equipment.flushPendingOperationsForBuilding(id, execution.batch().getId());
+                    // Retain the durable legacy boundary until M3.1; no equipment business remains.
                     execution = trustworthyExecution(id);
                     if (execution.boundary() != ProductionExecution.Boundary.EQUIPMENT || needsMethods(execution, configurations.load(id))) continue;
-                    execution.equipmentApplied();
+                    execution.advanceLegacyBoundary();
                     executions.save(execution, execution.executionRevision());
                 }
                 case WORKFORCE -> {
@@ -321,7 +315,6 @@ public final class ProductionService {
     private void compensateStart(ProductionJournal.StartIntent intent) {
         try {
             inventory.release(intent.buildingId(), intent.batchId());
-            equipment.releaseBatchProtection(intent.buildingId(), intent.batchId());
             journal.finishStart(intent.batchId());
             releaseFailures.remove(intent.batchId());
         } catch (RuntimeException failure) {

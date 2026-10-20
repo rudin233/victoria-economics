@@ -6,7 +6,7 @@ import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionSettlem
 import static com.bbmurloc.victoriaeconomics.server.production.domain.ProductionSettlement.Outcome.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-class InventoryAndEquipmentTest {
+class GoodsInventoryTest {
     @Test
     void multipleMaterialsReserveAtomicallyAndCannotBeReused() {
         var stock = new GoodsInventory(UUID.randomUUID(), 100);
@@ -81,60 +81,4 @@ class InventoryAndEquipmentTest {
         assertNull(stock.settlement(batch));
     }
 
-    @Test
-    void equipmentTotalCapacityIncludesUninstalledAndDoesNotChangeOnConfiguration() {
-        var equipment = new ProductionEquipmentHolding(UUID.randomUUID(), "machine", 100);
-        equipment.addQuantity(100);
-        assertThrows(IllegalStateException.class, () -> equipment.addQuantity(1));
-        equipment.request(UUID.randomUUID(), EquipmentConfigurationRequest.Kind.INSTALL, 60);
-        assertEquals(100, equipment.getTotalQuantity());
-        equipment.request(UUID.randomUUID(), EquipmentConfigurationRequest.Kind.UNINSTALL, 20);
-        assertEquals(40, equipment.getInstalledQuantity());
-        assertEquals(60, equipment.getUninstalledQuantity());
-    }
-
-    @Test
-    void delayedInstallsReserveAllAvailableEquipmentAndCancellationReleasesIt() {
-        var equipment = new ProductionEquipmentHolding(UUID.randomUUID(), "machine", 100);
-        equipment.addQuantity(100);
-        equipment.request(UUID.randomUUID(), EquipmentConfigurationRequest.Kind.INSTALL, 60);
-        UUID batch = UUID.randomUUID();
-        equipment.protectForBatch(batch);
-        UUID request = UUID.randomUUID();
-        equipment.request(request, EquipmentConfigurationRequest.Kind.INSTALL, 30);
-        assertEquals(30, equipment.getLockedUninstalledQuantity());
-        assertThrows(IllegalStateException.class, () -> equipment.request(UUID.randomUUID(), EquipmentConfigurationRequest.Kind.INSTALL, 11));
-        assertThrows(IllegalStateException.class, () -> equipment.removeUninstalledQuantity(11));
-        assertThrows(IllegalStateException.class, equipment::processRequests);
-        assertTrue(equipment.cancel(request));
-        assertTrue(equipment.cancel(request));
-        assertEquals(40, equipment.getAvailableUninstalledQuantity());
-        equipment.releaseBatchProtection(batch);
-        equipment.processRequests();
-        assertEquals(60, equipment.getInstalledQuantity());
-    }
-
-    @Test
-    void equipmentRequestsKeepAcceptanceOrderSupportPartialExecutionAndCannotUndo() {
-        var equipment = new ProductionEquipmentHolding(UUID.randomUUID(), "machine", 100);
-        equipment.addQuantity(100);
-        equipment.request(UUID.randomUUID(), EquipmentConfigurationRequest.Kind.INSTALL, 80);
-        UUID batch = UUID.randomUUID();
-        equipment.protectForBatch(batch);
-        UUID uninstall = UUID.randomUUID(), install = UUID.randomUUID(), last = UUID.randomUUID();
-        equipment.request(uninstall, EquipmentConfigurationRequest.Kind.UNINSTALL, 70);
-        equipment.request(install, EquipmentConfigurationRequest.Kind.INSTALL, 20);
-        equipment.request(last, EquipmentConfigurationRequest.Kind.UNINSTALL, 50);
-        assertEquals(80, equipment.getInstalledQuantity());
-        var reloaded = new ProductionEquipmentHolding(equipment.state());
-        reloaded.releaseBatchProtection(batch);
-        assertEquals(3, reloaded.processRequests());
-        assertEquals(30, reloaded.find(last).executed());
-        assertEquals(EquipmentConfigurationRequest.Status.PARTIAL, reloaded.find(last).status());
-        assertEquals(0, reloaded.getInstalledQuantity());
-        assertEquals(0, reloaded.getLockedUninstalledQuantity());
-        assertFalse(reloaded.cancel(install));
-        assertEquals(0, reloaded.processRequests());
-        assertEquals(100, reloaded.getTotalQuantity());
-    }
 }
