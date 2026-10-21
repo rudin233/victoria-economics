@@ -13,6 +13,9 @@ public final class PerformanceMeasurements {
     private static final List<Long> ticks = new ArrayList<>(), nativeTicks = new ArrayList<>(), intervals = new ArrayList<>();
     private static final List<Long> savingTicks=new ArrayList<>(),normalTicks=new ArrayList<>(),payrollTicks=new ArrayList<>(),settlementTicks=new ArrayList<>();
     private static long savesBefore,payrollBefore,settlementsBefore;
+    private static final List<String> counterKeys=List.of("sql.read","sql.dml","tx.physical","tx.savepoint","json.batch.decode","json.batch.encode","json.batch.reused","json.inventory.decode","json.inventory.encode","inventory.receipts.decoded","repository.execution.read","repository.methods.read");
+    private static final Map<String,Map<String,Long>> tickWork=new TreeMap<>();
+    private static long[] countersBefore;
     private static long started, previousStart;
     private static int requested;
     private static boolean pendingStart, sampling, done;
@@ -33,7 +36,7 @@ public final class PerformanceMeasurements {
         if(previousStart!=0)intervals.add(started-previousStart);
         previousStart=started;
         savesBefore=com.bbmurloc.victoriaeconomics.server.ServerEconomyRuntime.get(server).nativeSaveStatus().requests();
-        if(details){payrollBefore=recording.eventCount("payroll.cycle");settlementsBefore=recording.eventCount("inventory.settlement");}
+        if(details){payrollBefore=recording.eventCount("payroll.cycle");settlementsBefore=recording.eventCount("inventory.settlement");countersBefore=counterKeys.stream().mapToLong(recording::eventCount).toArray();}
     }
     public static void afterTick(MinecraftServer server){
         if(!sampling||started==0)return;
@@ -42,6 +45,14 @@ public final class PerformanceMeasurements {
         (savesAfter>savesBefore?savingTicks:normalTicks).add(duration);
         if(details&&recording.eventCount("payroll.cycle")>payrollBefore)payrollTicks.add(duration);
         if(details&&recording.eventCount("inventory.settlement")>settlementsBefore)settlementTicks.add(duration);
+        if(details){
+            var classes=new ArrayList<String>();
+            if(savesAfter>savesBefore)classes.add("save");
+            if(recording.eventCount("payroll.cycle")>payrollBefore)classes.add("payroll");
+            if(recording.eventCount("inventory.settlement")>settlementsBefore)classes.add("settlement");
+            if(classes.isEmpty())classes.add("ordinary");
+            for(String category:classes){var work=tickWork.computeIfAbsent(category,k->new TreeMap<>());work.merge("ticks",1L,Long::sum);for(int i=0;i<counterKeys.size();i++){String key=counterKeys.get(i);work.merge(key,recording.eventCount(key)-countersBefore[i],Long::sum);}}
+        }
         nativeTicks.add(server.getTickTimesNanos()[server.getTickCount()%100]);
         if(ticks.size()==requested){sampling=false;sample=details?recording.snapshot():empty;if(details)recording.close();done=true;}
     }
@@ -56,6 +67,7 @@ public final class PerformanceMeasurements {
         result.put("startInterval",EconomyDiagnostics.summarize(intervals));
         result.put("observedTps",1e9/intervals.stream().mapToDouble(Long::doubleValue).average().orElseThrow());
         result.put("startup",startup);result.put("fixtureAndWarmup",fixtureAndWarmup);result.put("sample",sample);
+        if(details)result.put("classifiedTickWork",tickWork);
         result.put("acceptedTick",acceptedTick);result.put("sqlite",settings);result.put("databaseBytes",fileBytes);
         result.put("runtimeStorage","shared-memory SQLite; disk is complete checkpoint only");
         result.put("checkpoint",context.checkpointStatus());result.put("nativeSave",context.nativeSaveStatus());

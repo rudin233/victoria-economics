@@ -1,6 +1,7 @@
 package com.bbmurloc.victoriaeconomics.server.storage.sqlite;
 
 import com.bbmurloc.victoriaeconomics.server.inventory.domain.GoodsInventory;
+import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
 import com.bbmurloc.victoriaeconomics.server.production.domain.*;
 import com.google.gson.*;
 import com.google.gson.stream.JsonReader;
@@ -25,6 +26,8 @@ public final class EconomyStateCodec {
     }
 
     public static ProductionBatchConfiguration decodeBatchConfiguration(String json) {
+        EconomyDiagnostics.count("json.batch.decode");
+        try(var measurement=EconomyDiagnostics.scope("codec.batch.decode")){
         requireCurrentFormat();
         try {
             var envelope = fields(parse(json), "formatVersion", "fullSpeedTicks", "snapshot");
@@ -43,6 +46,7 @@ public final class EconomyStateCodec {
         } catch (RuntimeException failure) {
             throw incompatible("Batch configuration", failure);
         }
+        }
     }
 
     public static ProductionBatch decodeBatch(UUID batchId, UUID buildingId, String json, long progress, String status) {
@@ -54,15 +58,20 @@ public final class EconomyStateCodec {
     }
 
     public static String encodeBatchConfiguration(ProductionBatchConfiguration configuration) {
+        EconomyDiagnostics.count("json.batch.encode");
+        try(var measurement=EconomyDiagnostics.scope("codec.batch.encode")){
         requireCurrentFormat();
         var envelope = envelope(GSON.toJsonTree(configuration));
         envelope.addProperty("fullSpeedTicks", FULL_SPEED_TICKS);
         String json = GSON.toJson(envelope);
         decodeBatchConfiguration(json);
         return json;
+        }
     }
 
     public static GoodsInventory decodeInventory(UUID expectedLocation, String json) {
+        EconomyDiagnostics.count("json.inventory.decode");
+        try(var measurement=EconomyDiagnostics.scope("codec.inventory.decode")){
         requireCurrentFormat();
         try {
             var envelope = fields(parse(json), "formatVersion", "snapshot");
@@ -78,6 +87,7 @@ public final class EconomyStateCodec {
                         ProductionSettlement.Outcome.valueOf(string(command.get("outcome"))),
                         quantities(command.get("inputs")), quantities(command.get("outputs"))));
             });
+            EconomyDiagnostics.count("inventory.receipts.decoded", settlements.size());
             settlements.forEach((batch, receipt) -> {
                 if (!batch.equals(receipt.batchId())) throw invalid("Settlement batch differs from its map key");
             });
@@ -86,13 +96,17 @@ public final class EconomyStateCodec {
         } catch (RuntimeException failure) {
             throw incompatible("Inventory " + expectedLocation, failure);
         }
+        }
     }
 
     public static String encodeInventory(GoodsInventory.State state) {
+        EconomyDiagnostics.count("json.inventory.encode");
+        try(var measurement=EconomyDiagnostics.scope("codec.inventory.encode")){
         requireCurrentFormat();
         String json = GSON.toJson(envelope(GSON.toJsonTree(state)));
         decodeInventory(state.location(), json);
         return json;
+        }
     }
 
     private static Map<String, Long> quantities(JsonElement element) {
@@ -104,9 +118,16 @@ public final class EconomyStateCodec {
     }
 
     private static long integer(JsonElement value) {
-        BigDecimal number = number(value);
-        if (!value.getAsString().matches("-?(0|[1-9][0-9]*)")) throw invalid("Integer JSON literal required; no rounding or truncation");
-        return number.longValueExact();
+        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber())
+            throw invalid("JSON number required (numeric strings are not accepted)");
+        String literal = value.getAsString();
+        int first = literal.startsWith("-") ? 1 : 0;
+        if (first == literal.length() || (literal.charAt(first) == '0' && first + 1 != literal.length()))
+            throw invalid("Integer JSON literal required; no rounding or truncation");
+        for (int i = first; i < literal.length(); i++)
+            if (literal.charAt(i) < '0' || literal.charAt(i) > '9')
+                throw invalid("Integer JSON literal required; no rounding or truncation");
+        return Long.parseLong(literal); // Exact range check; never accepts a fractional or exponent spelling.
     }
 
     private static JsonObject envelope(JsonElement snapshot) {
@@ -129,12 +150,6 @@ public final class EconomyStateCodec {
         var result=EnumSet.noneOf(ProductionExecution.PauseReason.class);
         for(var value:values.getAsJsonArray())if(!result.add(ProductionExecution.PauseReason.valueOf(string(value))))throw invalid("Duplicate pause reason");
         return Set.copyOf(result);
-    }
-
-    private static BigDecimal number(JsonElement value) {
-        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber())
-            throw invalid("JSON number required (numeric strings are not accepted)");
-        return value.getAsBigDecimal();
     }
 
     private static String string(JsonElement value) {
@@ -208,13 +223,25 @@ public final class EconomyStateCodec {
                 yield result;
             }
             case STRING -> new JsonPrimitive(reader.nextString());
-            // This token has already passed the strict stream reader. Parse just the number to
-            // retain integer versus floating/exponent spelling, without lenient object parsing.
-            case NUMBER -> JsonParser.parseString(reader.nextString());
+            // This token has already passed the strict stream reader. Retain its original
+            // integer versus floating/exponent spelling without starting another JSON reader.
+            case NUMBER -> new JsonPrimitive(new LiteralNumber(reader.nextString()));
             case BOOLEAN -> new JsonPrimitive(reader.nextBoolean());
             case NULL -> { reader.nextNull(); yield JsonNull.INSTANCE; }
             default -> throw invalid("Unexpected JSON token");
         };
+    }
+
+    /** The strict reader already checked the token. Preserve its spelling without reparsing a JSON document per number. */
+    private static final class LiteralNumber extends Number {
+        private static final long serialVersionUID = 1L;
+        private final String literal;
+        private LiteralNumber(String literal) { this.literal = literal; }
+        @Override public int intValue() { return new BigDecimal(literal).intValue(); }
+        @Override public long longValue() { return new BigDecimal(literal).longValue(); }
+        @Override public float floatValue() { return Float.parseFloat(literal); }
+        @Override public double doubleValue() { return Double.parseDouble(literal); }
+        @Override public String toString() { return literal; }
     }
 
     private static IllegalArgumentException invalid(String message) { return new IllegalArgumentException(message); }

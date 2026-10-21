@@ -1,6 +1,7 @@
 package com.bbmurloc.victoriaeconomics.server.production.infrastructure;
 
 import com.bbmurloc.victoriaeconomics.server.production.domain.*;
+import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
 import com.bbmurloc.victoriaeconomics.server.production.port.*;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteTransactions;
 import com.google.gson.Gson;
@@ -49,6 +50,8 @@ public final class SqliteProductionMethodConfigurationRepository implements Prod
     }
 
     private ProductionMethodConfiguration read(UUID id) {
+        EconomyDiagnostics.count("repository.methods.read");
+        try(var measurement=EconomyDiagnostics.stage("production.methods.load")){
         try (var statement = connection.prepareStatement("SELECT c.*, b.building_type_id FROM production_method_configurations c JOIN economic_buildings b ON b.id=c.building_id WHERE c.building_id=?")) {
             statement.setString(1, id.toString());
             try (var rows = statement.executeQuery()) {
@@ -61,6 +64,7 @@ public final class SqliteProductionMethodConfigurationRepository implements Prod
             }
         } catch (SQLException failure) {
             throw new IllegalStateException("Cannot read production configuration: " + id, failure);
+        }
         }
     }
 

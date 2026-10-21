@@ -16,7 +16,7 @@ for (const name of fs.readdirSync(directory).sort()) {
   // Every measured active scenario starts at zero and warms for 150 ticks (<200).
   // Seven 200-tick completions per building occur in the next 1300 ticks, each with two
   // standalone Journal DML commits. These autocommits are not SqliteTransactions.run scopes.
-  const buildings = raw.scenario === 'empty' ? 0 : raw.scenario.endsWith('16') ? 16 : 4;
+  const buildings = raw.scenario === 'empty' ? 0 : raw.scenario.endsWith('32') ? 32 : raw.scenario.endsWith('16') ? 16 : 4;
   const journalCommits = raw.scenario.startsWith('active') || raw.scenario === 'history4' ? 14 * buildings : 0;
   results.push({
     run: name, label: raw.label, scenario: raw.scenario, samples: n,

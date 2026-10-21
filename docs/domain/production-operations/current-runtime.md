@@ -2,6 +2,8 @@
 
 日期：2026-10-21；Schema v10、业务 JSON format 9。当前存档合同见 [P 检查点设计](../../design/VE-Task-P-一致性检查点架构.md)及 [P 验收报告](../../testing/VE-Task-P-经济Tick性能诊断与优化验收.md)。[任务 E 报告](../../design/VE-Task-E-M5.1-M5.2-M5.3-建筑生命周期与整体验收.md)记录此前 v9 阶段；其中逐 Tick 落盘要求已被用户本轮决定替代。旧 overview、搬包审查及 ADR-PO-02 保留历史。
 
+工作包 P 恢复阶段只局部减少同步结算重复工作：同一显式 WriteSession 的 Execution Session 复用已严格解码的不可变配置，每次保存仍重新读取行并比对原 JSON；不跨事务缓存经济状态。prepare/commitStart 各自重新校验库存、Staffing、工资及 CAS。自动重开不再重复已经完成的重配置，资产阶段、Journal 和未知提交恢复边界保持。具体安全论证、688 项回归及未通过的性能项目见 P 报告第 12 节；不能把查询数量下降等同于 20 TPS 验收通过。
+
 ## 权威与入口
 
 | 职责 | 当前源码（均在 `src/main/java/com/bbmurloc/victoriaeconomics` 下） |

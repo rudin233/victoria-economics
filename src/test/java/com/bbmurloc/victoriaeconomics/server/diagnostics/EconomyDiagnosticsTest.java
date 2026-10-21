@@ -8,6 +8,25 @@ import java.util.concurrent.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class EconomyDiagnosticsTest {
+    @Test void nestedStageCountersAreInclusiveAndCpuObservationAddsNoSql() throws Exception {
+        try(var c=SqliteConnectionGuard.protect(DriverManager.getConnection("jdbc:sqlite::memory:"));var recording=EconomyDiagnostics.start()){
+            try(var outer=EconomyDiagnostics.stage("outer")){
+                SqliteTransactions.write(c,tx->{
+                    try(var inner=EconomyDiagnostics.stage("inner")){
+                        try(var s=c.createStatement();var r=s.executeQuery("SELECT 1")){assertTrue(r.next());}
+                        EconomyDiagnostics.count("json.batch.decode",2);
+                    }
+                    return null;
+                });
+            }
+            var counts=recording.snapshot().counts();
+            assertEquals(1,counts.get("outer.sql.read"));assertEquals(1,counts.get("inner.sql.read"));
+            assertEquals(1,counts.get("outer.tx.physical"));assertEquals(0,counts.get("inner.tx.physical"));
+            assertEquals(2,counts.get("outer.json.batch.decode"));assertEquals(2,counts.get("inner.json.batch.decode"));
+            assertEquals(1,counts.get("sql.read"));assertEquals(0,counts.get("outer.sql.dml"));
+            assertTrue(c.getAutoCommit());
+        }
+    }
     @Test void countsReadWriteAndEmptyWriteScopesWithoutExtraSqlOrChangedOutcomes()throws Exception{
         try(var c=SqliteConnectionGuard.protect(DriverManager.getConnection("jdbc:sqlite::memory:"))){
             try(var s=c.createStatement()){s.execute("CREATE TABLE probe(value INTEGER)");}

@@ -1,6 +1,8 @@
 package com.bbmurloc.victoriaeconomics.server.diagnostics;
 
 import java.util.*;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadMXBean;
 
 /** Optional, bounded, thread-owned observations. Never supplies time, readiness, or transaction authority. */
 public final class EconomyDiagnostics {
@@ -8,6 +10,9 @@ public final class EconomyDiagnostics {
     private static volatile Recording recording;
     private static final Scope DISABLED = new Scope(null, null, 0, false);
     private static final int SAMPLE_LIMIT = 1_000_000;
+    private static final ThreadMXBean CPU = ManagementFactory.getThreadMXBean();
+    private static final List<String> STAGE_COUNTERS = List.of("sql.read", "sql.dml", "tx.physical", "tx.savepoint",
+            "json.batch.decode", "json.batch.encode", "json.batch.reused", "json.inventory.decode", "json.inventory.encode", "repository.execution.read", "repository.methods.read", "inventory.receipts.decoded");
 
     public record Summary(long count, double meanMs, double p50Ms, double p95Ms, double p99Ms, double maxMs) {}
     public record Snapshot(Map<String, Summary> timings, Map<String, Long> counts) {}
@@ -20,6 +25,16 @@ public final class EconomyDiagnostics {
         return next;
     }
     public static Scope scope(String name) { return scope(name, false); }
+    /** Inclusive operation-local CPU/SQL/codec observations; never reuses an economic object. */
+    public static Scope stage(String name) {
+        var r = recording;
+        if (r == null || r.owner != Thread.currentThread()) return DISABLED;
+        var scope = new Scope(r, name, System.nanoTime(), false);
+        scope.counters = new long[STAGE_COUNTERS.size()];
+        for (int i = 0; i < scope.counters.length; i++) scope.counters[i] = r.eventCount(STAGE_COUNTERS.get(i));
+        scope.cpuStarted = CPU.isCurrentThreadCpuTimeSupported() && CPU.isThreadCpuTimeEnabled() ? CPU.getCurrentThreadCpuTime() : -1;
+        return scope;
+    }
     public static Scope transaction() { return scope("sqlite.transaction", true); }
     private static Scope scope(String name, boolean transaction) {
         var r = recording;
@@ -31,6 +46,10 @@ public final class EconomyDiagnostics {
     public static void count(String name) {
         var r = recording;
         if (r != null && r.owner == Thread.currentThread()) r.count(name);
+    }
+    public static void count(String name, long amount) {
+        var r = recording;
+        if (r != null && r.owner == Thread.currentThread()) r.counts.merge(name, amount, Long::sum);
     }
     /** Counts successful DML invocations affecting rows, not inferred fsyncs or economic changes. */
     public static void sql(String sql, String method, Object result, long elapsedNanos) {
@@ -54,6 +73,8 @@ public final class EconomyDiagnostics {
         private final long mutations;
         private final boolean transaction;
         private boolean closed;
+        private long[] counters;
+        private long cpuStarted;
         private Scope(Recording recording, String name, long started, boolean transaction) {
             this.recording = recording; this.name = name; this.started = started; this.transaction = transaction;
             mutations = recording == null ? 0 : recording.mutations;
@@ -62,6 +83,13 @@ public final class EconomyDiagnostics {
             if (recording == null || closed) return;
             closed = true;
             recording.add(name, System.nanoTime() - started);
+            if (counters != null) {
+                if (cpuStarted >= 0) recording.add(name + ".cpu", CPU.getCurrentThreadCpuTime() - cpuStarted);
+                for (int i = 0; i < counters.length; i++) {
+                    String counter = STAGE_COUNTERS.get(i);
+                    recording.counts.merge(name + "." + counter, recording.eventCount(counter) - counters[i], Long::sum);
+                }
+            }
             if (transaction) recording.count(recording.mutations == mutations ? "tx.withoutDml" : "tx.withDml");
             if (name.equals("sqlite.write")) recording.count(recording.mutations == mutations ? "tx.write.withoutDml" : "tx.write.withDml");
         }

@@ -23,22 +23,26 @@ public final class ProductionService {
     public void requestProductionMethods(UUID id,Map<String,String> target){coordinator.changeMethods(id,(m,defer)->m.requestTarget(target,defer));}
     public void cancelPendingProductionMethods(UUID id){coordinator.changeMethods(id,(m,defer)->m.cancelPending());}
     public ProductionBatch startBatch(UUID id){return startBatch(id,false);}
-    private ProductionBatch startBatch(UUID id,boolean automatic){synchronized(lock){
+    private ProductionBatch startBatch(UUID id,boolean automatic){try(var measurement=EconomyDiagnostics.stage("production.start")){synchronized(lock){
         if(journal.pendingStarts().stream().anyMatch(i->i.buildingId().equals(id)))throw new IllegalStateException("Start compensation still pending");
-        settleAndHandleBoundary(id);
+        // The only automatic caller has just confirmed settlement/reconfiguration below.
+        // prepare and commitStart still independently re-read every start condition in IMMEDIATE transactions.
+        if(!automatic)settleAndHandleBoundary(id);
         var plan=coordinator.prepare(id);var config=plan.configuration();UUID batch=UUID.randomUUID();var intent=new ProductionJournal.StartIntent(batch,id);
         journal.recordStart(intent);
+        ProductionBatch started;
         try{
             inventory.reserve(id,batch,config.resolvedRecipe().inputs());
-            coordinator.commitStart(id,batch,plan,automatic);
+            started=coordinator.commitStart(id,batch,plan,automatic);
         }catch(RuntimeException failure){
             // An unknown result may have created the Batch. Keep both intent and Reservation until fresh verification.
             if(failure instanceof CommitOutcomeUnknownException)throw failure;
             try{if(!journal.containsBatch(batch))compensateStart(intent);}catch(RuntimeException unknown){failure.addSuppressed(unknown);}
             throw failure;
         }
-        finishCommittedStart(batch);blocked.remove(id);return coordinator.execution(id).batch();
-    }}
+        // Only the immutable Batch escapes, and only after commit AND JDBC cleanup returned successfully.
+        finishCommittedStart(batch);blocked.remove(id);return started;
+    }}}
     public void abortBatch(UUID id){synchronized(lock){coordinator.abort(id);settleAndHandleBoundary(id);}}
     public void setAutomatic(UUID id,boolean enabled){coordinator.automatic(id,enabled);}
     public void setManualPause(UUID id,boolean pause){coordinator.manualPause(id,pause);}
@@ -49,16 +53,20 @@ public final class ProductionService {
         recoverStarts();settleAndHandleBoundary(id);
     }}
     private void settleAndHandleBoundary(UUID id){
+        try(var measurement=EconomyDiagnostics.stage("production.followup")){
         var e=coordinator.execution(id);var batch=e.batch();
         if(batch!=null&&batch.needsSettlement()){
             var recipe=batch.getConfiguration().resolvedRecipe();
             var outcome=batch.getStatus()==ProductionBatch.Status.SETTLING_COMPLETED?ProductionSettlement.Outcome.COMPLETED:ProductionSettlement.Outcome.ABORTED;
-            var command=new ProductionSettlement(batch.getId(),outcome,recipe.inputs(),recipe.outputs());var receipt=inventory.settle(id,command);
+            var command=new ProductionSettlement(batch.getId(),outcome,recipe.inputs(),recipe.outputs());
+            ProductionInventoryPort.SettlementReceipt receipt;
+            try(var settlementMeasurement=EconomyDiagnostics.stage("production.settlement")){receipt=inventory.settle(id,command);}
             if(!receipt.command().equals(command))throw new IllegalStateException("Settlement receipt does not match frozen command");
             coordinator.confirmSettlement(id,batch.getId());
         }
         e=coordinator.execution(id);
         if(!e.hasUnfinishedBatch()&&!coordinator.lifecycleHeld(id))coordinator.reconfigure(id);
+        }
     }
     /** One durable advance per building/accepted Tick. A failure leaves that Tick pending and stops global allocation. */
     public void onEconomicTick(){

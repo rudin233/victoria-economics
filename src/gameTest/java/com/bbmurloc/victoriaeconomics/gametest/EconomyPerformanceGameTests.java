@@ -20,7 +20,7 @@ public final class EconomyPerformanceGameTests {
     @GameTest(template="empty",timeoutTicks=2000)
     public static void profileFormalEconomy(GameTestHelper helper)throws Exception{
         String scenario=System.getProperty("ve.perfScenario");
-        if(!Set.of("empty","idle4","active4","idle16","active16","history4").contains(scenario))throw new IllegalArgumentException("Unknown performance scenario");
+        if(!Set.of("empty","idle4","active4","idle16","active16","history4","active32").contains(scenario))throw new IllegalArgumentException("Unknown performance scenario");
         var server=helper.getLevel().getServer();var ctx=ServerEconomyRuntime.get(server);
         helper.assertTrue(ctx.getBuildingRegistry().getAll().isEmpty(),"Performance comparison requires a fresh isolated world");
         List<EconomicBuilding> buildings=new ArrayList<>();GameEconomyFixture fixture;
@@ -30,7 +30,7 @@ public final class EconomyPerformanceGameTests {
                 var supply=new SqliteRegionalLaborSupplyRepository(c,ctx.getOccupationRegistry(),new Object());
                 SqliteTransactions.write(c,tx->{for(String role:List.of("laborer","machinist"))supply.inTransaction(tx).save(new RegionalLaborSupply(fixture.region,role,2000,1),0);return null;});
             }
-            int count=scenario.endsWith("16")?16:4;
+            int count=scenario.endsWith("32")?32:scenario.endsWith("16")?16:4;
             for(int i=0;i<count;i++)buildings.add(fixture.create(10,4));
             if(scenario.equals("history4"))seedVerifiableHistory(fixture,buildings);
             if(scenario.startsWith("active")||scenario.equals("history4"))for(var b:buildings)ctx.getProductionService().startBatch(b.getId());

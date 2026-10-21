@@ -1,0 +1,2022 @@
+{
+  "head": "10c32601f5479a16c80895debeeafa27aad21ff0",
+  "junit": {
+    "suites": 50,
+    "tests": 688,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "build": {
+    "command": ".\\gradlew.bat test build --rerun-tasks --console=plain",
+    "duration": "4m 39s",
+    "log": "build/task-p-resume-final-build.log",
+    "successful": true
+  },
+  "transactionTests": 28,
+  "crashCases": [
+    "DELETE-before",
+    "DELETE-after",
+    "WAL-before",
+    "WAL-after"
+  ],
+  "queryPlan": "[SEARCH e USING INDEX sqlite_autoindex_production_executions_1 (building_id=?), SEARCH production_batches USING INDEX sqlite_autoindex_production_batches_1 (batch_id=?) LEFT-JOIN, SEARCH production_batches USING INDEX sqlite_autoindex_production_batches_1 (batch_id=?) LEFT-JOIN]",
+  "jar": {
+    "Path": "C:\\Users\\A103-2\\IdeaProjects\\victoria-economics\\build\\libs\\victoria_economics-0.1.1-1.21.1.jar",
+    "Entries": 302,
+    "SaveMixin": true,
+    "CompiledTestClassesInspected": 74,
+    "TestClassLeaks": [],
+    "TestLeaks": [],
+    "SHA256": "E355AEB1ED2F323604ABC982DE1672AC204336748E77ACE49ABCA8DB72FF56E7"
+  },
+  "neoForge": {
+    "full": {
+      "log": "build/task-p-resume-full.log",
+      "performance": {
+        "serverTickSamples": 2350,
+        "acceptedTick": 2402,
+        "meanMs": 2.042089234468085,
+        "p50Ms": 1.707799,
+        "p95Ms": 2.934401,
+        "maxMs": 167.4764,
+        "sqlite": "journal_mode=memory,synchronous=2",
+        "java": "21.0.12"
+      }
+    },
+    "restart": "VE process restart verified at accepted Tick 2403 with identical production, liabilities and cash",
+    "native": {
+      "levelSaveEvents": 9,
+      "checkpoint": {
+        "committed": {
+          "worldId": "fa9c3121-dd18-4274-97ac-c3f022b0a169",
+          "checkpointId": "30252365-c5fb-4f21-82b9-e4687e5edd02",
+          "sequence": 5,
+          "economicTick": 6240,
+          "sha256": "bf5badf07067cd4c45913805328901bd5d26c65155b28e3ad3c53643986d6483"
+        },
+        "saved": 4,
+        "coalesced": 0,
+        "failed": 0,
+        "commitNanos": [
+          75946700,
+          60222800,
+          80348001,
+          122462600
+        ],
+        "blocked": false
+      },
+      "acceptedTick": 6240,
+      "nativeSave": {
+        "requests": 3,
+        "automaticRequests": 1,
+        "flushRequests": 1,
+        "rejectedCaptures": 0
+      }
+    },
+    "nativePerformance": {
+      "acceptedTick": 6240,
+      "batchSettlementTicks": {
+        "count": 31,
+        "meanMs": 25.578841741935484,
+        "p50Ms": 23.6897,
+        "p95Ms": 35.147999,
+        "p99Ms": 41.3241,
+        "maxMs": 41.3241
+      },
+      "checkpoint": {
+        "committed": {
+          "worldId": "fa9c3121-dd18-4274-97ac-c3f022b0a169",
+          "checkpointId": "30252365-c5fb-4f21-82b9-e4687e5edd02",
+          "sequence": 5,
+          "economicTick": 6240,
+          "sha256": "bf5badf07067cd4c45913805328901bd5d26c65155b28e3ad3c53643986d6483"
+        },
+        "saved": 4,
+        "coalesced": 0,
+        "failed": 0,
+        "commitNanos": [
+          75946700,
+          60222800,
+          80348001,
+          122462600
+        ],
+        "blocked": false
+      },
+      "checkpointTimings": [
+        {
+          "rows": 4,
+          "validateNanos": 28309800,
+          "openNanos": 14147000,
+          "writeTransactionNanos": 6224800,
+          "outcomeVerificationNanos": 0,
+          "totalNanos": 49991700
+        },
+        {
+          "rows": 76,
+          "validateNanos": 42130099,
+          "openNanos": 12536401,
+          "writeTransactionNanos": 20871501,
+          "outcomeVerificationNanos": 0,
+          "totalNanos": 75918200
+        },
+        {
+          "rows": 80,
+          "validateNanos": 27584500,
+          "openNanos": 18505000,
+          "writeTransactionNanos": 13637700,
+          "outcomeVerificationNanos": 0,
+          "totalNanos": 60209100
+        },
+        {
+          "rows": 280,
+          "validateNanos": 41725001,
+          "openNanos": 15955200,
+          "writeTransactionNanos": 22219900,
+          "outcomeVerificationNanos": 0,
+          "totalNanos": 80336401
+        },
+        {
+          "rows": 311,
+          "validateNanos": 42066901,
+          "openNanos": 45267400,
+          "writeTransactionNanos": 34775000,
+          "outcomeVerificationNanos": 0,
+          "totalNanos": 122450701
+        }
+      ],
+      "classifiedTickWork": {
+        "ordinary": {
+          "inventory.receipts.decoded": 0,
+          "json.batch.decode": 48504,
+          "json.batch.encode": 0,
+          "json.batch.reused": 48504,
+          "json.inventory.decode": 0,
+          "json.inventory.encode": 0,
+          "repository.execution.read": 24648,
+          "repository.methods.read": 0,
+          "sql.dml": 92430,
+          "sql.read": 633894,
+          "ticks": 6162,
+          "tx.physical": 67782,
+          "tx.savepoint": 0
+        },
+        "payroll": {
+          "inventory.receipts.decoded": 0,
+          "json.batch.decode": 40,
+          "json.batch.encode": 0,
+          "json.batch.reused": 40,
+          "json.inventory.decode": 0,
+          "json.inventory.encode": 0,
+          "repository.execution.read": 20,
+          "repository.methods.read": 0,
+          "sql.dml": 295,
+          "sql.read": 1000,
+          "ticks": 5,
+          "tx.physical": 76,
+          "tx.savepoint": 0
+        },
+        "save": {
+          "inventory.receipts.decoded": 8,
+          "json.batch.decode": 44,
+          "json.batch.encode": 0,
+          "json.batch.reused": 24,
+          "json.inventory.decode": 4,
+          "json.inventory.encode": 0,
+          "repository.execution.read": 16,
+          "repository.methods.read": 0,
+          "sql.dml": 89,
+          "sql.read": 755,
+          "ticks": 3,
+          "tx.physical": 42,
+          "tx.savepoint": 0
+        },
+        "settlement": {
+          "inventory.receipts.decoded": 11780,
+          "json.batch.decode": 1964,
+          "json.batch.encode": 124,
+          "json.batch.reused": 984,
+          "json.inventory.decode": 744,
+          "json.inventory.encode": 248,
+          "repository.execution.read": 1116,
+          "repository.methods.read": 372,
+          "sql.dml": 1705,
+          "sql.read": 13477,
+          "ticks": 31,
+          "tx.physical": 1829,
+          "tx.savepoint": 0
+        }
+      },
+      "databaseBytes": 475136,
+      "details": true,
+      "fixtureAndWarmup": {
+        "timings": {
+          "sqlite.read": {
+            "count": 162,
+            "meanMs": 0.131895,
+            "p50Ms": 0.064,
+            "p95Ms": 0.3449,
+            "p99Ms": 2.194101,
+            "maxMs": 3.2434
+          },
+          "sqlite.work": {
+            "count": 340,
+            "meanMs": 0.4394920558823529,
+            "p50Ms": 0.1248,
+            "p95Ms": 1.4946,
+            "p99Ms": 5.6529,
+            "maxMs": 17.2166
+          },
+          "sqlite.begin": {
+            "count": 340,
+            "meanMs": 0.0068906,
+            "p50Ms": 0.003599,
+            "p95Ms": 0.0213,
+            "p99Ms": 0.0521,
+            "maxMs": 0.2845
+          },
+          "schema.validate": {
+            "count": 2,
+            "meanMs": 2.7253495,
+            "p50Ms": 2.2002,
+            "p95Ms": 3.250499,
+            "p99Ms": 3.250499,
+            "maxMs": 3.250499
+          },
+          "production.start": {
+            "count": 4,
+            "meanMs": 8.52315,
+            "p50Ms": 4.5161,
+            "p95Ms": 20.4917,
+            "p99Ms": 20.4917,
+            "maxMs": 20.4917
+          },
+          "production.followup": {
+            "count": 4,
+            "meanMs": 1.8205,
+            "p50Ms": 1.543,
+            "p95Ms": 2.786999,
+            "p99Ms": 2.786999,
+            "maxMs": 2.786999
+          },
+          "production.commitStart.cpu": {
+            "count": 4,
+            "meanMs": 0,
+            "p50Ms": 0,
+            "p95Ms": 0,
+            "p99Ms": 0,
+            "maxMs": 0
+          },
+          "codec.inventory.decode": {
+            "count": 28,
+            "meanMs": 0.14415710714285712,
+            "p50Ms": 0.054001,
+            "p95Ms": 0.1705,
+            "p99Ms": 2.135,
+            "maxMs": 2.135
+          },
+          "production.commitStart": {
+            "count": 4,
+            "meanMs": 2.82642525,
+            "p50Ms": 1.626,
+            "p95Ms": 6.449201,
+            "p99Ms": 6.449201,
+            "maxMs": 6.449201
+          },
+          "production.execution.load": {
+            "count": 28,
+            "meanMs": 0.16224632142857143,
+            "p50Ms": 0.149,
+            "p95Ms": 0.243,
+            "p99Ms": 0.4188,
+            "maxMs": 0.4188
+          },
+          "clock.accept": {
+            "count": 39,
+            "meanMs": 0.3235767692307692,
+            "p50Ms": 0.2295,
+            "p95Ms": 0.7944,
+            "p99Ms": 1.226799,
+            "maxMs": 1.226799
+          },
+          "clock.tick": {
+            "count": 39,
+            "meanMs": 1.509838358974359,
+            "p50Ms": 1.2909,
+            "p95Ms": 3.1023,
+            "p99Ms": 3.8277,
+            "maxMs": 3.8277
+          },
+          "production.coordinator.write": {
+            "count": 59,
+            "meanMs": 0.9430898135593221,
+            "p50Ms": 0.2313,
+            "p95Ms": 4.5674,
+            "p99Ms": 13.938699,
+            "maxMs": 13.938699
+          },
+          "production.methods.load": {
+            "count": 28,
+            "meanMs": 0.12685364285714285,
+            "p50Ms": 0.0946,
+            "p95Ms": 0.320701,
+            "p99Ms": 0.704,
+            "maxMs": 0.704
+          },
+          "production.recovery": {
+            "count": 39,
+            "meanMs": 0.17963333333333334,
+            "p50Ms": 0.123201,
+            "p95Ms": 0.506201,
+            "p99Ms": 0.6916,
+            "maxMs": 0.6916
+          },
+          "sqlite.write": {
+            "count": 162,
+            "meanMs": 0.8150974814814814,
+            "p50Ms": 0.221399,
+            "p95Ms": 2.7249,
+            "p99Ms": 13.9336,
+            "maxMs": 17.305
+          },
+          "context.tick": {
+            "count": 39,
+            "meanMs": 1.5113436666666666,
+            "p50Ms": 1.2922,
+            "p95Ms": 3.104201,
+            "p99Ms": 3.8382,
+            "maxMs": 3.8382
+          },
+          "sql.dml": {
+            "count": 231,
+            "meanMs": 0.025277424242424244,
+            "p50Ms": 0.0166,
+            "p95Ms": 0.073699,
+            "p99Ms": 0.1537,
+            "maxMs": 0.2265
+          },
+          "production.followup.cpu": {
+            "count": 4,
+            "meanMs": 0,
+            "p50Ms": 0,
+            "p95Ms": 0,
+            "p99Ms": 0,
+            "maxMs": 0
+          },
+          "codec.batch.encode": {
+            "count": 4,
+            "meanMs": 0.71692525,
+            "p50Ms": 0.3285,
+            "p95Ms": 2.048001,
+            "p99Ms": 2.048001,
+            "maxMs": 2.048001
+          },
+          "clock.payroll": {
+            "count": 39,
+            "meanMs": 0.22897951282051282,
+            "p50Ms": 0.1909,
+            "p95Ms": 0.4715,
+            "p99Ms": 0.5145,
+            "maxMs": 0.5145
+          },
+          "inventory.domain": {
+            "count": 8,
+            "meanMs": 0.041499875,
+            "p50Ms": 0.0065,
+            "p95Ms": 0.2069,
+            "p99Ms": 0.2069,
+            "maxMs": 0.2069
+          },
+          "production.recoveryCheck": {
+            "count": 39,
+            "meanMs": 0.1786128205128205,
+            "p50Ms": 0.122401,
+            "p95Ms": 0.5053,
+            "p99Ms": 0.6909,
+            "maxMs": 0.6909
+          },
+          "sqlite.commit": {
+            "count": 340,
+            "meanMs": 0.009648235294117647,
+            "p50Ms": 0.0064,
+            "p95Ms": 0.02,
+            "p99Ms": 0.0466,
+            "maxMs": 0.3578
+          },
+          "sqlite.cleanup": {
+            "count": 332,
+            "meanMs": 0.007872246987951808,
+            "p50Ms": 0.0048,
+            "p95Ms": 0.0159,
+            "p99Ms": 0.036199,
+            "maxMs": 0.525801
+          },
+          "inventory.reserve": {
+            "count": 4,
+            "meanMs": 0.3923495,
+            "p50Ms": 0.321699,
+            "p95Ms": 0.5957,
+            "p99Ms": 0.5957,
+            "maxMs": 0.5957
+          },
+          "production.tick": {
+            "count": 39,
+            "meanMs": 0.348020641025641,
+            "p50Ms": 0.2551,
+            "p95Ms": 0.7542,
+            "p99Ms": 1.2918,
+            "maxMs": 1.2918
+          },
+          "payroll.accrual": {
+            "count": 39,
+            "meanMs": 0.2272077435897436,
+            "p50Ms": 0.1895,
+            "p95Ms": 0.469399,
+            "p99Ms": 0.5127,
+            "maxMs": 0.5127
+          },
+          "clock.payments": {
+            "count": 78,
+            "meanMs": 0.14916537179487177,
+            "p50Ms": 0.124001,
+            "p95Ms": 0.4054,
+            "p99Ms": 0.439701,
+            "maxMs": 0.439701
+          },
+          "sqlite.transaction": {
+            "count": 340,
+            "meanMs": 0.4685241647058824,
+            "p50Ms": 0.147299,
+            "p95Ms": 1.5155,
+            "p99Ms": 5.748399,
+            "maxMs": 17.2913
+          },
+          "production.prepare": {
+            "count": 4,
+            "meanMs": 2.99335,
+            "p50Ms": 0.9227,
+            "p95Ms": 9.2845,
+            "p99Ms": 9.2845,
+            "maxMs": 9.2845
+          },
+          "production.methods.load.cpu": {
+            "count": 28,
+            "meanMs": 0,
+            "p50Ms": 0,
+            "p95Ms": 0,
+            "p99Ms": 0,
+            "maxMs": 0
+          },
+          "production.start.cpu": {
+            "count": 4,
+            "meanMs": 3.90625,
+            "p50Ms": 0,
+            "p95Ms": 15.625,
+            "p99Ms": 15.625,
+            "maxMs": 15.625
+          },
+          "codec.inventory.encode": {
+            "count": 12,
+            "meanMs": 0.544667,
+            "p50Ms": 0.1123,
+            "p95Ms": 5.006301,
+            "p99Ms": 5.006301,
+            "maxMs": 5.006301
+          },
+          "production.reconfigure": {
+            "count": 4,
+            "meanMs": 1.17980025,
+            "p50Ms": 0.9041,
+            "p95Ms": 1.6395,
+            "p99Ms": 1.6395,
+            "maxMs": 1.6395
+          },
+          "clock.productionRecovery": {
+            "count": 39,
+            "meanMs": 0.26598453846153847,
+            "p50Ms": 0.1772,
+            "p95Ms": 0.7458,
+            "p99Ms": 1.1167,
+            "maxMs": 1.1167
+          },
+          "sql.read": {
+            "count": 1627,
+            "meanMs": 0.023160859250153657,
+            "p50Ms": 0.0105,
+            "p95Ms": 0.042199,
+            "p99Ms": 0.085199,
+            "maxMs": 12.5868
+          },
+          "codec.batch.decode": {
+            "count": 4,
+            "meanMs": 0.22894975,
+            "p50Ms": 0.129299,
+            "p95Ms": 0.599,
+            "p99Ms": 0.599,
+            "maxMs": 0.599
+          },
+          "production.prepare.cpu": {
+            "count": 4,
+            "meanMs": 0,
+            "p50Ms": 0,
+            "p95Ms": 0,
+            "p99Ms": 0,
+            "maxMs": 0
+          },
+          "inventory.deposit": {
+            "count": 4,
+            "meanMs": 0.861675,
+            "p50Ms": 0.236,
+            "p95Ms": 2.7292,
+            "p99Ms": 2.7292,
+            "maxMs": 2.7292
+          },
+          "production.execution.save.cpu": {
+            "count": 4,
+            "meanMs": 0,
+            "p50Ms": 0,
+            "p95Ms": 0,
+            "p99Ms": 0,
+            "maxMs": 0
+          },
+          "payroll.domain.accrue": {
+            "count": 12,
+            "meanMs": 0.045316666666666665,
+            "p50Ms": 0.0012,
+            "p95Ms": 0.5278,
+            "p99Ms": 0.5278,
+            "maxMs": 0.5278
+          },
+          "production.execution.save": {
+            "count": 4,
+            "meanMs": 1.2330995,
+            "p50Ms": 0.644,
+            "p95Ms": 2.886099,
+            "p99Ms": 2.886099,
+            "maxMs": 2.886099
+          },
+          "production.execution.load.cpu": {
+            "count": 28,
+            "meanMs": 0,
+            "p50Ms": 0,
+            "p95Ms": 0,
+            "p99Ms": 0,
+            "maxMs": 0
+          },
+          "inventory.mutate": {
+            "count": 8,
+            "meanMs": 0.62797475,
+            "p50Ms": 0.2926,
+            "p95Ms": 2.732301,
+            "p99Ms": 2.732301,
+            "maxMs": 2.732301
+          },
+          "sql.other": {
+            "count": 4,
+            "meanMs": 0.01665,
+            "p50Ms": 0.0068,
+            "p95Ms": 0.037601,
+            "p99Ms": 0.037601,
+            "maxMs": 0.037601
+          },
+          "production.reconfigure.cpu": {
+            "count": 4,
+            "meanMs": 0,
+            "p50Ms": 0,
+            "p95Ms": 0,
+            "p99Ms": 0,
+            "maxMs": 0
+          },
+          "inventory.read": {
+            "count": 16,
+            "meanMs": 0.150962625,
+            "p50Ms": 0.1093,
+            "p95Ms": 0.823899,
+            "p99Ms": 0.823899,
+            "maxMs": 0.823899
+          },
+          "payroll.period": {
+            "count": 78,
+            "meanMs": 0.14810129487179488,
+            "p50Ms": 0.1233,
+            "p95Ms": 0.404399,
+            "p99Ms": 0.4375,
+            "maxMs": 0.4375
+          },
+          "production.recipe.resolve": {
+            "count": 88,
+            "meanMs": 0.04388751136363636,
+            "p50Ms": 0.0209,
+            "p95Ms": 0.0833,
+            "p99Ms": 1.575,
+            "maxMs": 1.575
+          }
+        },
+        "counts": {
+          "production.execution.load.sql.read": 56,
+          "production.execution.load.json.inventory.encode": 0,
+          "repository.execution.read": 28,
+          "production.methods.load.sql.read": 28,
+          "production.methods.load.inventory.receipts.decoded": 0,
+          "production.execution.save.json.batch.encode": 4,
+          "json.inventory.decode": 28,
+          "production.execution.load.tx.physical": 0,
+          "production.followup.json.batch.encode": 0,
+          "production.methods.load.json.inventory.encode": 0,
+          "production.reconfigure.sql.dml": 0,
+          "production.prepare.repository.execution.read": 4,
+          "production.execution.load.json.batch.encode": 0,
+          "production.prepare.sql.read": 56,
+          "production.prepare.json.batch.reused": 0,
+          "production.commitStart.json.inventory.decode": 4,
+          "production.start.json.batch.reused": 0,
+          "json.batch.decode": 4,
+          "production.reconfigure.repository.methods.read": 4,
+          "production.reconfigure.inventory.receipts.decoded": 0,
+          "production.prepare.tx.savepoint": 0,
+          "production.followup.inventory.receipts.decoded": 0,
+          "production.execution.save.inventory.receipts.decoded": 0,
+          "production.reconfigure.json.batch.reused": 0,
+          "repository.methods.read": 28,
+          "production.commitStart.json.batch.encode": 4,
+          "production.reconfigure.json.inventory.decode": 0,
+          "production.followup.sql.dml": 0,
+          "production.methods.load.json.batch.reused": 0,
+          "production.execution.load.inventory.receipts.decoded": 0,
+          "production.prepare.json.batch.decode": 0,
+          "production.commitStart.sql.dml": 8,
+          "production.commitStart.tx.physical": 4,
+          "production.start.json.batch.decode": 4,
+          "production.execution.load.tx.savepoint": 0,
+          "tx.write.withDml": 154,
+          "production.followup.repository.execution.read": 12,
+          "production.followup.json.inventory.encode": 0,
+          "production.execution.save.json.inventory.decode": 0,
+          "production.methods.load.repository.methods.read": 0,
+          "production.followup.json.batch.reused": 0,
+          "production.reconfigure.json.batch.decode": 0,
+          "inventory.receipts.decoded": 0,
+          "production.prepare.json.inventory.encode": 0,
+          "production.methods.load.json.batch.decode": 0,
+          "production.execution.save.repository.methods.read": 0,
+          "production.start.json.inventory.encode": 4,
+          "production.execution.load.json.batch.reused": 0,
+          "production.methods.load.sql.dml": 0,
+          "production.execution.save.repository.execution.read": 0,
+          "production.execution.load.json.inventory.decode": 0,
+          "production.prepare.tx.physical": 4,
+          "production.execution.save.json.batch.reused": 0,
+          "production.followup.sql.read": 112,
+          "production.execution.save.json.batch.decode": 4,
+          "tx.physical": 332,
+          "production.methods.load.tx.savepoint": 0,
+          "production.followup.json.batch.decode": 0,
+          "production.methods.load.repository.execution.read": 0,
+          "production.start.sql.read": 252,
+          "production.followup.tx.savepoint": 0,
+          "tx.write.withoutDml": 8,
+          "production.followup.tx.physical": 16,
+          "production.execution.load.repository.execution.read": 0,
+          "production.commitStart.json.batch.reused": 0,
+          "sql.other": 4,
+          "production.methods.load.json.inventory.decode": 0,
+          "json.inventory.encode": 12,
+          "production.commitStart.inventory.receipts.decoded": 0,
+          "production.execution.load.json.batch.decode": 0,
+          "tx.savepoint": 8,
+          "production.execution.load.sql.dml": 0,
+          "production.start.sql.dml": 20,
+          "production.commitStart.tx.savepoint": 0,
+          "production.reconfigure.repository.execution.read": 4,
+          "production.commitStart.repository.methods.read": 4,
+          "production.execution.save.sql.dml": 8,
+          "production.commitStart.json.inventory.encode": 0,
+          "production.start.repository.methods.read": 12,
+          "production.reconfigure.tx.physical": 4,
+          "production.prepare.inventory.receipts.decoded": 0,
+          "production.commitStart.json.batch.decode": 4,
+          "json.batch.encode": 4,
+          "production.methods.load.tx.physical": 0,
+          "production.prepare.sql.dml": 0,
+          "tx.withoutDml": 178,
+          "production.reconfigure.json.inventory.encode": 0,
+          "production.reconfigure.tx.savepoint": 0,
+          "production.execution.save.sql.read": 12,
+          "production.prepare.repository.methods.read": 4,
+          "production.followup.json.inventory.decode": 0,
+          "production.execution.load.repository.methods.read": 0,
+          "production.commitStart.repository.execution.read": 4,
+          "sql.read": 1627,
+          "production.start.inventory.receipts.decoded": 0,
+          "production.prepare.json.batch.encode": 0,
+          "tx.withDml": 162,
+          "production.start.repository.execution.read": 20,
+          "production.start.json.batch.encode": 4,
+          "production.execution.save.tx.savepoint": 0,
+          "production.commitStart.sql.read": 76,
+          "production.start.tx.savepoint": 0,
+          "production.prepare.json.inventory.decode": 4,
+          "production.followup.repository.methods.read": 4,
+          "production.execution.save.json.inventory.encode": 0,
+          "production.reconfigure.sql.read": 92,
+          "production.start.json.inventory.decode": 16,
+          "sql.dml": 231,
+          "production.start.tx.physical": 28,
+          "production.reconfigure.json.batch.encode": 0,
+          "production.execution.save.tx.physical": 0,
+          "production.methods.load.json.batch.encode": 0
+        }
+      },
+      "java": "21.0.12",
+      "label": "unspecified",
+      "maxHeapBytes": 4213178368,
+      "minecraftBeforePost": {
+        "count": 6200,
+        "meanMs": 0.30868054967741937,
+        "p50Ms": 0.2239,
+        "p95Ms": 0.4188,
+        "p99Ms": 0.7533,
+        "maxMs": 125.8147
+      },
+      "nativeSave": {
+        "requests": 3,
+        "automaticRequests": 1,
+        "flushRequests": 1,
+        "rejectedCaptures": 0
+      },
+      "nativeSavingTicks": {
+        "count": 3,
+        "meanMs": 81.03709966666668,
+        "p50Ms": 72.994599,
+        "p95Ms": 131.8265,
+        "p99Ms": 131.8265,
+        "maxMs": 131.8265
+      },
+      "normalTicks": {
+        "count": 6197,
+        "meanMs": 4.24265525673713,
+        "p50Ms": 3.7698,
+        "p95Ms": 5.076,
+        "p99Ms": 11.688701,
+        "maxMs": 125.4155
+      },
+      "observedTps": 231.69607111824752,
+      "os": "Windows 11 10.0",
+      "payrollBoundaryTicks": {
+        "count": 5,
+        "meanMs": 18.7682998,
+        "p50Ms": 9.0212,
+        "p95Ms": 38.2902,
+        "p99Ms": 38.2902,
+        "maxMs": 38.2902
+      },
+      "processors": 20,
+      "runtimeStorage": "shared-memory SQLite; disk is complete checkpoint only",
+      "sample": {
+        "timings": {
+          "production.followup": {
+            "count": 124,
+            "meanMs": 2.406079072580645,
+            "p50Ms": 2.209501,
+            "p95Ms": 3.455001,
+            "p99Ms": 6.2299,
+            "maxMs": 7.5067
+          },
+          "codec.inventory.encode": {
+            "count": 248,
+            "meanMs": 0.20505606048387098,
+            "p50Ms": 0.162099,
+            "p95Ms": 0.3543,
+            "p99Ms": 0.7687,
+            "maxMs": 4.3282
+          },
+          "production.commitStart": {
+            "count": 124,
+            "meanMs": 1.1478475967741935,
+            "p50Ms": 1.0105,
+            "p95Ms": 1.708,
+            "p99Ms": 4.030501,
+            "maxMs": 5.104199
+          },
+          "production.processTick": {
+            "count": 24800,
+            "meanMs": 0.6233925626209678,
+            "p50Ms": 0.5605,
+            "p95Ms": 0.8237,
+            "p99Ms": 1.157501,
+            "maxMs": 104.901901
+          },
+          "production.building": {
+            "count": 24800,
+            "meanMs": 0.6553324044758064,
+            "p50Ms": 0.5656,
+            "p95Ms": 0.852401,
+            "p99Ms": 1.3627,
+            "maxMs": 104.913
+          },
+          "production.prepare.cpu": {
+            "count": 124,
+            "meanMs": 0.37802419354838707,
+            "p50Ms": 0,
+            "p95Ms": 0,
+            "p99Ms": 15.625,
+            "maxMs": 15.625
+          },
+          "sqlite.write": {
+            "count": 44283,
+            "meanMs": 0.4960591363954565,
+            "p50Ms": 0.5392,
+            "p95Ms": 0.8048,
+            "p99Ms": 1.1516,
+            "maxMs": 104.896501
+          },
+          "inventory.settle": {
+            "count": 124,
+            "meanMs": 0.4776403951612903,
+            "p50Ms": 0.3764,
+            "p95Ms": 0.6856,
+            "p99Ms": 1.946201,
+            "maxMs": 4.628301
+          },
+          "production.start.cpu": {
+            "count": 124,
+            "meanMs": 2.2681451612903225,
+            "p50Ms": 0,
+            "p95Ms": 15.625,
+            "p99Ms": 15.625,
+            "maxMs": 15.625
+          },
+          "production.execution.load.cpu": {
+            "count": 25796,
+            "meanMs": 0.16414851139711584,
+            "p50Ms": 0,
+            "p95Ms": 0,
+            "p99Ms": 15.625,
+            "maxMs": 15.625
+          },
+          "clock.accept": {
+            "count": 6200,
+            "meanMs": 0.16726479725806453,
+            "p50Ms": 0.1452,
+            "p95Ms": 0.203199,
+            "p99Ms": 0.3564,
+            "maxMs": 63.099299
+          },
+          "clock.payroll": {
+            "count": 6200,
+            "meanMs": 0.696213079032258,
+            "p50Ms": 0.6116,
+            "p95Ms": 0.9245,
+            "p99Ms": 1.3294,
+            "maxMs": 73.8771
+          },
+          "sqlite.commit": {
+            "count": 69713,
+            "meanMs": 0.005645516861991307,
+            "p50Ms": 0.0052,
+            "p95Ms": 0.0086,
+            "p99Ms": 0.0119,
+            "maxMs": 0.5762
+          },
+          "clock.payments": {
+            "count": 12400,
+            "meanMs": 0.050145792983870965,
+            "p50Ms": 0.0425,
+            "p95Ms": 0.062899,
+            "p99Ms": 0.131299,
+            "maxMs": 23.106699
+          },
+          "inventory.domain": {
+            "count": 248,
+            "meanMs": 0.017246733870967743,
+            "p50Ms": 0.013801,
+            "p95Ms": 0.0377,
+            "p99Ms": 0.125599,
+            "maxMs": 0.4043
+          },
+          "sql.dml": {
+            "count": 94460,
+            "meanMs": 0.018097368716917216,
+            "p50Ms": 0.0113,
+            "p95Ms": 0.0655,
+            "p99Ms": 0.105699,
+            "maxMs": 2.135401
+          },
+          "production.reconfigure": {
+            "count": 124,
+            "meanMs": 1.0395458951612904,
+            "p50Ms": 0.966,
+            "p95Ms": 1.581401,
+            "p99Ms": 1.7728,
+            "maxMs": 1.938199
+          },
+          "production.start": {
+            "count": 124,
+            "meanMs": 2.366131435483871,
+            "p50Ms": 2.1399,
+            "p95Ms": 3.2384,
+            "p99Ms": 5.9406,
+            "maxMs": 6.4978
+          },
+          "payroll.accrual": {
+            "count": 6200,
+            "meanMs": 0.6955816293548387,
+            "p50Ms": 0.611,
+            "p95Ms": 0.923799,
+            "p99Ms": 1.328,
+            "maxMs": 73.873199
+          },
+          "production.commitStart.cpu": {
+            "count": 124,
+            "meanMs": 0.8820564516129032,
+            "p50Ms": 0,
+            "p95Ms": 15.625,
+            "p99Ms": 15.625,
+            "maxMs": 15.625
+          },
+          "sqlite.read": {
+            "count": 25058,
+            "meanMs": 0.04132377160986511,
+            "p50Ms": 0.0343,
+            "p95Ms": 0.079099,
+            "p99Ms": 0.118,
+            "maxMs": 7.5278
+          },
+          "sqlite.begin": {
+            "count": 69713,
+            "meanMs": 0.0027818472307890923,
+            "p50Ms": 0.002801,
+            "p95Ms": 0.0037,
+            "p99Ms": 0.0054,
+            "maxMs": 0.312299
+          },
+          "payroll.period": {
+            "count": 12400,
+            "meanMs": 0.04965095266129032,
+            "p50Ms": 0.042001,
+            "p95Ms": 0.0621,
+            "p99Ms": 0.1277,
+            "maxMs": 23.1055
+          },
+          "production.domain.advance": {
+            "count": 24800,
+            "meanMs": 0.0006305812903225807,
+            "p50Ms": 0.0002,
+            "p95Ms": 0.0008,
+            "p99Ms": 0.0018,
+            "maxMs": 7.268
+          },
+          "codec.inventory.decode": {
+            "count": 748,
+            "meanMs": 0.09017421122994652,
+            "p50Ms": 0.0805,
+            "p95Ms": 0.140599,
+            "p99Ms": 0.2123,
+            "maxMs": 4.1788
+          },
+          "clock.tick": {
+            "count": 6200,
+            "meanMs": 3.949197103548387,
+            "p50Ms": 3.510301,
+            "p95Ms": 4.679599,
+            "p99Ms": 10.9426,
+            "maxMs": 124.3994
+          },
+          "production.coordinator.write": {
+            "count": 31620,
+            "meanMs": 0.5260141043643264,
+            "p50Ms": 0.5404,
+            "p95Ms": 0.809999,
+            "p99Ms": 1.148499,
+            "maxMs": 104.897499
+          },
+          "payroll.domain.accrue": {
+            "count": 24924,
+            "meanMs": 0.003974537152944953,
+            "p50Ms": 0.001699,
+            "p95Ms": 0.010199,
+            "p99Ms": 0.0166,
+            "maxMs": 7.4086
+          },
+          "schema.validate": {
+            "count": 1,
+            "meanMs": 6.1495,
+            "p50Ms": 6.1495,
+            "p95Ms": 6.1495,
+            "p99Ms": 6.1495,
+            "maxMs": 6.1495
+          },
+          "codec.batch.encode": {
+            "count": 124,
+            "meanMs": 0.11049185483870969,
+            "p50Ms": 0.060399,
+            "p95Ms": 0.1469,
+            "p99Ms": 0.5707,
+            "maxMs": 3.698801
+          },
+          "sqlite.transaction": {
+            "count": 69713,
+            "meanMs": 0.33002482605826744,
+            "p50Ms": 0.1296,
+            "p95Ms": 0.7283,
+            "p99Ms": 1.0539,
+            "maxMs": 104.894799
+          },
+          "sql.read": {
+            "count": 648870,
+            "meanMs": 0.008563282603603187,
+            "p50Ms": 0.0052,
+            "p95Ms": 0.022699,
+            "p99Ms": 0.032,
+            "maxMs": 29.35
+          },
+          "inventory.mutate": {
+            "count": 248,
+            "meanMs": 0.43713749596774193,
+            "p50Ms": 0.369599,
+            "p95Ms": 0.664799,
+            "p99Ms": 1.4806,
+            "maxMs": 4.629199
+          },
+          "production.methods.load.cpu": {
+            "count": 372,
+            "meanMs": 0.04200268817204301,
+            "p50Ms": 0,
+            "p95Ms": 0,
+            "p99Ms": 0,
+            "maxMs": 15.625
+          },
+          "production.execution.save.cpu": {
+            "count": 25296,
+            "meanMs": 0.1803644845034788,
+            "p50Ms": 0,
+            "p95Ms": 0,
+            "p99Ms": 15.625,
+            "maxMs": 15.625
+          },
+          "production.recoveryCheck": {
+            "count": 6200,
+            "meanMs": 0.07857746741935484,
+            "p50Ms": 0.072501,
+            "p95Ms": 0.0979,
+            "p99Ms": 0.1911,
+            "maxMs": 4.646701
+          },
+          "sqlite.cleanup": {
+            "count": 69713,
+            "meanMs": 0.0027565318233328077,
+            "p50Ms": 0.0022,
+            "p95Ms": 0.003301,
+            "p99Ms": 0.005199,
+            "maxMs": 27.4117
+          },
+          "checkpoint.capture": {
+            "count": 3,
+            "meanMs": 5.767933,
+            "p50Ms": 5.346399,
+            "p95Ms": 7.5306,
+            "p99Ms": 7.5306,
+            "maxMs": 7.5306
+          },
+          "production.methods.load": {
+            "count": 372,
+            "meanMs": 0.08031558064516128,
+            "p50Ms": 0.0701,
+            "p95Ms": 0.1364,
+            "p99Ms": 0.3096,
+            "maxMs": 0.451301
+          },
+          "context.tick": {
+            "count": 6200,
+            "meanMs": 3.9498486516129034,
+            "p50Ms": 3.5107,
+            "p95Ms": 4.680301,
+            "p99Ms": 10.943501,
+            "maxMs": 124.404899
+          },
+          "production.settlement.cpu": {
+            "count": 124,
+            "meanMs": 0.37802419354838707,
+            "p50Ms": 0,
+            "p95Ms": 0,
+            "p99Ms": 15.625,
+            "maxMs": 15.625
+          },
+          "sqlite.work": {
+            "count": 69713,
+            "meanMs": 0.3178065957281999,
+            "p50Ms": 0.118,
+            "p95Ms": 0.711699,
+            "p99Ms": 1.0321,
+            "maxMs": 104.866
+          },
+          "production.settlement": {
+            "count": 124,
+            "meanMs": 0.4908685564516129,
+            "p50Ms": 0.382799,
+            "p95Ms": 0.691401,
+            "p99Ms": 2.2599,
+            "maxMs": 4.638399
+          },
+          "production.processTick.cpu": {
+            "count": 24800,
+            "meanMs": 0.5771169354838709,
+            "p50Ms": 0,
+            "p95Ms": 0,
+            "p99Ms": 15.625,
+            "maxMs": 31.25
+          },
+          "clock.productionRecovery": {
+            "count": 6200,
+            "meanMs": 0.12002561612903226,
+            "p50Ms": 0.1111,
+            "p95Ms": 0.152,
+            "p99Ms": 0.2767,
+            "maxMs": 4.6884
+          },
+          "production.followup.cpu": {
+            "count": 124,
+            "meanMs": 2.772177419354839,
+            "p50Ms": 0,
+            "p95Ms": 15.625,
+            "p99Ms": 15.625,
+            "maxMs": 15.625
+          },
+          "inventory.reserve": {
+            "count": 124,
+            "meanMs": 0.3954984032258064,
+            "p50Ms": 0.3603,
+            "p95Ms": 0.6465,
+            "p99Ms": 0.9482,
+            "maxMs": 1.0549
+          },
+          "production.tick": {
+            "count": 6200,
+            "meanMs": 2.8398109908064515,
+            "p50Ms": 2.4826,
+            "p95Ms": 3.3962,
+            "p99Ms": 7.9148,
+            "maxMs": 115.496499
+          },
+          "production.prepare": {
+            "count": 124,
+            "meanMs": 0.6909136854838709,
+            "p50Ms": 0.6048,
+            "p95Ms": 1.0457,
+            "p99Ms": 1.2302,
+            "maxMs": 3.048
+          },
+          "production.recipe.resolve": {
+            "count": 1240,
+            "meanMs": 0.011436679838709676,
+            "p50Ms": 0.0091,
+            "p95Ms": 0.0222,
+            "p99Ms": 0.041901,
+            "maxMs": 0.4809
+          },
+          "production.recovery": {
+            "count": 6200,
+            "meanMs": 0.07895699741935484,
+            "p50Ms": 0.0728,
+            "p95Ms": 0.0983,
+            "p99Ms": 0.1913,
+            "maxMs": 4.6473
+          },
+          "inventory.read": {
+            "count": 496,
+            "meanMs": 0.11978164919354839,
+            "p50Ms": 0.1127,
+            "p95Ms": 0.1873,
+            "p99Ms": 0.2771,
+            "maxMs": 0.576501
+          },
+          "production.execution.load": {
+            "count": 25796,
+            "meanMs": 0.17360494150255854,
+            "p50Ms": 0.1501,
+            "p95Ms": 0.2206,
+            "p99Ms": 0.3642,
+            "maxMs": 62.5547
+          },
+          "production.execution.save": {
+            "count": 25296,
+            "meanMs": 0.20383974051233394,
+            "p50Ms": 0.1836,
+            "p95Ms": 0.2861,
+            "p99Ms": 0.432299,
+            "maxMs": 27.7953
+          },
+          "checkpoint.wait": {
+            "count": 1,
+            "meanMs": 0.019499,
+            "p50Ms": 0.019499,
+            "p95Ms": 0.019499,
+            "p99Ms": 0.019499,
+            "maxMs": 0.019499
+          },
+          "production.reconfigure.cpu": {
+            "count": 124,
+            "meanMs": 1.3860887096774195,
+            "p50Ms": 0,
+            "p95Ms": 15.625,
+            "p99Ms": 15.625,
+            "maxMs": 15.625
+          },
+          "codec.batch.decode": {
+            "count": 50544,
+            "meanMs": 0.019571968997309275,
+            "p50Ms": 0.015,
+            "p95Ms": 0.0282,
+            "p99Ms": 0.0493,
+            "maxMs": 62.252699
+          }
+        },
+        "counts": {
+          "production.methods.load.json.batch.decode": 0,
+          "production.prepare.tx.physical": 124,
+          "production.commitStart.repository.methods.read": 124,
+          "production.reconfigure.sql.dml": 124,
+          "production.methods.load.tx.physical": 0,
+          "production.start.json.batch.encode": 124,
+          "production.commitStart.sql.read": 2480,
+          "production.commitStart.json.inventory.encode": 0,
+          "production.start.json.batch.reused": 124,
+          "production.processTick.json.inventory.decode": 0,
+          "production.followup.inventory.receipts.decoded": 3844,
+          "production.followup.json.inventory.encode": 124,
+          "production.processTick.repository.execution.read": 24800,
+          "production.start.repository.execution.read": 248,
+          "production.settlement.tx.savepoint": 0,
+          "production.settlement.json.inventory.decode": 248,
+          "production.execution.load.repository.execution.read": 0,
+          "production.settlement.json.batch.decode": 0,
+          "production.commitStart.tx.savepoint": 0,
+          "production.prepare.json.inventory.encode": 0,
+          "production.methods.load.json.inventory.encode": 0,
+          "inventory.receipts.decoded": 11788,
+          "production.start.sql.dml": 620,
+          "production.start.json.inventory.encode": 124,
+          "production.prepare.sql.dml": 0,
+          "production.processTick.tx.physical": 24800,
+          "production.methods.load.sql.dml": 0,
+          "production.start.inventory.receipts.decoded": 7936,
+          "production.processTick.tx.savepoint": 0,
+          "production.execution.load.sql.read": 51592,
+          "production.processTick.json.batch.decode": 48804,
+          "production.processTick.inventory.receipts.decoded": 0,
+          "payroll.cycle": 5,
+          "production.followup.json.batch.encode": 0,
+          "production.execution.save.tx.savepoint": 0,
+          "json.batch.decode": 50544,
+          "production.prepare.json.batch.decode": 124,
+          "production.followup.json.batch.reused": 368,
+          "production.execution.load.json.batch.encode": 0,
+          "production.reconfigure.json.batch.decode": 244,
+          "production.execution.save.json.batch.encode": 124,
+          "production.commitStart.json.batch.decode": 248,
+          "production.execution.load.json.batch.reused": 0,
+          "production.reconfigure.json.inventory.decode": 0,
+          "production.settlement.repository.execution.read": 0,
+          "production.reconfigure.tx.physical": 124,
+          "production.methods.load.json.batch.encode": 0,
+          "production.execution.save.repository.execution.read": 0,
+          "production.execution.load.tx.physical": 0,
+          "production.reconfigure.tx.savepoint": 0,
+          "production.reconfigure.sql.read": 3224,
+          "production.execution.load.json.inventory.decode": 0,
+          "production.prepare.sql.read": 1736,
+          "production.processTick.repository.methods.read": 0,
+          "production.methods.load.json.batch.reused": 0,
+          "production.commitStart.inventory.receipts.decoded": 1984,
+          "production.settlement.sql.read": 124,
+          "production.processTick.sql.dml": 49600,
+          "production.processTick.json.inventory.encode": 0,
+          "production.methods.load.repository.execution.read": 0,
+          "production.prepare.repository.methods.read": 124,
+          "production.methods.load.inventory.receipts.decoded": 0,
+          "production.execution.save.json.batch.reused": 49544,
+          "json.inventory.decode": 748,
+          "tx.physical": 69713,
+          "production.execution.save.json.inventory.decode": 0,
+          "repository.methods.read": 372,
+          "production.settlement.repository.methods.read": 0,
+          "production.settlement.json.batch.encode": 0,
+          "production.start.repository.methods.read": 248,
+          "production.settlement.json.inventory.encode": 124,
+          "production.followup.tx.physical": 744,
+          "production.settlement.json.batch.reused": 0,
+          "production.followup.sql.dml": 496,
+          "production.execution.save.repository.methods.read": 0,
+          "inventory.settlement": 124,
+          "production.commitStart.repository.execution.read": 124,
+          "production.start.json.batch.decode": 372,
+          "production.followup.repository.methods.read": 124,
+          "production.reconfigure.inventory.receipts.decoded": 0,
+          "production.commitStart.tx.physical": 124,
+          "production.reconfigure.repository.methods.read": 124,
+          "production.commitStart.json.inventory.decode": 124,
+          "sql.read": 648870,
+          "production.settlement.sql.dml": 124,
+          "production.execution.load.tx.savepoint": 0,
+          "production.prepare.inventory.receipts.decoded": 1984,
+          "production.execution.save.sql.read": 100260,
+          "production.followup.json.inventory.decode": 248,
+          "production.start.sql.read": 4464,
+          "tx.write.withoutDml": 124,
+          "sql.dml": 94460,
+          "production.processTick.json.batch.encode": 0,
+          "production.execution.load.repository.methods.read": 0,
+          "repository.execution.read": 25796,
+          "production.start.tx.physical": 372,
+          "production.settlement.inventory.receipts.decoded": 3844,
+          "json.batch.encode": 124,
+          "production.processTick.json.batch.reused": 48804,
+          "production.prepare.json.inventory.decode": 124,
+          "production.methods.load.json.inventory.decode": 0,
+          "production.prepare.json.batch.encode": 0,
+          "production.methods.load.sql.read": 372,
+          "tx.withoutDml": 25554,
+          "json.batch.reused": 49544,
+          "production.start.json.inventory.decode": 496,
+          "production.reconfigure.json.batch.encode": 0,
+          "production.prepare.json.batch.reused": 0,
+          "production.execution.load.sql.dml": 0,
+          "production.execution.save.tx.physical": 0,
+          "production.commitStart.json.batch.encode": 124,
+          "production.methods.load.repository.methods.read": 0,
+          "production.reconfigure.json.inventory.encode": 0,
+          "production.reconfigure.json.batch.reused": 124,
+          "production.commitStart.json.batch.reused": 124,
+          "production.followup.sql.read": 4708,
+          "production.execution.save.inventory.receipts.decoded": 0,
+          "production.execution.load.json.inventory.encode": 0,
+          "production.start.tx.savepoint": 0,
+          "production.followup.json.batch.decode": 976,
+          "tx.withDml": 44159,
+          "production.processTick.sql.read": 396004,
+          "production.execution.save.sql.dml": 50344,
+          "production.execution.load.json.batch.decode": 50408,
+          "tx.write.withDml": 44159,
+          "production.methods.load.tx.savepoint": 0,
+          "production.execution.save.json.batch.decode": 124,
+          "production.followup.repository.execution.read": 496,
+          "production.followup.tx.savepoint": 0,
+          "production.prepare.repository.execution.read": 124,
+          "json.inventory.encode": 248,
+          "production.commitStart.sql.dml": 248,
+          "production.execution.save.json.inventory.encode": 0,
+          "production.execution.load.inventory.receipts.decoded": 0,
+          "production.settlement.tx.physical": 124,
+          "production.prepare.tx.savepoint": 0,
+          "production.reconfigure.repository.execution.read": 124
+        }
+      },
+      "scenario": "native-save4",
+      "serverTick": {
+        "count": 6200,
+        "meanMs": 4.279813858870967,
+        "p50Ms": 3.7699,
+        "p95Ms": 5.0911,
+        "p99Ms": 12.181899,
+        "maxMs": 131.8265
+      },
+      "sqlite": "disk DELETE/FULL; runtime MEMORY",
+      "startInterval": {
+        "count": 6199,
+        "meanMs": 4.315998951443781,
+        "p50Ms": 3.8092,
+        "p95Ms": 5.1565,
+        "p99Ms": 12.7952,
+        "maxMs": 132.0769
+      },
+      "startup": {
+        "timings": {
+          "sqlite.write": {
+            "count": 4,
+            "meanMs": 3.440025,
+            "p50Ms": 2.2024,
+            "p95Ms": 5.9225,
+            "p99Ms": 5.9225,
+            "maxMs": 5.9225
+          },
+          "sqlite.transaction": {
+            "count": 13,
+            "meanMs": 4.925338615384615,
+            "p50Ms": 4.196301,
+            "p95Ms": 14.480901,
+            "p99Ms": 14.480901,
+            "maxMs": 14.480901
+          },
+          "sqlite.cleanup": {
+            "count": 13,
+            "meanMs": 0.014208,
+            "p50Ms": 0.011701,
+            "p95Ms": 0.045001,
+            "p99Ms": 0.045001,
+            "maxMs": 0.045001
+          },
+          "payroll.accrual": {
+            "count": 1,
+            "meanMs": 2.304501,
+            "p50Ms": 2.304501,
+            "p95Ms": 2.304501,
+            "p99Ms": 2.304501,
+            "maxMs": 2.304501
+          },
+          "payroll.period": {
+            "count": 1,
+            "meanMs": 0.2412,
+            "p50Ms": 0.2412,
+            "p95Ms": 0.2412,
+            "p99Ms": 0.2412,
+            "maxMs": 0.2412
+          },
+          "clock.productionRecovery": {
+            "count": 1,
+            "meanMs": 0.4814,
+            "p50Ms": 0.4814,
+            "p95Ms": 0.4814,
+            "p99Ms": 0.4814,
+            "maxMs": 0.4814
+          },
+          "sql.read": {
+            "count": 196,
+            "meanMs": 0.03568316326530612,
+            "p50Ms": 0.0197,
+            "p95Ms": 0.1092,
+            "p99Ms": 0.380899,
+            "maxMs": 0.4929
+          },
+          "database.open": {
+            "count": 1,
+            "meanMs": 13.696501,
+            "p50Ms": 13.696501,
+            "p95Ms": 13.696501,
+            "p99Ms": 13.696501,
+            "maxMs": 13.696501
+          },
+          "checkpoint.restore": {
+            "count": 1,
+            "meanMs": 160.7004,
+            "p50Ms": 160.7004,
+            "p95Ms": 160.7004,
+            "p99Ms": 160.7004,
+            "maxMs": 160.7004
+          },
+          "sql.dml": {
+            "count": 92,
+            "meanMs": 0.03102288043478261,
+            "p50Ms": 0.0126,
+            "p95Ms": 0.078599,
+            "p99Ms": 0.6997,
+            "maxMs": 0.6997
+          },
+          "sqlite.begin": {
+            "count": 13,
+            "meanMs": 0.037384615384615384,
+            "p50Ms": 0.011199,
+            "p95Ms": 0.220099,
+            "p99Ms": 0.220099,
+            "maxMs": 0.220099
+          },
+          "sqlite.commit": {
+            "count": 13,
+            "meanMs": 0.43930746153846156,
+            "p50Ms": 0.021199,
+            "p95Ms": 3.5677,
+            "p99Ms": 3.5677,
+            "maxMs": 3.5677
+          },
+          "clock.payroll": {
+            "count": 1,
+            "meanMs": 2.312,
+            "p50Ms": 2.312,
+            "p95Ms": 2.312,
+            "p99Ms": 2.312,
+            "maxMs": 2.312
+          },
+          "checkpoint.capture": {
+            "count": 2,
+            "meanMs": 8.8436,
+            "p50Ms": 4.307001,
+            "p95Ms": 13.380199,
+            "p99Ms": 13.380199,
+            "maxMs": 13.380199
+          },
+          "production.recovery": {
+            "count": 1,
+            "meanMs": 0.293701,
+            "p50Ms": 0.293701,
+            "p95Ms": 0.293701,
+            "p99Ms": 0.293701,
+            "maxMs": 0.293701
+          },
+          "sqlite.read": {
+            "count": 6,
+            "meanMs": 5.372133166666667,
+            "p50Ms": 0.202699,
+            "p95Ms": 14.4914,
+            "p99Ms": 14.4914,
+            "maxMs": 14.4914
+          },
+          "sql.other": {
+            "count": 123,
+            "meanMs": 0.11067080487804877,
+            "p50Ms": 0.050301,
+            "p95Ms": 0.1603,
+            "p99Ms": 0.7936,
+            "maxMs": 5.151901
+          },
+          "sqlite.work": {
+            "count": 13,
+            "meanMs": 4.417069384615385,
+            "p50Ms": 3.7757,
+            "p95Ms": 14.4315,
+            "p99Ms": 14.4315,
+            "maxMs": 14.4315
+          },
+          "production.recoveryCheck": {
+            "count": 1,
+            "meanMs": 0.2874,
+            "p50Ms": 0.2874,
+            "p95Ms": 0.2874,
+            "p99Ms": 0.2874,
+            "maxMs": 0.2874
+          },
+          "clock.payments": {
+            "count": 1,
+            "meanMs": 0.2472,
+            "p50Ms": 0.2472,
+            "p95Ms": 0.2472,
+            "p99Ms": 0.2472,
+            "maxMs": 0.2472
+          },
+          "runtime.open": {
+            "count": 1,
+            "meanMs": 163.197999,
+            "p50Ms": 163.197999,
+            "p95Ms": 163.197999,
+            "p99Ms": 163.197999,
+            "maxMs": 163.197999
+          },
+          "schema.validate": {
+            "count": 1,
+            "meanMs": 14.654199,
+            "p50Ms": 14.654199,
+            "p95Ms": 14.654199,
+            "p99Ms": 14.654199,
+            "maxMs": 14.654199
+          }
+        },
+        "counts": {
+          "tx.write.withDml": 3,
+          "sql.read": 196,
+          "tx.withoutDml": 7,
+          "tx.withDml": 6,
+          "sql.dml": 92,
+          "tx.physical": 13,
+          "sql.other": 123,
+          "tx.write.withoutDml": 1
+        }
+      },
+      "testSaveInterval": 0,
+      "vm": "Java HotSpot(TM) 64-Bit Server VM"
+    },
+    "saveFailure": {
+      "checkpoint": {
+        "committed": {
+          "worldId": "805ddf87-5407-4054-8118-18ddf97ea0a9",
+          "checkpointId": "189883f4-f441-4dab-a3a6-8fa32ea25d97",
+          "sequence": 2,
+          "economicTick": 61,
+          "sha256": "e8a9b9e37b545ca0cb853e70066b1e88e009fe23aed58ddefd0ccef0e1b4d3b4"
+        },
+        "saved": 1,
+        "coalesced": 0,
+        "failed": 0,
+        "commitNanos": [
+          45703000
+        ],
+        "blocked": false
+      },
+      "levelEvents": 9,
+      "native": {
+        "requests": 3,
+        "automaticRequests": 0,
+        "flushRequests": 2,
+        "rejectedCaptures": 2
+      }
+    },
+    "crash": {
+      "expected": {
+        "worldId": "61cdbd93-3f35-4dbf-8330-ec253ee5bb45",
+        "checkpointId": "285d70d0-44b2-43a7-a1c7-1483754c3d33",
+        "sequence": 2,
+        "economicTick": 252,
+        "sha256": "fbe99077b0ac67b55405b66b8e565fe50a0e38263094f740ef94959af6c19435"
+      },
+      "reached": "HALTING 73 at runtime tick 292; saved tick 252",
+      "verified": "VERIFIED entire checkpoint 285d70d0-44b2-43a7-a1c7-1483754c3d33 at tick 252",
+      "startup": {
+        "timings": {
+          "production.recovery": {
+            "count": 1,
+            "meanMs": 0.4786,
+            "p50Ms": 0.4786,
+            "p95Ms": 0.4786,
+            "p99Ms": 0.4786,
+            "maxMs": 0.4786
+          },
+          "production.execution.load": {
+            "count": 4,
+            "meanMs": 3.39647525,
+            "p50Ms": 0.9159,
+            "p95Ms": 10.7968,
+            "p99Ms": 10.7968,
+            "maxMs": 10.7968
+          },
+          "payroll.domain.accrue": {
+            "count": 1,
+            "meanMs": 0.0054,
+            "p50Ms": 0.0054,
+            "p95Ms": 0.0054,
+            "p99Ms": 0.0054,
+            "maxMs": 0.0054
+          },
+          "sqlite.write": {
+            "count": 3,
+            "meanMs": 8.251100333333333,
+            "p50Ms": 11.7657,
+            "p95Ms": 12.266701,
+            "p99Ms": 12.266701,
+            "maxMs": 12.266701
+          },
+          "schema.validate": {
+            "count": 3,
+            "meanMs": 42.404667,
+            "p50Ms": 11.435301,
+            "p95Ms": 106.4684,
+            "p99Ms": 106.4684,
+            "maxMs": 106.4684
+          },
+          "sql.dml": {
+            "count": 79,
+            "meanMs": 0.06754183544303798,
+            "p50Ms": 0.0446,
+            "p95Ms": 0.171901,
+            "p99Ms": 1.0108,
+            "maxMs": 1.0108
+          },
+          "sqlite.cleanup": {
+            "count": 14,
+            "meanMs": 0.021992785714285715,
+            "p50Ms": 0.019299,
+            "p95Ms": 0.0424,
+            "p99Ms": 0.0424,
+            "maxMs": 0.0424
+          },
+          "clock.productionRecovery": {
+            "count": 1,
+            "meanMs": 3.041,
+            "p50Ms": 3.041,
+            "p95Ms": 3.041,
+            "p99Ms": 3.041,
+            "maxMs": 3.041
+          },
+          "sql.read": {
+            "count": 392,
+            "meanMs": 0.06636914795918367,
+            "p50Ms": 0.0354,
+            "p95Ms": 0.1286,
+            "p99Ms": 1.1741,
+            "maxMs": 2.6775
+          },
+          "payroll.period": {
+            "count": 1,
+            "meanMs": 0.4558,
+            "p50Ms": 0.4558,
+            "p95Ms": 0.4558,
+            "p99Ms": 0.4558,
+            "maxMs": 0.4558
+          },
+          "clock.payments": {
+            "count": 1,
+            "meanMs": 0.465701,
+            "p50Ms": 0.465701,
+            "p95Ms": 0.465701,
+            "p99Ms": 0.465701,
+            "maxMs": 0.465701
+          },
+          "codec.batch.decode": {
+            "count": 14,
+            "meanMs": 0.5420142857142857,
+            "p50Ms": 0.139299,
+            "p95Ms": 5.6201,
+            "p99Ms": 5.6201,
+            "maxMs": 5.6201
+          },
+          "production.methods.load": {
+            "count": 1,
+            "meanMs": 19.8992,
+            "p50Ms": 19.8992,
+            "p95Ms": 19.8992,
+            "p99Ms": 19.8992,
+            "maxMs": 19.8992
+          },
+          "clock.payroll": {
+            "count": 1,
+            "meanMs": 13.173899,
+            "p50Ms": 13.173899,
+            "p95Ms": 13.173899,
+            "p99Ms": 13.173899,
+            "maxMs": 13.173899
+          },
+          "codec.inventory.decode": {
+            "count": 3,
+            "meanMs": 2.4861666666666666,
+            "p50Ms": 0.2049,
+            "p95Ms": 7.1268,
+            "p99Ms": 7.1268,
+            "maxMs": 7.1268
+          },
+          "sqlite.commit": {
+            "count": 14,
+            "meanMs": 0.04178542857142857,
+            "p50Ms": 0.0266,
+            "p95Ms": 0.1379,
+            "p99Ms": 0.1379,
+            "maxMs": 0.1379
+          },
+          "runtime.open": {
+            "count": 1,
+            "meanMs": 331.9077,
+            "p50Ms": 331.9077,
+            "p95Ms": 331.9077,
+            "p99Ms": 331.9077,
+            "maxMs": 331.9077
+          },
+          "sqlite.begin": {
+            "count": 14,
+            "meanMs": 0.05237828571428572,
+            "p50Ms": 0.0218,
+            "p95Ms": 0.445199,
+            "p99Ms": 0.445199,
+            "maxMs": 0.445199
+          },
+          "production.execution.load.cpu": {
+            "count": 4,
+            "meanMs": 0,
+            "p50Ms": 0,
+            "p95Ms": 0,
+            "p99Ms": 0,
+            "maxMs": 0
+          },
+          "checkpoint.capture": {
+            "count": 1,
+            "meanMs": 9.7129,
+            "p50Ms": 9.7129,
+            "p95Ms": 9.7129,
+            "p99Ms": 9.7129,
+            "maxMs": 9.7129
+          },
+          "sql.other": {
+            "count": 44,
+            "meanMs": 0.1274795681818182,
+            "p50Ms": 0.1114,
+            "p95Ms": 0.2177,
+            "p99Ms": 0.4907,
+            "maxMs": 0.4907
+          },
+          "production.recoveryCheck": {
+            "count": 1,
+            "meanMs": 0.4689,
+            "p50Ms": 0.4689,
+            "p95Ms": 0.4689,
+            "p99Ms": 0.4689,
+            "maxMs": 0.4689
+          },
+          "production.recipe.resolve": {
+            "count": 1,
+            "meanMs": 8.444399,
+            "p50Ms": 8.444399,
+            "p95Ms": 8.444399,
+            "p99Ms": 8.444399,
+            "maxMs": 8.444399
+          },
+          "payroll.accrual": {
+            "count": 1,
+            "meanMs": 13.159101,
+            "p50Ms": 13.159101,
+            "p95Ms": 13.159101,
+            "p99Ms": 13.159101,
+            "maxMs": 13.159101
+          },
+          "sqlite.read": {
+            "count": 9,
+            "meanMs": 17.881955555555557,
+            "p50Ms": 9.543599,
+            "p95Ms": 100.142401,
+            "p99Ms": 100.142401,
+            "maxMs": 100.142401
+          },
+          "sqlite.work": {
+            "count": 14,
+            "meanMs": 13.53999292857143,
+            "p50Ms": 9.2185,
+            "p95Ms": 98.4463,
+            "p99Ms": 98.4463,
+            "maxMs": 98.4463
+          },
+          "sqlite.transaction": {
+            "count": 14,
+            "meanMs": 13.700457214285715,
+            "p50Ms": 9.2902,
+            "p95Ms": 99.3886,
+            "p99Ms": 99.3886,
+            "maxMs": 99.3886
+          },
+          "production.methods.load.cpu": {
+            "count": 1,
+            "meanMs": 15.625,
+            "p50Ms": 15.625,
+            "p95Ms": 15.625,
+            "p99Ms": 15.625,
+            "maxMs": 15.625
+          },
+          "checkpoint.restore": {
+            "count": 1,
+            "meanMs": 69.820699,
+            "p50Ms": 69.820699,
+            "p95Ms": 69.820699,
+            "p99Ms": 69.820699,
+            "maxMs": 69.820699
+          }
+        },
+        "counts": {
+          "production.methods.load.tx.physical": 0,
+          "sql.read": 392,
+          "production.methods.load.json.inventory.decode": 0,
+          "repository.methods.read": 1,
+          "production.execution.load.repository.methods.read": 0,
+          "production.execution.load.inventory.receipts.decoded": 0,
+          "production.methods.load.json.batch.decode": 0,
+          "production.methods.load.inventory.receipts.decoded": 0,
+          "production.execution.load.json.inventory.encode": 0,
+          "production.methods.load.sql.read": 1,
+          "production.execution.load.tx.savepoint": 0,
+          "repository.execution.read": 4,
+          "production.execution.load.json.batch.encode": 0,
+          "sql.dml": 79,
+          "production.execution.load.repository.execution.read": 0,
+          "tx.physical": 14,
+          "tx.write.withoutDml": 2,
+          "production.execution.load.json.batch.reused": 0,
+          "tx.withDml": 2,
+          "sql.other": 44,
+          "production.execution.load.sql.read": 8,
+          "tx.write.withDml": 1,
+          "production.methods.load.repository.methods.read": 0,
+          "inventory.receipts.decoded": 3,
+          "production.execution.load.json.inventory.decode": 0,
+          "production.methods.load.json.inventory.encode": 0,
+          "production.methods.load.json.batch.encode": 0,
+          "tx.withoutDml": 12,
+          "production.execution.load.sql.dml": 0,
+          "json.batch.decode": 14,
+          "production.methods.load.repository.execution.read": 0,
+          "production.methods.load.json.batch.reused": 0,
+          "production.execution.load.tx.physical": 0,
+          "production.execution.load.json.batch.decode": 8,
+          "json.inventory.decode": 3,
+          "production.methods.load.sql.dml": 0,
+          "production.methods.load.tx.savepoint": 0
+        }
+      }
+    },
+    "note": "Six actual server invocations, one is the deliberate halt 73. Checkpoint namespaces register four methods, but each selected mode executes one scenario and the others explicitly return; do not multiply scenario coverage by four."
+  },
+  "reference": {
+    "archiveSha256": "2C2DA36E2D97B059A0687934327612FDEADBBE15C78FCC5027342770EFA65BFD",
+    "measurementPatchSha256": "BCA12B5F1E4073FEE3F9C2FCEDADFD76FB6D78B4A2C314C417FB514E7DE2B1D6",
+    "path": "build/task-p-reference-10c",
+    "method": "git archive + git apply --directory restricted to the build copy; no branch switch/reset/worktree replacement"
+  },
+  "realWorld": {
+    "path": "run/saves/新的世界/victoria_economics/economy.sqlite",
+    "readMethod": "filesystem hash only; never opened through SQLite",
+    "beforeSha256": "3250D82E8EB2C156211D924A2F8A40A2B018146AB983313F1A09C8D5EC681AE8",
+    "afterSha256": "3250D82E8EB2C156211D924A2F8A40A2B018146AB983313F1A09C8D5EC681AE8",
+    "walPresent": false
+  },
+  "pending": {
+    "strict50msPerformanceAcceptance": false,
+    "workPackagePFinalAcceptance": false,
+    "githubActions": "pending manual push; local validation does not establish cloud success",
+    "linux": "No local Linux execution; portable Java executable selection retained",
+    "eFinal": "not started"
+  },
+  "excluded": [
+    {
+      "run": "task-e-gametest-p_resumePair2_active4_1",
+      "reason": "Process stopped during Minecraft startup; no complete performance JSON; preserved and excluded. The remaining six paired runs use new resumePair2r/resumeRef2r worlds."
+    },
+    {
+      "log": "build/task-p-resume-new-tests.log",
+      "reason": "Two new fixture assertions initially assumed wrong crude_tools input/net capacity. Fixed the fixture from the frozen recipe; final full suite passes."
+    }
+  ],
+  "changedFiles": [
+    {
+      "status": "M",
+      "file": "docs/design/VE-Task-P-一致性检查点架构.md"
+    },
+    {
+      "status": "M",
+      "file": "docs/domain/production-operations/current-runtime.md"
+    },
+    {
+      "status": "M",
+      "file": "docs/testing/VE-Task-P-经济Tick性能诊断与优化验收.md"
+    },
+    {
+      "status": "M",
+      "file": "docs/testing/economy-performance.md"
+    },
+    {
+      "status": "M",
+      "file": "docs/testing/task-p/README.md"
+    },
+    {
+      "status": "M",
+      "file": "src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/EconomyPerformanceGameTests.java"
+    },
+    {
+      "status": "M",
+      "file": "src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/PerformanceMeasurements.java"
+    },
+    {
+      "status": "M",
+      "file": "src/main/java/com/bbmurloc/victoriaeconomics/server/diagnostics/EconomyDiagnostics.java"
+    },
+    {
+      "status": "M",
+      "file": "src/main/java/com/bbmurloc/victoriaeconomics/server/inventory/infrastructure/SqliteInventoryStore.java"
+    },
+    {
+      "status": "M",
+      "file": "src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionBoundaryCoordinator.java"
+    },
+    {
+      "status": "M",
+      "file": "src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionService.java"
+    },
+    {
+      "status": "M",
+      "file": "src/main/java/com/bbmurloc/victoriaeconomics/server/production/domain/ProductionMethodRules.java"
+    },
+    {
+      "status": "M",
+      "file": "src/main/java/com/bbmurloc/victoriaeconomics/server/production/infrastructure/SqliteProductionExecutionRepository.java"
+    },
+    {
+      "status": "M",
+      "file": "src/main/java/com/bbmurloc/victoriaeconomics/server/production/infrastructure/SqliteProductionMethodConfigurationRepository.java"
+    },
+    {
+      "status": "M",
+      "file": "src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/EconomyStateCodec.java"
+    },
+    {
+      "status": "M",
+      "file": "src/test/java/com/bbmurloc/victoriaeconomics/server/diagnostics/EconomyDiagnosticsTest.java"
+    },
+    {
+      "status": "M",
+      "file": "tools/Measure-Economy.ps1"
+    },
+    {
+      "status": "M",
+      "file": "tools/Summarize-Economy.mjs"
+    },
+    {
+      "status": "??",
+      "file": "docs/testing/task-p/resume-evidence.json"
+    },
+    {
+      "status": "??",
+      "file": "docs/testing/task-p/resume-measurement.patch"
+    },
+    {
+      "status": "??",
+      "file": "docs/testing/task-p/resume-results.json"
+    },
+    {
+      "status": "??",
+      "file": "src/test/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionSettlementOptimizationTest.java"
+    },
+    {
+      "status": "??",
+      "file": "src/test/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/CodecIntegerParsingTest.java"
+    }
+  ]
+}

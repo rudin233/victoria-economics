@@ -2,6 +2,7 @@ package com.bbmurloc.victoriaeconomics.server.production.domain;
 
 import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeDefinition;
 import com.bbmurloc.victoriaeconomics.common.definition.production.*;
+import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -31,6 +32,7 @@ public final class ProductionMethodRules {
     }
 
     public ResolvedProductionRecipe resolve(Map<String, String> selections) {
+        try(var measurement=EconomyDiagnostics.scope("production.recipe.resolve")){
         if (!selections.keySet().equals(new HashSet<>(type.productionMethodGroupIds()))) {
             throw new IllegalArgumentException("PM target must select exactly every building group");
         }
@@ -51,6 +53,7 @@ public final class ProductionMethodRules {
         outputs.values().removeIf(q -> q == 0L);
         workers.values().removeIf(n -> n == 0);
         return new ResolvedProductionRecipe(inputs, outputs, workers);
+        }
     }
 
     private ProductionMethodGroupDefinition requireGroup(String id) {

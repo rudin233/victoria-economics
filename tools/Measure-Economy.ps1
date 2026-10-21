@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-zA-Z0-9_-]{1,20}$')][string]$Label,
     [ValidateRange(1,5)][int]$Repetitions = 2,
-    [ValidateSet('empty','idle4','active4','idle16','active16','history4')][string[]]$Scenarios = @('empty','idle4','active4','idle16','active16','history4'),
+    [ValidateSet('empty','idle4','active4','idle16','active16','history4','active32')][string[]]$Scenarios = @('empty','idle4','active4','idle16','active16','history4'),
     [switch]$NoDetails,
     [ValidateRange(0,6000)][int]$SaveInterval = 0
 )

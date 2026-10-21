@@ -1,0 +1,430 @@
+diff --git a/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/EconomyPerformanceGameTests.java b/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/EconomyPerformanceGameTests.java
+index e449641..908a2db 100644
+--- a/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/EconomyPerformanceGameTests.java
++++ b/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/EconomyPerformanceGameTests.java
+@@ -20,7 +20,7 @@ public final class EconomyPerformanceGameTests {
+     @GameTest(template="empty",timeoutTicks=2000)
+     public static void profileFormalEconomy(GameTestHelper helper)throws Exception{
+         String scenario=System.getProperty("ve.perfScenario");
+-        if(!Set.of("empty","idle4","active4","idle16","active16","history4").contains(scenario))throw new IllegalArgumentException("Unknown performance scenario");
++        if(!Set.of("empty","idle4","active4","idle16","active16","history4","active32").contains(scenario))throw new IllegalArgumentException("Unknown performance scenario");
+         var server=helper.getLevel().getServer();var ctx=ServerEconomyRuntime.get(server);
+         helper.assertTrue(ctx.getBuildingRegistry().getAll().isEmpty(),"Performance comparison requires a fresh isolated world");
+         List<EconomicBuilding> buildings=new ArrayList<>();GameEconomyFixture fixture;
+@@ -30,7 +30,7 @@ public final class EconomyPerformanceGameTests {
+                 var supply=new SqliteRegionalLaborSupplyRepository(c,ctx.getOccupationRegistry(),new Object());
+                 SqliteTransactions.write(c,tx->{for(String role:List.of("laborer","machinist"))supply.inTransaction(tx).save(new RegionalLaborSupply(fixture.region,role,2000,1),0);return null;});
+             }
+-            int count=scenario.endsWith("16")?16:4;
++            int count=scenario.endsWith("32")?32:scenario.endsWith("16")?16:4;
+             for(int i=0;i<count;i++)buildings.add(fixture.create(10,4));
+             if(scenario.equals("history4"))seedVerifiableHistory(fixture,buildings);
+             if(scenario.startsWith("active")||scenario.equals("history4"))for(var b:buildings)ctx.getProductionService().startBatch(b.getId());
+diff --git a/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/PerformanceMeasurements.java b/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/PerformanceMeasurements.java
+index 68fc762..b553981 100644
+--- a/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/PerformanceMeasurements.java
++++ b/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/PerformanceMeasurements.java
+@@ -13,6 +13,9 @@ public final class PerformanceMeasurements {
+     private static final List<Long> ticks = new ArrayList<>(), nativeTicks = new ArrayList<>(), intervals = new ArrayList<>();
+     private static final List<Long> savingTicks=new ArrayList<>(),normalTicks=new ArrayList<>(),payrollTicks=new ArrayList<>(),settlementTicks=new ArrayList<>();
+     private static long savesBefore,payrollBefore,settlementsBefore;
++    private static final List<String> counterKeys=List.of("sql.read","sql.dml","tx.physical","tx.savepoint","json.batch.decode","json.batch.encode","json.inventory.decode","json.inventory.encode","inventory.receipts.decoded","repository.execution.read","repository.methods.read");
++    private static final Map<String,Map<String,Long>> tickWork=new TreeMap<>();
++    private static long[] countersBefore;
+     private static long started, previousStart;
+     private static int requested;
+     private static boolean pendingStart, sampling, done;
+@@ -33,7 +36,7 @@ public final class PerformanceMeasurements {
+         if(previousStart!=0)intervals.add(started-previousStart);
+         previousStart=started;
+         savesBefore=com.bbmurloc.victoriaeconomics.server.ServerEconomyRuntime.get(server).nativeSaveStatus().requests();
+-        if(details){payrollBefore=recording.eventCount("payroll.cycle");settlementsBefore=recording.eventCount("inventory.settlement");}
++        if(details){payrollBefore=recording.eventCount("payroll.cycle");settlementsBefore=recording.eventCount("inventory.settlement");countersBefore=counterKeys.stream().mapToLong(recording::eventCount).toArray();}
+     }
+     public static void afterTick(MinecraftServer server){
+         if(!sampling||started==0)return;
+@@ -42,6 +45,14 @@ public final class PerformanceMeasurements {
+         (savesAfter>savesBefore?savingTicks:normalTicks).add(duration);
+         if(details&&recording.eventCount("payroll.cycle")>payrollBefore)payrollTicks.add(duration);
+         if(details&&recording.eventCount("inventory.settlement")>settlementsBefore)settlementTicks.add(duration);
++        if(details){
++            var classes=new ArrayList<String>();
++            if(savesAfter>savesBefore)classes.add("save");
++            if(recording.eventCount("payroll.cycle")>payrollBefore)classes.add("payroll");
++            if(recording.eventCount("inventory.settlement")>settlementsBefore)classes.add("settlement");
++            if(classes.isEmpty())classes.add("ordinary");
++            for(String category:classes){var work=tickWork.computeIfAbsent(category,k->new TreeMap<>());work.merge("ticks",1L,Long::sum);for(int i=0;i<counterKeys.size();i++){String key=counterKeys.get(i);work.merge(key,recording.eventCount(key)-countersBefore[i],Long::sum);}}
++        }
+         nativeTicks.add(server.getTickTimesNanos()[server.getTickCount()%100]);
+         if(ticks.size()==requested){sampling=false;sample=details?recording.snapshot():empty;if(details)recording.close();done=true;}
+     }
+@@ -56,6 +67,7 @@ public final class PerformanceMeasurements {
+         result.put("startInterval",EconomyDiagnostics.summarize(intervals));
+         result.put("observedTps",1e9/intervals.stream().mapToDouble(Long::doubleValue).average().orElseThrow());
+         result.put("startup",startup);result.put("fixtureAndWarmup",fixtureAndWarmup);result.put("sample",sample);
++        if(details)result.put("classifiedTickWork",tickWork);
+         result.put("acceptedTick",acceptedTick);result.put("sqlite",settings);result.put("databaseBytes",fileBytes);
+         result.put("runtimeStorage","shared-memory SQLite; disk is complete checkpoint only");
+         result.put("checkpoint",context.checkpointStatus());result.put("nativeSave",context.nativeSaveStatus());
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/diagnostics/EconomyDiagnostics.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/diagnostics/EconomyDiagnostics.java
+index 00b7676..2946b30 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/diagnostics/EconomyDiagnostics.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/diagnostics/EconomyDiagnostics.java
+@@ -1,6 +1,8 @@
+ package com.bbmurloc.victoriaeconomics.server.diagnostics;
+ 
+ import java.util.*;
++import java.lang.management.ManagementFactory;
++import java.lang.management.ThreadMXBean;
+ 
+ /** Optional, bounded, thread-owned observations. Never supplies time, readiness, or transaction authority. */
+ public final class EconomyDiagnostics {
+@@ -8,6 +10,9 @@ public final class EconomyDiagnostics {
+     private static volatile Recording recording;
+     private static final Scope DISABLED = new Scope(null, null, 0, false);
+     private static final int SAMPLE_LIMIT = 1_000_000;
++    private static final ThreadMXBean CPU = ManagementFactory.getThreadMXBean();
++    private static final List<String> STAGE_COUNTERS = List.of("sql.read", "sql.dml", "tx.physical", "tx.savepoint",
++            "json.batch.decode", "json.batch.encode", "json.inventory.decode", "json.inventory.encode", "repository.execution.read", "repository.methods.read", "inventory.receipts.decoded");
+ 
+     public record Summary(long count, double meanMs, double p50Ms, double p95Ms, double p99Ms, double maxMs) {}
+     public record Snapshot(Map<String, Summary> timings, Map<String, Long> counts) {}
+@@ -20,6 +25,16 @@ public final class EconomyDiagnostics {
+         return next;
+     }
+     public static Scope scope(String name) { return scope(name, false); }
++    /** Inclusive operation-local CPU/SQL/codec observations; never reuses an economic object. */
++    public static Scope stage(String name) {
++        var r = recording;
++        if (r == null || r.owner != Thread.currentThread()) return DISABLED;
++        var scope = new Scope(r, name, System.nanoTime(), false);
++        scope.counters = new long[STAGE_COUNTERS.size()];
++        for (int i = 0; i < scope.counters.length; i++) scope.counters[i] = r.eventCount(STAGE_COUNTERS.get(i));
++        scope.cpuStarted = CPU.isCurrentThreadCpuTimeSupported() && CPU.isThreadCpuTimeEnabled() ? CPU.getCurrentThreadCpuTime() : -1;
++        return scope;
++    }
+     public static Scope transaction() { return scope("sqlite.transaction", true); }
+     private static Scope scope(String name, boolean transaction) {
+         var r = recording;
+@@ -32,6 +47,10 @@ public final class EconomyDiagnostics {
+         var r = recording;
+         if (r != null && r.owner == Thread.currentThread()) r.count(name);
+     }
++    public static void count(String name, long amount) {
++        var r = recording;
++        if (r != null && r.owner == Thread.currentThread()) r.counts.merge(name, amount, Long::sum);
++    }
+     /** Counts successful DML invocations affecting rows, not inferred fsyncs or economic changes. */
+     public static void sql(String sql, String method, Object result, long elapsedNanos) {
+         var r = recording;
+@@ -54,6 +73,8 @@ public final class EconomyDiagnostics {
+         private final long mutations;
+         private final boolean transaction;
+         private boolean closed;
++        private long[] counters;
++        private long cpuStarted;
+         private Scope(Recording recording, String name, long started, boolean transaction) {
+             this.recording = recording; this.name = name; this.started = started; this.transaction = transaction;
+             mutations = recording == null ? 0 : recording.mutations;
+@@ -62,6 +83,13 @@ public final class EconomyDiagnostics {
+             if (recording == null || closed) return;
+             closed = true;
+             recording.add(name, System.nanoTime() - started);
++            if (counters != null) {
++                if (cpuStarted >= 0) recording.add(name + ".cpu", CPU.getCurrentThreadCpuTime() - cpuStarted);
++                for (int i = 0; i < counters.length; i++) {
++                    String counter = STAGE_COUNTERS.get(i);
++                    recording.counts.merge(name + "." + counter, recording.eventCount(counter) - counters[i], Long::sum);
++                }
++            }
+             if (transaction) recording.count(recording.mutations == mutations ? "tx.withoutDml" : "tx.withDml");
+             if (name.equals("sqlite.write")) recording.count(recording.mutations == mutations ? "tx.write.withoutDml" : "tx.write.withDml");
+         }
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionBoundaryCoordinator.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionBoundaryCoordinator.java
+index fda3c6b..0ff90f9 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionBoundaryCoordinator.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionBoundaryCoordinator.java
+@@ -85,10 +85,10 @@ public final class ProductionBoundaryCoordinator {
+         }
+         return false;
+     });}
+-    public void reconfigure(UUID id){write(tx->{
++    public void reconfigure(UUID id){try(var measurement=EconomyDiagnostics.stage("production.reconfigure")){write(tx->{
+         var e=executions.inTransaction(tx).load(id);if(e.hasUnfinishedBatch())throw new IllegalStateException("Running Batch defers staffing and PM changes");
+         var m=methods.inTransaction(tx).load(id);reconfigure(tx,id,e,m,m.configurationRevision(),staffing.inTransaction(tx).load(id));return null;
+-    });}
++    });}}
+     private void reconfigure(SqliteTransactions.WriteSession tx,UUID id,ProductionExecution e,ProductionMethodConfiguration m,long pmRevision,BuildingStaffing requested)throws SQLException{
+         var b=admit(tx,id);noUnresolvedStart(tx,id);if(e.hasUnfinishedBatch())throw new IllegalStateException("Previous Batch unfinished");
+         long tick=SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick();
+@@ -116,7 +116,7 @@ public final class ProductionBoundaryCoordinator {
+         if(e.boundary()==ProductionExecution.Boundary.RECONFIGURING){e.reconfigurationCompleted();executions.inTransaction(tx).save(e,e.executionRevision());}
+     }
+     public record StartPlan(ProductionBatchConfiguration configuration,long executionRevision){}
+-    public StartPlan prepare(UUID id){return write(tx->new StartPlan(prepare(tx,id,null),executions.inTransaction(tx).load(id).executionRevision()));}
++    public StartPlan prepare(UUID id){try(var measurement=EconomyDiagnostics.stage("production.prepare")){return write(tx->new StartPlan(prepare(tx,id,null),executions.inTransaction(tx).load(id).executionRevision()));}}
+     private ProductionBatchConfiguration prepare(SqliteTransactions.WriteSession tx,UUID id,UUID reservedBatch)throws SQLException{
+         var b=admit(tx,id);if(b.getStatus()!=BuildingStatus.ACTIVE)throw new ProductionStartBlocked("Building stopped");
+         var e=executions.inTransaction(tx).load(id);if(e.batch()!=null||e.boundary()!=ProductionExecution.Boundary.NONE)throw new ProductionStartBlocked("Previous Batch or reconfiguration unfinished");
+@@ -129,7 +129,7 @@ public final class ProductionBoundaryCoordinator {
+         if(reservedBatch==null&&!inventory.inputsAvailable(tx,id,m.recipe().inputs()))throw new ProductionStartBlocked("Missing batch input");
+         return new ProductionBatchConfiguration(m.effective().methods(),m.recipe(),plan,m.effectiveRevision());
+     }
+-    public void commitStart(UUID id,UUID batch,StartPlan expected,boolean automaticRequest){write(tx->{
++    public void commitStart(UUID id,UUID batch,StartPlan expected,boolean automaticRequest){try(var measurement=EconomyDiagnostics.stage("production.commitStart")){write(tx->{
+         var current=prepare(tx,id,batch);if(!current.equals(expected.configuration()))throw new IllegalStateException("Production conditions changed before commit");
+         var e=executions.inTransaction(tx).load(id);if(e.executionRevision()!=expected.executionRevision())throw new IllegalStateException("Execution changed before final start");
+         if(automaticRequest&&!e.automatic())throw new IllegalStateException("Automatic production disabled before commit");
+@@ -142,7 +142,7 @@ public final class ProductionBoundaryCoordinator {
+         long tick=SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick();
+         if(e.processingTick()==null&&e.lastCompletedTick()<tick)e.beginTick(tick);
+         e.start(batch,current);if(!automaticRequest)e.requestAutomatic(true);executions.inTransaction(tx).save(e,e.executionRevision());return null;
+-    });}
++    });}}
+     /** No detached aggregate escapes this decision; success means physical commit and cleanup were confirmed. */
+     public enum TickResult { ALREADY_COMPLETED, COMPLETED, NEEDS_FOLLOW_UP }
+     /** Keeps the explicit staged capability used by recovery/fault clients. */
+@@ -151,7 +151,7 @@ public final class ProductionBoundaryCoordinator {
+      * Combine advance and completion only when all remaining work fits this building's current transaction.
+      * StartIntent, settlement, reconfiguration barriers and automatic starts retain their journaled protocol.
+      */
+-    public TickResult processTick(UUID id,long tick){return write(tx->advance(tx,id,tick,true));}
++    public TickResult processTick(UUID id,long tick){try(var measurement=EconomyDiagnostics.stage("production.processTick")){return write(tx->advance(tx,id,tick,true));}}
+     private TickResult advance(SqliteTransactions.WriteSession tx,UUID id,long tick,boolean completeSimple)throws SQLException{
+         if(tick!=SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick())throw new IllegalArgumentException("Only accepted economic Tick may advance production");
+         var b=live(tx,id);var e=executions.inTransaction(tx).load(id);
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionService.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionService.java
+index a755986..2dbf40d 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionService.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionService.java
+@@ -23,7 +23,7 @@ public final class ProductionService {
+     public void requestProductionMethods(UUID id,Map<String,String> target){coordinator.changeMethods(id,(m,defer)->m.requestTarget(target,defer));}
+     public void cancelPendingProductionMethods(UUID id){coordinator.changeMethods(id,(m,defer)->m.cancelPending());}
+     public ProductionBatch startBatch(UUID id){return startBatch(id,false);}
+-    private ProductionBatch startBatch(UUID id,boolean automatic){synchronized(lock){
++    private ProductionBatch startBatch(UUID id,boolean automatic){try(var measurement=EconomyDiagnostics.stage("production.start")){synchronized(lock){
+         if(journal.pendingStarts().stream().anyMatch(i->i.buildingId().equals(id)))throw new IllegalStateException("Start compensation still pending");
+         settleAndHandleBoundary(id);
+         var plan=coordinator.prepare(id);var config=plan.configuration();UUID batch=UUID.randomUUID();var intent=new ProductionJournal.StartIntent(batch,id);
+@@ -38,7 +38,7 @@ public final class ProductionService {
+             throw failure;
+         }
+         finishCommittedStart(batch);blocked.remove(id);return coordinator.execution(id).batch();
+-    }}
++    }}}
+     public void abortBatch(UUID id){synchronized(lock){coordinator.abort(id);settleAndHandleBoundary(id);}}
+     public void setAutomatic(UUID id,boolean enabled){coordinator.automatic(id,enabled);}
+     public void setManualPause(UUID id,boolean pause){coordinator.manualPause(id,pause);}
+@@ -49,16 +49,20 @@ public final class ProductionService {
+         recoverStarts();settleAndHandleBoundary(id);
+     }}
+     private void settleAndHandleBoundary(UUID id){
++        try(var measurement=EconomyDiagnostics.stage("production.followup")){
+         var e=coordinator.execution(id);var batch=e.batch();
+         if(batch!=null&&batch.needsSettlement()){
+             var recipe=batch.getConfiguration().resolvedRecipe();
+             var outcome=batch.getStatus()==ProductionBatch.Status.SETTLING_COMPLETED?ProductionSettlement.Outcome.COMPLETED:ProductionSettlement.Outcome.ABORTED;
+-            var command=new ProductionSettlement(batch.getId(),outcome,recipe.inputs(),recipe.outputs());var receipt=inventory.settle(id,command);
++            var command=new ProductionSettlement(batch.getId(),outcome,recipe.inputs(),recipe.outputs());
++            ProductionInventoryPort.SettlementReceipt receipt;
++            try(var settlementMeasurement=EconomyDiagnostics.stage("production.settlement")){receipt=inventory.settle(id,command);}
+             if(!receipt.command().equals(command))throw new IllegalStateException("Settlement receipt does not match frozen command");
+             coordinator.confirmSettlement(id,batch.getId());
+         }
+         e=coordinator.execution(id);
+         if(!e.hasUnfinishedBatch()&&!coordinator.lifecycleHeld(id))coordinator.reconfigure(id);
++        }
+     }
+     /** One durable advance per building/accepted Tick. A failure leaves that Tick pending and stops global allocation. */
+     public void onEconomicTick(){
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/domain/ProductionMethodRules.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/domain/ProductionMethodRules.java
+index a2eba2e..ef4997b 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/domain/ProductionMethodRules.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/domain/ProductionMethodRules.java
+@@ -2,6 +2,7 @@ package com.bbmurloc.victoriaeconomics.server.production.domain;
+ 
+ import com.bbmurloc.victoriaeconomics.common.definition.building.BuildingTypeDefinition;
+ import com.bbmurloc.victoriaeconomics.common.definition.production.*;
++import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
+ import java.util.*;
+ import java.util.function.Function;
+ import java.util.stream.Collectors;
+@@ -31,6 +32,7 @@ public final class ProductionMethodRules {
+     }
+ 
+     public ResolvedProductionRecipe resolve(Map<String, String> selections) {
++        try(var measurement=EconomyDiagnostics.scope("production.recipe.resolve")){
+         if (!selections.keySet().equals(new HashSet<>(type.productionMethodGroupIds()))) {
+             throw new IllegalArgumentException("PM target must select exactly every building group");
+         }
+@@ -51,6 +53,7 @@ public final class ProductionMethodRules {
+         outputs.values().removeIf(q -> q == 0L);
+         workers.values().removeIf(n -> n == 0);
+         return new ResolvedProductionRecipe(inputs, outputs, workers);
++        }
+     }
+ 
+     private ProductionMethodGroupDefinition requireGroup(String id) {
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/infrastructure/SqliteProductionExecutionRepository.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/infrastructure/SqliteProductionExecutionRepository.java
+index 29d7beb..5a823af 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/infrastructure/SqliteProductionExecutionRepository.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/infrastructure/SqliteProductionExecutionRepository.java
+@@ -1,6 +1,7 @@
+ package com.bbmurloc.victoriaeconomics.server.production.infrastructure;
+ 
+ import com.bbmurloc.victoriaeconomics.server.production.domain.*;
++import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
+ import com.bbmurloc.victoriaeconomics.server.production.port.*;
+ import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteTransactions;
+ import com.bbmurloc.victoriaeconomics.server.storage.sqlite.EconomyStateCodec;
+@@ -44,6 +45,8 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
+     }
+ 
+     private ProductionExecution read(UUID id) throws SQLException {
++        EconomyDiagnostics.count("repository.execution.read");
++        try(var measurement=EconomyDiagnostics.stage("production.execution.load")){
+         try (var statement = connection.prepareStatement("SELECT * FROM production_executions WHERE building_id=?")) {
+             statement.setString(1, id.toString());
+             try (var rows = statement.executeQuery()) {
+@@ -62,6 +65,7 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
+                 return execution;
+             }
+         }
++        }
+     }
+     public ProductionExecution inSnapshot(SqliteTransactions.ReadSession tx,UUID id)throws SQLException{tx.requireConnection(connection);return read(id);}
+ 
+@@ -95,6 +99,7 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
+     }
+ 
+     private void persist(ProductionExecution changed, long expectedRevision) throws SQLException {
++        try(var measurement=EconomyDiagnostics.stage("production.execution.save")){
+         try(var s=connection.prepareStatement("SELECT b.lifecycle,o.id,e.current_batch_id,e.last_batch_id FROM economic_buildings b JOIN production_executions e ON e.building_id=b.id LEFT JOIN building_lifecycle_operations o ON o.building_id=b.id WHERE b.id=?")) {
+             s.setString(1,changed.buildingId().toString());try(var r=s.executeQuery()) {
+                 if(!r.next())throw new IllegalStateException("Unknown building identity");
+@@ -134,6 +139,7 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
+         }
+         saveBatch(changed.batch());
+         saveBatch(changed.lastBatch());
++        }
+     }
+ 
+     private static String batchId(ProductionBatch batch) { return batch == null ? null : batch.getId().toString(); }
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/infrastructure/SqliteProductionMethodConfigurationRepository.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/infrastructure/SqliteProductionMethodConfigurationRepository.java
+index cc7da16..31df816 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/infrastructure/SqliteProductionMethodConfigurationRepository.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/infrastructure/SqliteProductionMethodConfigurationRepository.java
+@@ -1,6 +1,7 @@
+ package com.bbmurloc.victoriaeconomics.server.production.infrastructure;
+ 
+ import com.bbmurloc.victoriaeconomics.server.production.domain.*;
++import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
+ import com.bbmurloc.victoriaeconomics.server.production.port.*;
+ import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteTransactions;
+ import com.google.gson.Gson;
+@@ -49,6 +50,8 @@ public final class SqliteProductionMethodConfigurationRepository implements Prod
+     }
+ 
+     private ProductionMethodConfiguration read(UUID id) {
++        EconomyDiagnostics.count("repository.methods.read");
++        try(var measurement=EconomyDiagnostics.stage("production.methods.load")){
+         try (var statement = connection.prepareStatement("SELECT c.*, b.building_type_id FROM production_method_configurations c JOIN economic_buildings b ON b.id=c.building_id WHERE c.building_id=?")) {
+             statement.setString(1, id.toString());
+             try (var rows = statement.executeQuery()) {
+@@ -62,6 +65,7 @@ public final class SqliteProductionMethodConfigurationRepository implements Prod
+         } catch (SQLException failure) {
+             throw new IllegalStateException("Cannot read production configuration: " + id, failure);
+         }
++        }
+     }
+ 
+     @Override
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/EconomyStateCodec.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/EconomyStateCodec.java
+index 0a743c2..b99dcff 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/EconomyStateCodec.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/EconomyStateCodec.java
+@@ -1,6 +1,7 @@
+ package com.bbmurloc.victoriaeconomics.server.storage.sqlite;
+ 
+ import com.bbmurloc.victoriaeconomics.server.inventory.domain.GoodsInventory;
++import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
+ import com.bbmurloc.victoriaeconomics.server.production.domain.*;
+ import com.google.gson.*;
+ import com.google.gson.stream.JsonReader;
+@@ -25,6 +26,8 @@ public final class EconomyStateCodec {
+     }
+ 
+     public static ProductionBatchConfiguration decodeBatchConfiguration(String json) {
++        EconomyDiagnostics.count("json.batch.decode");
++        try(var measurement=EconomyDiagnostics.scope("codec.batch.decode")){
+         requireCurrentFormat();
+         try {
+             var envelope = fields(parse(json), "formatVersion", "fullSpeedTicks", "snapshot");
+@@ -43,6 +46,7 @@ public final class EconomyStateCodec {
+         } catch (RuntimeException failure) {
+             throw incompatible("Batch configuration", failure);
+         }
++        }
+     }
+ 
+     public static ProductionBatch decodeBatch(UUID batchId, UUID buildingId, String json, long progress, String status) {
+@@ -54,15 +58,20 @@ public final class EconomyStateCodec {
+     }
+ 
+     public static String encodeBatchConfiguration(ProductionBatchConfiguration configuration) {
++        EconomyDiagnostics.count("json.batch.encode");
++        try(var measurement=EconomyDiagnostics.scope("codec.batch.encode")){
+         requireCurrentFormat();
+         var envelope = envelope(GSON.toJsonTree(configuration));
+         envelope.addProperty("fullSpeedTicks", FULL_SPEED_TICKS);
+         String json = GSON.toJson(envelope);
+         decodeBatchConfiguration(json);
+         return json;
++        }
+     }
+ 
+     public static GoodsInventory decodeInventory(UUID expectedLocation, String json) {
++        EconomyDiagnostics.count("json.inventory.decode");
++        try(var measurement=EconomyDiagnostics.scope("codec.inventory.decode")){
+         requireCurrentFormat();
+         try {
+             var envelope = fields(parse(json), "formatVersion", "snapshot");
+@@ -78,6 +87,7 @@ public final class EconomyStateCodec {
+                         ProductionSettlement.Outcome.valueOf(string(command.get("outcome"))),
+                         quantities(command.get("inputs")), quantities(command.get("outputs"))));
+             });
++            EconomyDiagnostics.count("inventory.receipts.decoded", settlements.size());
+             settlements.forEach((batch, receipt) -> {
+                 if (!batch.equals(receipt.batchId())) throw invalid("Settlement batch differs from its map key");
+             });
+@@ -86,13 +96,17 @@ public final class EconomyStateCodec {
+         } catch (RuntimeException failure) {
+             throw incompatible("Inventory " + expectedLocation, failure);
+         }
++        }
+     }
+ 
+     public static String encodeInventory(GoodsInventory.State state) {
++        EconomyDiagnostics.count("json.inventory.encode");
++        try(var measurement=EconomyDiagnostics.scope("codec.inventory.encode")){
+         requireCurrentFormat();
+         String json = GSON.toJson(envelope(GSON.toJsonTree(state)));
+         decodeInventory(state.location(), json);
+         return json;
++        }
+     }
+ 
+     private static Map<String, Long> quantities(JsonElement element) {
+diff --git a/tools/Measure-Economy.ps1 b/tools/Measure-Economy.ps1
+index 5d6186e..8eba9b4 100644
+--- a/tools/Measure-Economy.ps1
++++ b/tools/Measure-Economy.ps1
+@@ -1,7 +1,7 @@
+ param(
+     [Parameter(Mandatory=$true)][ValidatePattern('^[a-zA-Z0-9_-]{1,20}$')][string]$Label,
+     [ValidateRange(1,5)][int]$Repetitions = 2,
+-    [ValidateSet('empty','idle4','active4','idle16','active16','history4')][string[]]$Scenarios = @('empty','idle4','active4','idle16','active16','history4'),
++    [ValidateSet('empty','idle4','active4','idle16','active16','history4','active32')][string[]]$Scenarios = @('empty','idle4','active4','idle16','active16','history4'),
+     [switch]$NoDetails,
+     [ValidateRange(0,6000)][int]$SaveInterval = 0
+ )

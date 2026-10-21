@@ -108,6 +108,20 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
 
     private record Loaded(GoodsInventory inventory, long revision) {}
 
+    public record StartInspection(boolean configured, boolean overCapacity, boolean inputsAvailable, boolean reserved) {}
+
+    /** One authoritative read for the caller's final start checks; the result never outlives that write session. */
+    public StartInspection inspectStart(SqliteTransactions.WriteSession tx, UUID location, Map<String, Long> inputs, UUID batch) throws SQLException {
+        return tx.perform(() -> {
+            tx.requireConnection(connection);
+            var loaded = find(location);
+            if (loaded == null) return new StartInspection(false, false, false, false);
+            var current = loaded.inventory();
+            boolean available = inputs.entrySet().stream().allMatch(entry -> current.available(entry.getKey()) >= entry.getValue());
+            return new StartInspection(true, current.overCapacity(), available, batch != null && current.hasReservation(batch, inputs));
+        });
+    }
+
     public boolean configured(SqliteTransactions.WriteSession tx,UUID location){
         tx.requireConnection(connection);
         try(var s=connection.prepareStatement("SELECT 1 FROM inventory_locations WHERE location_id=?")){
@@ -131,12 +145,17 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
     }
 
     private Loaded read(UUID location) {
+        var loaded = find(location);
+        if (loaded == null) throw new IllegalStateException("Storage location has not been configured: " + location);
+        return loaded;
+    }
+
+    private Loaded find(UUID location) {
         try (var diagnosticScope = EconomyDiagnostics.scope("inventory.read")) {
         try (var statement = connection.prepareStatement("SELECT state_json, revision, typeof(revision) AS revision_type FROM inventory_locations WHERE location_id = ?")) {
             statement.setString(1, location.toString());
             try (var rows = statement.executeQuery()) {
-                if (!rows.next())
-                    throw new IllegalStateException("Storage location has not been configured: " + location);
+                if (!rows.next()) return null;
                 if (!rows.getString("revision_type").equals("integer") || rows.getLong("revision") < 0)
                     throw new IllegalStateException("Invalid inventory revision");
                 return new Loaded(EconomyStateCodec.decodeInventory(location, rows.getString(1)), rows.getLong("revision"));

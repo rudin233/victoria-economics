@@ -11,6 +11,17 @@ node tools/Summarize-Economy.mjs build build/local01-results.json local01
 
 每次选择新 Label，不重用或删除旧隔离世界。六场景均 150 Tick 预热、1300 对齐样本，正常 Payroll/Production 不跳过。内存业务事务与磁盘检查点须分别统计；磁盘仍 DELETE/FULL。`SaveInterval=200` 仅为压力测试原版保存入口的参数，正式默认跟随原版自动保存；传 0 不额外触发。GameTest 吞吐没有普通服务器 20 TPS 上限，不能冒充玩家服 TPS。
 
+本次恢复增加 `active32`，仍实际运行所有工资、付款、生产和存档：
+
+```powershell
+& ./tools/Measure-Economy.ps1 -Label scale01 -Repetitions 2 -Scenarios @('active16','active32') -SaveInterval 200
+node tools/Summarize-Economy.mjs build build/scale01-results.json scale01
+```
+
+优先比较交替运行的独立基线副本和当前版本，并观察 empty 对照是否一起漂移。基线副本只能来自 `10c3260` 加 [本次探针补丁](task-p/resume-measurement.patch)，放入新建的 build 子目录，不在正式工作区 reset。实际复测的 51 次运行、一次未完成启动、CPU/SQL/JSON 分阶段计数及不利结果均保留在 [resume-results.json](task-p/resume-results.json)。新阶段没有通过 50ms 严格峰值验收。
+
+阶段 CPU、SQL、JSON 统计均为嵌套包含；save/payroll/settlement Tick 组可重叠。结算 Tick 只有七个，1300 Tick 的 p99 可能完全没有覆盖它们，因此必须单独报告结算分布。SQL 时间只计 execute，不覆盖 prepare/bind/getter/Java 映射；有界探针丢弃的时间样本应标明，不能从精确计数伪造完整耗时。32 栋 Journal 推导使用 32 栋数，不沿用旧四栋分支。
+
 在 PowerShell 内可以只运行部分场景并关闭细分观察器：
 
 ```powershell
