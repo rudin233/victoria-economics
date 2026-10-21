@@ -30,7 +30,8 @@ class CheckpointPersistenceTest {
             var store = new SqliteCheckpointStore(file()); var old = EconomyCheckpoint.capture(c); var first = store.save(null, next(null, old), old);
             try (var disk = SqliteEconomyDatabase.open(file()); var s = disk.createStatement()) { s.execute("PRAGMA journal_mode=" + parts[0]); }
             var output = directory.resolve("crash-child.log");
-            var process = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java.exe").toString(), "-cp",
+            String javaExecutable = System.getProperty("os.name").startsWith("Windows") ? "java.exe" : "java";
+            var process = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", javaExecutable).toString(), "-cp",
                     System.getProperty("ve.test.runtimeClasspath"), CheckpointCrashProcess.class.getName(), parts[1], file().toString())
                     .redirectErrorStream(true).redirectOutput(output.toFile()).start();
             assertTrue(process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS), "Crash child did not exit");
