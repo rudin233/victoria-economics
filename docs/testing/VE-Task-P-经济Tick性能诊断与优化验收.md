@@ -618,3 +618,174 @@ JSON 次数及完整历史回执遍历仍随历史增长；没有拆除历史回
 | ?? | `src/test/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/CodecIntegerParsingTest.java` | 18 项严格字面值回归 |
 
 此清单针对恢复基线 10c3260；第 11 节是暂停前的历史清单。build 内参考副本、脚本、日志和临时数据库未提交。
+
+## 13. 借鉴 Create 的 DDD 兼容性能实验
+
+### 13.1 基线、范围与最终决定
+
+基线 `4ccf5112ba698b918189636361eb0b5178f52af8`，分支 `refactor/m1-0-sqlite-transaction-cleanup`，开始时工作区干净。保留第 12 节全部已验证成果及旧数据。本轮只实现一个候选：无 Pending、无资源边界的空闲建筑通过事务内事实证明重配置无效果时，跳过完整重配置。**6 次对照已到上限，稳定收益不确定，候选正式代码及新增测试已撤回；最终只交付报告、原始汇总和可审查补丁。** 没有第二套优化、Schema 改动或 E-Final。
+
+候选见 [create-candidate.patch](task-p/create-candidate.patch)，其内容不参与当前编译；在独立原基线副本中应用检查通过。正式 src/main、src/test、src/gameTest 的 git diff 为空；用反向补丁撤回自己的唯一改动，没有 reset 或覆盖任务开始前的工作。
+
+### 13.2 Create 官方依据
+
+2026-10-21 通过官方分支实际查询到 `7ff2760e4924d35d4bc2e22c4b19923f0178cd16`；下载并阅读固定提交的五个文件，摘要在 [实验依据](task-p/create-experiment-evidence.json)。不以 Create 的机器更新代替 VE 事务。
+
+| 官方源码（固定提交） | 参考及边界 |
+|---|---|
+| [DeferralBehaviour](https://github.com/Creators-of-Create/Create/blob/7ff2760e4924d35d4bc2e22c4b19923f0178cd16/src/main/java/com/simibubi/create/foundation/blockEntity/behaviour/simple/DeferralBehaviour.java) | 请求合并；回调成功才清除待处理标记。该实现把标记写 NBT，VE 不照搬为第二权威。 |
+| [KineticNetwork](https://github.com/Creators-of-Create/Create/blob/7ff2760e4924d35d4bc2e22c4b19923f0178cd16/src/main/java/com/simibubi/create/content/kinetics/KineticNetwork.java) | 聚合结果改变才同步；update 方法仍计算聚合，不声称其所有计算都只在变化时发生。成员/区块规则不适合 VE。 |
+| [RecipeFinder](https://github.com/Creators-of-Create/Create/blob/7ff2760e4924d35d4bc2e22c4b19923f0178cd16/src/main/java/com/simibubi/create/foundation/recipe/RecipeFinder.java) | 静态条件缓存与后续动态筛选分离，资源重载清空静态结果。 |
+| [RecipeTrieFinder](https://github.com/Creators-of-Create/Create/blob/7ff2760e4924d35d4bc2e22c4b19923f0178cd16/src/main/java/com/simibubi/create/foundation/recipe/trie/RecipeTrieFinder.java) | 复用静态配方索引，重载失效；不代表库存预留或工资状态可以缓存。 |
+| [BasinOperatingBlockEntity](https://github.com/Creators-of-Create/Create/blob/7ff2760e4924d35d4bc2e22c4b19923f0178cd16/src/main/java/com/simibubi/create/content/processing/basin/BasinOperatingBlockEntity.java) | 连续加工复用配方前再次匹配动态输入，apply 成功后通知内容变化；不能把配方匹配当成财务事务。 |
+
+借鉴的是“昂贵工作前证明是否需要工作”和“静态候选与动态资格分离”；没有复制可变 needsUpdate、静态领域缓存、BlockEntity 调度、浮点动力或 NBT/SavedData 权威。KineticNetwork 的成员卸载机制不能让 VE 在区块卸载时停摆。Basin 的再次匹配也不能替代 Reservation、Payroll、CAS 或结算回执。
+
+### 13.3 一次诊断与唯一候选
+
+原 advance 的 completeSimple 分支在无 Batch、automatic=false、boundary=NONE、无 StartIntent 时，每 Tick 仍加载 PM/Staffing 并进入 reconfigure。一次真实 SQLite 诊断记录每栋 35 SELECT、1 DML、1 物理事务，包含地区供给与就业读取。已有 idle16 的 635.552 SELECT/Tick 在本轮参考版重现；不是另起一套探针。
+
+候选只修改 ProductionBoundaryCoordinator：复用已经读取的 EconomicTime；仍在现有 IMMEDIATE 事务内加载 PM 与 Staffing；仅在工资游标追平、状态 CURRENT/ARREARS、PM 和 Staffing 都无 Pending、领域 forCapacity 不改变人数、活跃 Payroll 已应计至本 Tick、币种和历史公司/地区/人数匹配时跳过 reconfigure。RECOVERY/UNAVAILABLE 走原路径。没有全局布尔、缓存、后台队列或新 Repository。
+
+PM 完整解析和 Staffing 构造刻意保留：v10 没有可以普遍代替岗位合法性验证的“已应用配置版本”凭据；仅看 pending_json IS NULL 不足以证明岗位无需收缩。每 Tick 的工资状态查询、PauseReason、生命周期检查、StartIntent 检查、Execution CAS/finishTick 都保留。单栋诊断读数 35→22，DML/事务仍 1/1。
+
+DDD 归属不变：领域 StaffingTransition 判断容量变化，PM 仍负责合法组合；应用协调器在同一 WriteSession 证明本次业务无效果；基础设施继续提供当前事务事实和提交保护。没有合并领域根，也没有让提示成为权威。
+
+### 13.4 不变量与正确性验证
+
+独立经济时钟先调用 PayrollAccrualService.recoverAcceptedTime，accrueAll 包含历史段、精确余数及到期化。候选额外校验当前段已到本 Tick，不用全局游标代替登记或工资身份。未来实际人数变化、Pending PM/Staffing、容量降低及 RECONFIGURING 仍进入原工资截止和跨根事务；Pending=0 不被视为不存在。地区供给增加且无 Pending 不自动补招；新的正式请求即时处理。供给降低仍受原真实 occupied 约束。
+
+没有 Pending 且容量不变时，区域 available 不能产生任何实际人数修改，故该汇总可略过；不能在有 Pending 时复用它。正常完成、ABORTED、200/334/1200 Tick、同 Tick 开新批、工资付款、库存和 StartIntent 都不在候选范围。设备系统已退出，设备变化是“不适用”，没有虚构设备测试或再引入设备因素；普通商品不变。BLOCKED 生命周期不进入候选，原继续计薪路径保留。
+
+| 候选针对性测试类 | 项数 | 失败/错误/跳过 |
+|---|---|---|
+| `IdleReconfigurationTest` | 11 | 0/0/0 |
+| `PayrollPaymentPauseIntegrationTest` | 2 | 0/0/0 |
+| `ProductionIntegrationTest` | 19 | 0/0/0 |
+| `ProductionSettlementOptimizationTest` | 12 | 0/0/0 |
+| `ProductionTickOptimizationTest` | 19 | 0/0/0 |
+
+本轮新增 11 项只存在于归档补丁：空闲无 Pending；Pending PM；Pending Staffing=0/7；共享供给与部分招聘一次消费/新请求立即生效；RECOVERY；旧段余数与新工资率；每建筑 Tick 写入失败、重试及完整检查点安装；提交前/后回执未知的新连接核验；1201 Tick 原完整重配置与候选经济最终事实等价。原测试同时覆盖运行中冻结与延迟生效、同 Tick 完工、Tick1200 真付款、欠薪及部分付款/MANUAL 恢复、BLOCKED 继续计薪。
+
+候选针对性命令 test --tests *IdleReconfigurationTest --tests *ProductionTickOptimizationTest --tests *ProductionSettlementOptimizationTest --tests *PayrollPaymentPauseIntegrationTest --tests *ProductionIntegrationTest：**63 项、0 失败/错误/跳过，3m30s**。撤回后又执行原 ProductionTickOptimizationTest：**19 项、0 失败/错误/跳过，6s**。没有删改原 688 项的任何源码/断言。
+
+IDE logpoint 尝试两次，后续取事件时会话均已消失，没有有效运行值；已清理自身 logpoints，保留用户断点原状态。诊断结论来自真实 SQLite 测试和已有 EconomyDiagnostics，不把调试器没有输出当成未执行证据。
+
+### 13.5 有限 A/B 方法和完整数据
+
+只有下列六个独立 JVM/隔离世界：参考 idle16→候选 idle16→候选 active16→参考 active16→参考 active32→候选 active32。每次 150 Tick 预热、1300 Tick 样本；总 7800 Tick；没有复跑、校准、额外空世界或筛选最好轮。参考由 git archive 提取原 4ccf5112，未加优化/新探针；双方复用原工具及默认开启诊断，压力存档间隔同为 200（测试参数，非正式存档规则），完整生产、工资和付款全部运行。六个实际 NeoForge perf 验收标记均 PASSED。
+
+硬件/环境：i7-12700（12核/20线程）、约16GB RAM、Windows11 10.0.26200、JDK21.0.12；服务端最大堆约4GB；HP 推荐电源方案未更改；测试开始可用内存约3.13GiB。工作区 C: 位于 NVMe WDC PC SN530；另有 SATA HDD，不据设备列表推定 DB 被写到 HDD。SQLite 运行时共享内存，检查点 DELETE/FULL，无降级。没有同时执行自有构建/另一服务器压力负载；IDE及外部后台仍在，未锁频、未记录逐栈 JFR/GC/JIT/调度轨迹。
+
+以下单位 ms；每行属于唯一一次运行，不能用本组建立跨 JVM 可重复性。原始完整汇总见 [create-experiment-results.json](task-p/create-experiment-results.json)，顺序、环境、哈希及测试证据见 [create-experiment-evidence.json](task-p/create-experiment-evidence.json)。
+
+| 版本/场景 | 均值 | p50 | p95 | p99 | 最大 | VE 均值 | VE 占比 |
+|---|---|---|---|---|---|---|---|
+| 参考/idle16 | 19.618 | 17.649 | 22.727 | 52.639 | 327.264 | 19.110 | 97.410% |
+| 候选/idle16 | 14.445 | 13.120 | 16.866 | 41.988 | 141.639 | 13.979 | 96.778% |
+| 参考/active16 | 13.766 | 11.896 | 16.419 | 84.602 | 153.475 | 13.216 | 96.003% |
+| 候选/active16 | 13.554 | 11.857 | 15.595 | 55.098 | 293.096 | 13.131 | 96.882% |
+| 参考/active32 | 25.135 | 22.417 | 29.187 | 127.833 | 252.871 | 24.617 | 97.939% |
+| 候选/active32 | 11.987 | 10.950 | 15.248 | 31.082 | 120.656 | 11.672 | 97.368% |
+
+非原版保存 Tick（normalTicks）如下；该旧指标仍可能包含结算或工资边界，不能冒充完全无事件的普通 Tick 独立分布。完全 ordinary 的 SQL/事务分类另列。
+
+| 版本/场景 | N | 均值 | p95 | p99 | 最大 |
+|---|---|---|---|---|---|
+| 参考/idle16 | 1293 | 19.395 | 22.347 | 40.135 | 327.264 |
+| 候选/idle16 | 1293 | 14.213 | 16.687 | 24.245 | 141.639 |
+| 参考/active16 | 1293 | 13.504 | 16.217 | 84.602 | 153.475 |
+| 候选/active16 | 1293 | 13.369 | 15.531 | 55.098 | 293.096 |
+| 参考/active32 | 1293 | 24.926 | 29.047 | 129.426 | 252.871 |
+| 候选/active32 | 1293 | 11.863 | 15.021 | 19.172 | 120.656 |
+
+同步结算单独分布如下，active 每版仅 7 个结算 Tick，不能凭全局 p99 掩盖这少于 1% 的尖峰。
+
+| 版本/场景 | 结算 N | 均值 | p95 / p99 | 最大 |
+|---|---|---|---|---|
+| 参考/idle16 | 0 | 不适用 | 不适用 | 不适用 |
+| 候选/idle16 | 0 | 不适用 | 不适用 | 不适用 |
+| 参考/active16 | 7 | 94.620 | 118.543 / 118.543 | 118.543 |
+| 候选/active16 | 7 | 124.167 | 293.096 / 293.096 | 293.096 |
+| 参考/active32 | 7 | 178.003 | 252.871 / 252.871 | 252.871 |
+| 候选/active32 | 7 | 89.218 | 120.656 / 120.656 | 120.656 |
+
+### 13.6 工作量、CPU 和检查点
+
+| 版本/场景 | SQL 读取/Tick | DML/Tick | 管理事务/Tick | Batch 解码总数 | 库存解码总数 | 快速路径命中 |
+|---|---|---|---|---|---|---|
+| 参考/idle16 | 635.552 | 35.117 | 23.008 | 0 | 0 | 0 |
+| 候选/idle16 | 427.552 | 35.117 | 23.008 | 0 | 0 | 20800 |
+| 参考/active16 | 338.087 | 51.978 | 24.042 | 42320 | 672 | 0 |
+| 候选/active16 | 338.087 | 51.978 | 24.042 | 42320 | 672 | 0 |
+| 参考/active32 | 648.770 | 100.951 | 41.076 | 84640 | 1344 | 0 |
+| 候选/active32 | 648.770 | 100.951 | 41.076 | 84640 | 1344 | 0 |
+
+参考/候选的 active16、active32：SELECT、DML、物理事务、Batch/库存编解码总数逐项完全相同，快速路径命中均为 0。idle16 的 20800 次命中节省 270400 SELECT（208/Tick，整体 -32.727%），DML/事务/JSON 不变；依然完整解析 PM、加载 Staffing，没有缓存这两份权威。
+
+| 版本/场景 | 类别 | N | SELECT/Tick | DML/Tick | 事务/Tick |
+|---|---|---|---|---|---|
+| 参考/idle16 | ordinary | 1292 | 635.000 | 35.000 | 23.000 |
+| 参考/idle16 | settlement | 0 | 不适用 | 不适用 | 不适用 |
+| 参考/idle16 | payroll | 1 | 862.000 | 187.000 | 27.000 |
+| 参考/idle16 | save | 7 | 705.000 | 35.000 | 24.000 |
+| 候选/idle16 | ordinary | 1292 | 427.000 | 35.000 | 23.000 |
+| 候选/idle16 | settlement | 0 | 不适用 | 不适用 | 不适用 |
+| 候选/idle16 | payroll | 1 | 654.000 | 187.000 | 27.000 |
+| 候选/idle16 | save | 7 | 497.000 | 35.000 | 24.000 |
+| 参考/active16 | ordinary | 1285 | 330.402 | 51.000 | 23.000 |
+| 参考/active16 | settlement | 7 | 1654.429 | 211.000 | 215.000 |
+| 参考/active16 | payroll | 1 | 558.000 | 203.000 | 27.000 |
+| 参考/active16 | save | 7 | 401.000 | 51.000 | 24.000 |
+| 候选/active16 | ordinary | 1285 | 330.402 | 51.000 | 23.000 |
+| 候选/active16 | settlement | 7 | 1654.429 | 211.000 | 215.000 |
+| 候选/active16 | payroll | 1 | 558.000 | 203.000 | 27.000 |
+| 候选/active16 | save | 7 | 401.000 | 51.000 | 24.000 |
+| 参考/active32 | ordinary | 1285 | 633.805 | 99.000 | 39.000 |
+| 参考/active32 | settlement | 7 | 3281.857 | 419.000 | 423.000 |
+| 参考/active32 | payroll | 1 | 1054.000 | 395.000 | 43.000 |
+| 参考/active32 | save | 7 | 705.000 | 99.000 | 40.000 |
+| 候选/active32 | ordinary | 1285 | 633.805 | 99.000 | 39.000 |
+| 候选/active32 | settlement | 7 | 3281.857 | 419.000 | 423.000 |
+| 候选/active32 | payroll | 1 | 1054.000 | 395.000 | 43.000 |
+| 候选/active32 | save | 7 | 705.000 | 99.000 | 40.000 |
+
+以下现有 stage 为包含式墙钟及当前线程 CPU；CPU 在 Windows 下计时较粗，累计值不等于整个 JVM CPU，阶段之间不能相加。没有尝试用探针关闭校准来寻找好看的结果。
+
+| 版本/场景 | processTick 均值 | 阶段累计 CPU | PM load 均值 |
+|---|---|---|---|
+| 参考/idle16 | 1.009 | 19234.375 | 0.050 |
+| 候选/idle16 | 0.688 | 13093.750 | 0.049 |
+| 参考/active16 | 0.608 | 11484.375 | 0.074 |
+| 候选/active16 | 0.598 | 11609.375 | 0.082 |
+| 参考/active32 | 0.589 | 22093.750 | 0.064 |
+| 候选/active32 | 0.279 | 11328.125 | 0.034 |
+
+检查点指标继续保留，后台作业包括引导、预热和最终验收 flush，不是每 Tick 作业数；整图写事务包含清理，不等于纯 fsync。
+
+| 版本/场景 | 捕获 N/均值/最大 | 全程磁盘作业数 | 最大整图写事务 | 最大作业总耗时 |
+|---|---|---|---|---|
+| 参考/idle16 | 7 / 4.605 / 6.717 | 8 | 45.182 | 133.437 |
+| 候选/idle16 | 7 / 5.503 / 11.514 | 8 | 25.776 | 95.674 |
+| 参考/active16 | 7 / 5.778 / 8.089 | 8 | 34.331 | 103.425 |
+| 候选/active16 | 7 / 5.632 / 8.223 | 8 | 22.637 | 112.198 |
+| 参考/active32 | 7 / 8.083 / 10.627 | 8 | 38.628 | 161.988 |
+| 候选/active32 | 7 / 3.496 / 5.063 | 8 | 22.517 | 105.728 |
+
+### 13.7 事实、推断、未证实原因与停止
+
+**事实：** idle16 观察均值 19.618→14.445（名义 -26.37%），SELECT 635.552→427.552；active16 结算均值 94.620→124.167、结算最大 118.543→293.096，出现不利尾部。active32 未命中候选、工作量相同，却观察均值 25.135→11.987（名义 -52.31%）。所有版本仍有 >50ms 峰值。没有 active32 回退，不声称触发停止条件5；触发的是稳定收益证据不足（4）和六次上限（8）。
+
+**合理推断：** 运行环境/JVM 成本存在重要变动，不能把 active32 的下降归功于“跳过空闲重配置”，也不能把 idle16 的全部名义收益当成候选收益。方法体变化本身也可能影响 JIT；工作量相同不证明机器执行成本绝对相同。**未证实：** 本次没有证据定位到某次 GC、具体 JIT 去优化、CPU 热/频率或 Windows 调度，不把这些可能性写成根因。
+
+因此停止编码和性能运行，撤回自己的候选及新测试到原已验基线，仅归档补丁供审查；不否定查询减少和无变化假设的诊断价值，也不宣称性能因果通过或失败。没有为了 50ms 改业务时序。工作包 P 性能验收仍未通过。
+
+### 13.8 最终交付及后续审查边界
+
+本轮最终变更只有六个文档/证据文件：本报告、第13节对应的 [决策报告](VE-Task-P-Create借鉴与后续决策.md)、task-p/README.md、task-p/create-experiment-results.json、task-p/create-experiment-evidence.json、task-p/create-candidate.patch。正式源码/测试源码/Schema/检查点均没有差异。
+
+因为最终不保留候选，本轮没有重跑完整 test build，也没有重新宣称正常停服、独立重启和强制崩溃全套验收通过；完整688项及保存/崩溃恢复仍引用第12节已验基线。本轮实际是候选63项、恢复原版19项、6次NeoForge perf。遵守“不保留正式代码时无需重跑大型验收”的工作量门禁；未推送，本地证据不能代替新的 GitHub Actions。
+
+真实世界仅做文件哈希，仍为 3250D82E8EB2C156211D924A2F8A40A2B018146AB983313F1A09C8D5EC681AE8，WAL 不存在；未用 SQLite 打开真实世界。没有 commit、push、merge、reset 或 E-Final。
+
+建议 ChatGPT 下一步审查：①补丁的“无变化”证明是否完整，特别是未来工资率/身份修改路径；②是否愿意仅凭减少查询保留小优化，或先批准带负对照及 GC/JIT/调度证据的另一轮严格限额实验；③将空闲开销和同步结算尖峰作为不同问题讨论。持续生产尖峰没有被本候选解决。静态配方复用、版本化变化通知或事务阶段调整仅是后续候选，本轮均未实施。

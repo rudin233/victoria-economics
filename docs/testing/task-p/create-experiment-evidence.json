@@ -1,0 +1,341 @@
+{
+  "baseline": "4ccf5112ba698b918189636361eb0b5178f52af8",
+  "branch": "refactor/m1-0-sqlite-transaction-cleanup",
+  "initialWorktree": "clean",
+  "create": {
+    "branch": "mc1.21.1/dev",
+    "sha": "7ff2760e4924d35d4bc2e22c4b19923f0178cd16",
+    "sources": [
+      {
+        "name": "DeferralBehaviour",
+        "path": "foundation/blockEntity/behaviour/simple/DeferralBehaviour.java",
+        "principle": "请求合并；回调成功才清除待处理标记。该实现把标记写 NBT，VE 不照搬为第二权威。",
+        "url": "https://github.com/Creators-of-Create/Create/blob/7ff2760e4924d35d4bc2e22c4b19923f0178cd16/src/main/java/com/simibubi/create/foundation/blockEntity/behaviour/simple/DeferralBehaviour.java",
+        "sha256": "7660070abb337f5e36955abe8ceb75bf47acb7f65fe5390709400338627fce56"
+      },
+      {
+        "name": "KineticNetwork",
+        "path": "content/kinetics/KineticNetwork.java",
+        "principle": "聚合结果改变才同步；update 方法仍计算聚合，不声称其所有计算都只在变化时发生。成员/区块规则不适合 VE。",
+        "url": "https://github.com/Creators-of-Create/Create/blob/7ff2760e4924d35d4bc2e22c4b19923f0178cd16/src/main/java/com/simibubi/create/content/kinetics/KineticNetwork.java",
+        "sha256": "47e4f0b0252c2bc98b2896665b7e639cb181e76c3d38ef9a6f98bdb0ec68b734"
+      },
+      {
+        "name": "RecipeFinder",
+        "path": "foundation/recipe/RecipeFinder.java",
+        "principle": "静态条件缓存与后续动态筛选分离，资源重载清空静态结果。",
+        "url": "https://github.com/Creators-of-Create/Create/blob/7ff2760e4924d35d4bc2e22c4b19923f0178cd16/src/main/java/com/simibubi/create/foundation/recipe/RecipeFinder.java",
+        "sha256": "1c15c349136704332b8449a29a39056d4780923a8f2be58ac5d4d31932a439ec"
+      },
+      {
+        "name": "RecipeTrieFinder",
+        "path": "foundation/recipe/trie/RecipeTrieFinder.java",
+        "principle": "复用静态配方索引，重载失效；不代表库存预留或工资状态可以缓存。",
+        "url": "https://github.com/Creators-of-Create/Create/blob/7ff2760e4924d35d4bc2e22c4b19923f0178cd16/src/main/java/com/simibubi/create/foundation/recipe/trie/RecipeTrieFinder.java",
+        "sha256": "704b6ab31a8dece8466f060669b1fb42aa7605aa6ebc879839a552e24f3ff836"
+      },
+      {
+        "name": "BasinOperatingBlockEntity",
+        "path": "content/processing/basin/BasinOperatingBlockEntity.java",
+        "principle": "连续加工复用配方前再次匹配动态输入，apply 成功后通知内容变化；不能把配方匹配当成财务事务。",
+        "url": "https://github.com/Creators-of-Create/Create/blob/7ff2760e4924d35d4bc2e22c4b19923f0178cd16/src/main/java/com/simibubi/create/content/processing/basin/BasinOperatingBlockEntity.java",
+        "sha256": "73151b8dec56e59b23a0bf8b9b0e6bdab22dfb14b31f96ddd43b2accb5c602f6"
+      }
+    ]
+  },
+  "limits": {
+    "fullPerformanceRuns": 6,
+    "maximum": 6,
+    "calibrationRuns": 0,
+    "secondStrategy": false
+  },
+  "runs": [
+    {
+      "Tree": "C:\\Users\\A103-2\\IdeaProjects\\victoria-economics\\build\\task-p-create\\reference",
+      "Label": "createRef",
+      "Scenario": "idle16",
+      "Started": "2026-10-21T22:32:12.2456728+08:00",
+      "State": "PASSED",
+      "Finished": "2026-10-21T22:33:11.7020787+08:00"
+    },
+    {
+      "Tree": "C:/Users/A103-2/IdeaProjects/victoria-economics",
+      "Label": "createCandidate",
+      "Scenario": "idle16",
+      "Started": "2026-10-21T22:33:11.7177745+08:00",
+      "State": "PASSED",
+      "Finished": "2026-10-21T22:34:02.8958030+08:00"
+    },
+    {
+      "Tree": "C:/Users/A103-2/IdeaProjects/victoria-economics",
+      "Label": "createCandidate",
+      "Scenario": "active16",
+      "Started": "2026-10-21T22:34:02.8958030+08:00",
+      "State": "PASSED",
+      "Finished": "2026-10-21T22:34:51.2507514+08:00"
+    },
+    {
+      "Tree": "C:\\Users\\A103-2\\IdeaProjects\\victoria-economics\\build\\task-p-create\\reference",
+      "Label": "createRef",
+      "Scenario": "active16",
+      "Started": "2026-10-21T22:34:51.2665241+08:00",
+      "State": "PASSED",
+      "Finished": "2026-10-21T22:35:39.2594055+08:00"
+    },
+    {
+      "Tree": "C:\\Users\\A103-2\\IdeaProjects\\victoria-economics\\build\\task-p-create\\reference",
+      "Label": "createRef",
+      "Scenario": "active32",
+      "Started": "2026-10-21T22:35:39.2750883+08:00",
+      "State": "PASSED",
+      "Finished": "2026-10-21T22:36:45.7221163+08:00"
+    },
+    {
+      "Tree": "C:/Users/A103-2/IdeaProjects/victoria-economics",
+      "Label": "createCandidate",
+      "Scenario": "active32",
+      "Started": "2026-10-21T22:36:45.7221163+08:00",
+      "State": "PASSED",
+      "Finished": "2026-10-21T22:37:30.1990963+08:00"
+    }
+  ],
+  "candidate": {
+    "retained": false,
+    "productionPaths": [
+      "src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionBoundaryCoordinator.java"
+    ],
+    "testPaths": [
+      "src/test/java/com/bbmurloc/victoriaeconomics/server/production/application/IdleReconfigurationTest.java"
+    ],
+    "patch": "create-candidate.patch",
+    "patchSha256": "8061878cd01a4f6a6ba67df77b75d80e64024b7a43279dd14f04fece1539b36b",
+    "reverseCheckPassed": true,
+    "patchReproductionDryRunPassed": true,
+    "formalSourceDiff": ""
+  },
+  "tests": {
+    "candidateTargeted": {
+      "tests": 63,
+      "failures": 0,
+      "skipped": 0,
+      "suites": [
+        {
+          "name": "com.bbmurloc.victoriaeconomics.server.production.application.IdleReconfigurationTest",
+          "tests": 11,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "sha256": "37dd9de916a9549af45338331d30f364b168d4454e5ec9b0eceb952231662a52",
+          "cases": [
+            "com.bbmurloc.victoriaeconomics.server.production.application.IdleReconfigurationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.IdleReconfigurationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.IdleReconfigurationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.IdleReconfigurationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.IdleReconfigurationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.IdleReconfigurationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.IdleReconfigurationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.IdleReconfigurationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.IdleReconfigurationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.IdleReconfigurationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.IdleReconfigurationTest"
+          ]
+        },
+        {
+          "name": "com.bbmurloc.victoriaeconomics.server.production.application.PayrollPaymentPauseIntegrationTest",
+          "tests": 2,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "sha256": "f7edf982a18314b8dcc313bb95d2ec118aa241b89823e14ae1dffc08b86c14ee",
+          "cases": [
+            "com.bbmurloc.victoriaeconomics.server.production.application.PayrollPaymentPauseIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.PayrollPaymentPauseIntegrationTest"
+          ]
+        },
+        {
+          "name": "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+          "tests": 19,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "sha256": "385d31d7eb36036ecb753f3c99dcb8c42ba00f6c344c529124b28a67c2582084",
+          "cases": [
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionIntegrationTest"
+          ]
+        },
+        {
+          "name": "com.bbmurloc.victoriaeconomics.server.production.application.ProductionSettlementOptimizationTest",
+          "tests": 12,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "sha256": "f18de4ea910af4c5fc9b5e67cae9edf16bfd74941b902fe9b43ef89e09cbfd47",
+          "cases": [
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionSettlementOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionSettlementOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionSettlementOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionSettlementOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionSettlementOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionSettlementOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionSettlementOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionSettlementOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionSettlementOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionSettlementOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionSettlementOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionSettlementOptimizationTest"
+          ]
+        },
+        {
+          "name": "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+          "tests": 19,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0,
+          "sha256": "aa7ca1112bc55a3198a75f059877a5b34653ba09bcff01da2458d482f5e55ce8",
+          "cases": [
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest",
+            "com.bbmurloc.victoriaeconomics.server.production.application.ProductionTickOptimizationTest"
+          ]
+        }
+      ]
+    },
+    "restoredBaseline": {
+      "tests": 19,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "logSha256": "51289a1a5f9204c1493139af5863bd13adb130ee9f13b304cbb620b7ba763a3b"
+    },
+    "baselineFullRegression": {
+      "tests": 688,
+      "rerunThisExperiment": false,
+      "evidence": "resume-evidence.json"
+    },
+    "finalLargeValidation": "Not rerun: the candidate was removed and all formal sources match the previously verified baseline."
+  },
+  "diagnostic": {
+    "baseline": "Idle diagnostic: {production.execution.load.json.batch.decode=0, production.methods.load.sql.dml=0, production.processTick.json.batch.reused=0, production.processTick.inventory.receipts.decoded=0, production.processTick.tx.savepoint=0, tx.withDml=1, production.execution.save.json.batch.encode=0, production.execution.save.json.inventory.decode=0, production.processTick.json.inventory.decode=0, production.execution.load.sql.dml=0, production.execution.save.sql.read=2, sql.read=35, production.processTick.sql.dml=1, production.execution.save.tx.physical=0, production.execution.save.tx.savepoint=0, repository.execution.read=1, production.execution.load.repository.execution.read=0, production.methods.load.json.batch.encode=0, production.execution.load.json.batch.reused=0, production.execution.load.json.inventory.encode=0, production.execution.save.sql.dml=1, production.methods.load.repository.methods.read=0, production.execution.save.json.batch.decode=0, production.execution.save.json.batch.reused=0, tx.physical=1, production.methods.load.tx.physical=0, production.methods.load.repository.execution.read=0, production.methods.load.json.batch.decode=0, repository.methods.read=1, production.execution.load.json.inventory.decode=0, production.execution.save.repository.execution.read=0, sql.dml=1, production.processTick.sql.read=35, production.execution.load.inventory.receipts.decoded=0, production.processTick.json.batch.encode=0, production.methods.load.sql.read=1, production.methods.load.tx.savepoint=0, production.execution.load.tx.physical=0, production.methods.load.json.batch.reused=0, tx.write.withDml=1, production.execution.load.sql.read=2, production.methods.load.json.inventory.encode=0, production.processTick.tx.physical=1, production.processTick.json.batch.decode=0, production.processTick.repository.execution.read=1, production.execution.save.repository.methods.read=0, production.methods.load.inventory.receipts.decoded=0, production.execution.load.json.batch.encode=0, production.processTick.repository.methods.read=1, production.execution.load.tx.savepoint=0, production.methods.load.json.inventory.decode=0, production.execution.load.repository.methods.read=0, production.execution.save.json.inventory.encode=0, production.processTick.json.inventory.encode=0, production.execution.save.inventory.receipts.decoded=0}\nIdle regional queries: [SELECT total_supply,revision FROM regional_labor_supply WHERE region_id=? AND occupation_id=?, SELECT total_supply,revision FROM regional_labor_supply WHERE region_id=? AND occupation_id=?]\n\r\n",
+    "candidate": "Idle diagnostic: {production.processTick.json.inventory.decode=0, production.execution.save.sql.read=2, production.processTick.tx.physical=1, production.processTick.json.batch.encode=0, production.execution.load.repository.methods.read=0, sql.read=22, production.processTick.json.inventory.encode=0, production.execution.load.tx.savepoint=0, tx.write.withDml=1, tx.withDml=1, production.methods.load.repository.methods.read=0, production.execution.save.json.inventory.decode=0, production.execution.save.tx.savepoint=0, production.processTick.sql.dml=1, production.processTick.inventory.receipts.decoded=0, production.execution.save.json.inventory.encode=0, sql.dml=1, production.methods.load.json.batch.decode=0, production.execution.save.repository.methods.read=0, production.methods.load.sql.dml=0, production.execution.load.json.batch.reused=0, production.methods.load.json.batch.encode=0, production.execution.save.tx.physical=0, production.execution.save.repository.execution.read=0, production.execution.load.json.inventory.decode=0, tx.physical=1, repository.execution.read=1, production.execution.save.json.batch.reused=0, production.execution.load.sql.read=2, production.execution.save.json.batch.decode=0, production.execution.load.json.inventory.encode=0, production.methods.load.tx.savepoint=0, production.methods.load.sql.read=1, production.methods.load.inventory.receipts.decoded=0, production.execution.save.json.batch.encode=0, production.methods.load.repository.execution.read=0, production.execution.load.tx.physical=0, production.execution.load.repository.execution.read=0, production.methods.load.json.inventory.decode=0, production.processTick.sql.read=22, production.execution.load.json.batch.decode=0, production.methods.load.json.inventory.encode=0, production.execution.load.sql.dml=0, production.processTick.json.batch.reused=0, production.execution.load.json.batch.encode=0, production.execution.save.sql.dml=1, production.processTick.repository.execution.read=1, production.idle.noChange=1, production.processTick.tx.savepoint=0, production.execution.save.inventory.receipts.decoded=0, production.methods.load.tx.physical=0, repository.methods.read=1, production.methods.load.json.batch.reused=0, production.execution.load.inventory.receipts.decoded=0, production.processTick.json.batch.decode=0, production.processTick.repository.methods.read=1}\nIdle regional queries: []\n\r\n",
+    "singleIdleSqlReads": [
+      35,
+      22
+    ],
+    "physicalTransactions": [
+      1,
+      1
+    ],
+    "dml": [
+      1,
+      1
+    ],
+    "note": "One diagnostic case before implementation; the candidate case was also retained as a correctness test inside the archived patch."
+  },
+  "environment": {
+    "Captured": "2026-10-21T22:32:08.7463759+08:00",
+    "Baseline": "4ccf5112ba698b918189636361eb0b5178f52af8",
+    "CPU": {
+      "Name": "12th Gen Intel(R) Core(TM) i7-12700",
+      "NumberOfCores": 12,
+      "NumberOfLogicalProcessors": 20,
+      "LoadPercentage": 0
+    },
+    "OS": {
+      "Caption": "Microsoft Windows 11 家庭版 中文版",
+      "Version": "10.0.26200",
+      "TotalVisibleMemorySize": 16457100,
+      "FreePhysicalMemory": 3279672
+    },
+    "Power": "电源方案 GUID: 48684d4a-8524-4093-8a63-ea7132b79c1c  (HP 推荐)",
+    "Java": "java.exe : java version \"21.0.12\" 2026-07-21 LTS\r\n所在位置 行:5 字符: 352\r\n+ ... ;Power=(powercfg /getactivescheme);Java=(& java -version 2>&1 | Out-S ...\r\n+                                              ~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : NotSpecified: (java version \"21.0.12\" 2026-07-21 LTS:String) [], RemoteException\r\n    + FullyQualifiedErrorId : NativeCommandError\r\n \r\nJava(TM) SE Runtime Environment (build 21.0.12+7-LTS-205)\r\nJava HotSpot(TM) 64-Bit Server VM (build 21.0.12+7-LTS-205, mixed mode, sharing)\r\n",
+    "Disk": [
+      {
+        "FriendlyName": "NVMe WDC PC SN530 SDBPNPZ-256G-1006",
+        "MediaType": "SSD",
+        "BusType": "NVMe"
+      },
+      {
+        "FriendlyName": "TOSHIBA DT01ACA100",
+        "MediaType": "HDD",
+        "BusType": "SATA"
+      }
+    ],
+    "Patch": "BDC45D4A603D3BA9D1D755D7503C30E961E3EB5F9B90A82437BC6EF5F1121C05",
+    "Reference": "8119E068900CDD6621E435295490DD16EB8E05A6453941F4D084D51C2CF55A84"
+  },
+  "realWorldProtection": {
+    "sha256": "3250d82e8eb2c156211d924a2f8a40a2b018146ab983313f1a09c8d5ec681ae8",
+    "walExists": false,
+    "operation": "File hash only; never opened this real world with SQLite"
+  },
+  "debugger": {
+    "attempts": 2,
+    "usableRuntimeEvents": false,
+    "reason": "Both IDE-launched sessions disappeared before a later DRAIN_EVENTS; a same-call initial drain was empty. No conclusions were based on missing logpoint output.",
+    "agentBreakpointsRemoved": true,
+    "userBreakpointsUnchanged": true
+  },
+  "conclusion": {
+    "stablePerformanceBenefit": "uncertain",
+    "performanceAccepted": false,
+    "candidateKept": false,
+    "stopConditions": [
+      4,
+      8
+    ],
+    "eFinalStarted": false
+  },
+  "logs": {
+    "diagnosisSha256": "5c48ac2f0edfafaca2093f573e11617cbb80ca2b23b667c8fb9144fdf698791c",
+    "targetedSha256": "e9d15cfe5f6eb2aea56b0025a38607fe97f13d9faf74fd6829e0fa69c6f0c99c",
+    "comparisonSha256": "bd12f208086cd017267278d1b4c81f9af47e345705b322a86504e5ef79445f87"
+  },
+  "finalSourceVerification": {
+    "head": "4ccf5112ba698b918189636361eb0b5178f52af8",
+    "sourceStatus": "",
+    "rawBlob": "d1ff0569e96a2c330caf790a40af25f6348cb5f6",
+    "baselineBlob": "d1ff0569e96a2c330caf790a40af25f6348cb5f6"
+  },
+  "finalFiles": [
+    "M docs/testing/VE-Task-P-经济Tick性能诊断与优化验收.md",
+    " M docs/testing/task-p/README.md",
+    "?? docs/testing/VE-Task-P-Create借鉴与后续决策.md",
+    "?? docs/testing/task-p/create-candidate.patch",
+    "?? docs/testing/task-p/create-experiment-evidence.json",
+    "?? docs/testing/task-p/create-experiment-results.json"
+  ]
+}

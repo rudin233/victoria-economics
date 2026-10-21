@@ -1,0 +1,256 @@
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionBoundaryCoordinator.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionBoundaryCoordinator.java
+index d1ff056..a878814 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionBoundaryCoordinator.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionBoundaryCoordinator.java
+@@ -156,15 +156,18 @@ public final class ProductionBoundaryCoordinator {
+      */
+     public TickResult processTick(UUID id,long tick){try(var measurement=EconomyDiagnostics.stage("production.processTick")){return write(tx->advance(tx,id,tick,true));}}
+     private TickResult advance(SqliteTransactions.WriteSession tx,UUID id,long tick,boolean completeSimple)throws SQLException{
+-        if(tick!=SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick())throw new IllegalArgumentException("Only accepted economic Tick may advance production");
++        var time=SqliteEconomicTimeRepository.inTransaction(connection,tx);
++        if(tick!=time.acceptedTick())throw new IllegalArgumentException("Only accepted economic Tick may advance production");
+         var b=live(tx,id);var executionRepository=executions.inTransaction(tx);var e=executionRepository.load(id);
+         if(e.processingTick()==null&&e.lastCompletedTick()>=tick)return TickResult.ALREADY_COMPLETED;
+         // An existing marker can represent a start born in this Tick or unfinished external work.
+         if(!e.beginTick(tick))return TickResult.NEEDS_FOLLOW_UP;
+         boolean held=SqliteBuildingLifecycleOperationRepository.holds(connection,tx,id);
++        State payrollState=null;
+         if(held)e.terminate();
+         else{
+             State state=wages.inTransaction(tx,id,b.ownerCompanyId());
++            payrollState=state;
+             for(var reason:List.of(ProductionExecution.PauseReason.PAYROLL_ARREARS,ProductionExecution.PauseReason.PAYROLL_RECOVERY,ProductionExecution.PauseReason.PAYROLL_UNAVAILABLE))e.resume(reason);
+             switch(state){
+                 case ARREARS->e.pause(ProductionExecution.PauseReason.PAYROLL_ARREARS);
+@@ -180,7 +183,11 @@ public final class ProductionBoundaryCoordinator {
+             else if(e.batch()==null&&!e.automatic()){
+                 if(!held){
+                     var m=methods.inTransaction(tx).load(id);
+-                    reconfigure(tx,id,e,m,m.configurationRevision(),staffing.inTransaction(tx).load(id),executionRepository);
++                    var staff=staffing.inTransaction(tx).load(id);
++                    if(time.payrollCaughtUp()&&(payrollState==State.CURRENT||payrollState==State.ARREARS)
++                            &&idleConfigurationUnchanged(tx,b,tick,m,staff))
++                        EconomyDiagnostics.count("production.idle.noChange");
++                    else reconfigure(tx,id,e,m,m.configurationRevision(),staff,executionRepository);
+                     finished=true;
+                 }else{
+                     var op=new SqliteBuildingLifecycleOperationRepository(connection,lock).inTransaction(tx).forBuilding(id).orElseThrow();
+@@ -192,6 +199,24 @@ public final class ProductionBoundaryCoordinator {
+         executionRepository.save(e,e.executionRevision());
+         return finished?TickResult.COMPLETED:TickResult.NEEDS_FOLLOW_UP;
+     }
++    /**
++     * A proof about this IMMEDIATE session, never a cached readiness flag. The caller has checked
++     * lifecycle, StartIntent and boundary. Keep aggregate validation (including PM capacity), and
++     * only omit reconfiguration if its payroll and employment effects would all be no-ops.
++     * Pending, incomplete payroll and every resource boundary retain the original protocol.
++     */
++    private boolean idleConfigurationUnchanged(SqliteTransactions.WriteSession tx,EconomicBuilding building,long tick,
++                                                ProductionMethodConfiguration m,BuildingStaffing staff)throws SQLException{
++        if(m.pending().isPresent()||!staff.pending().isEmpty())return false;
++        var capped=StaffingTransition.forCapacity(staff,m.recipe().requiredWorkers()).after();
++        if(!capped.employed().equals(staff.employed()))return false;
++        var repo=payroll.inTransaction(tx);var segment=repo.currentForBuilding(building.getId());
++        if(segment.lastAccruedTick()!=tick)return false;
++        if(!repo.currencyForRegion(building.regionId()).equals(segment.currency()))
++            throw new IllegalStateException("Regional wage currency mismatch");
++        repo.validateEmployees(segment);
++        return true;
++    }
+     private boolean noStartIntent(SqliteTransactions.WriteSession tx,UUID id)throws SQLException{
+         return tx.perform(()->{
+             try(var s=connection.prepareStatement("SELECT 1 FROM production_start_intents WHERE building_id=?")){
+diff --git a/src/test/java/com/bbmurloc/victoriaeconomics/server/production/application/IdleReconfigurationTest.java b/src/test/java/com/bbmurloc/victoriaeconomics/server/production/application/IdleReconfigurationTest.java
+new file mode 100644
+--- /dev/null
++++ b/src/test/java/com/bbmurloc/victoriaeconomics/server/production/application/IdleReconfigurationTest.java
+@@ -0,0 +1,189 @@
++package com.bbmurloc.victoriaeconomics.server.production.application;
++
++import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
++import com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository;
++import com.bbmurloc.victoriaeconomics.server.storage.sqlite.*;
++import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionExecutionRepository;
++import com.bbmurloc.victoriaeconomics.server.workforce.domain.BuildingStaffing;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.io.TempDir;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++import java.nio.file.Path;
++import java.sql.DriverManager;
++import java.util.*;
++import static org.junit.jupiter.api.Assertions.*;
++
++class IdleReconfigurationTest {
++    @TempDir Path directory;
++
++    @Test void idleTickWithoutPendingPreservesEmploymentAndAccruedWages() throws Exception {
++        try (var e = new TestEconomy(directory.resolve("idle.sqlite"), true)) {
++            new SqliteEconomicTimeRepository(e.connection, e.lock).acceptNext(0);
++            e.accrual.recoverAcceptedTime();
++            var commands = new ArrayList<String>(); e.faults.beforeSql = commands::add;
++            try (var recording = EconomyDiagnostics.start()) {
++                assertEquals(ProductionBoundaryCoordinator.TickResult.COMPLETED, e.coordinator.processTick(e.id, 1));
++                System.out.println("Idle diagnostic: " + recording.snapshot().counts());
++                System.out.println("Idle regional queries: " + commands.stream().filter(s -> s.contains("regional_labor_supply") || s.contains("SUM(")).toList());
++                assertEquals(1, recording.snapshot().counts().get("production.idle.noChange"));
++                assertTrue(commands.stream().noneMatch(s -> s.contains("regional_labor_supply") || s.contains("SUM(")));
++            }
++            assertEquals(14, e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));
++            assertEquals(1, e.scalar("SELECT last_accrued_tick FROM payroll_accruals WHERE closed_tick IS NULL"));
++            assertEquals(1, e.execution().lastCompletedTick()); assertNull(e.execution().batch());
++        }
++    }
++
++    @Test void pendingPmStillCutsOffWagesCapsStaffingAndAppliesInThisTick() throws Exception {
++        try (var e = new TestEconomy(directory.resolve("pm.sqlite"), true)) {
++            pendingPm(e); accept(e, 0, true);
++            try (var recording = EconomyDiagnostics.start()) {
++                e.coordinator.processTick(e.id, 1);
++                assertEquals(0L, recording.snapshot().counts().getOrDefault("production.idle.noChange", 0L));
++            }
++            assertEquals("reduced_tools", e.methods().effective().methods().get("tooling_workshop_base"));
++            assertTrue(e.methods().pending().isEmpty());
++            assertEquals(Map.of("laborer", 5, "machinist", 2), e.staffingRepository.load(e.id).employed());
++            assertEquals(7, e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));
++            assertEquals(14, e.scalar("SELECT remainder FROM payroll_accruals WHERE closed_tick IS NULL"));
++            assertEquals(1, e.scalar("SELECT MAX(effective_tick) FROM payroll_employment_history"));
++        }
++    }
++
++    @ParameterizedTest @ValueSource(ints = {0, 7})
++    void pendingStaffingIncludingZeroIsNeverMistakenForNoPending(int target) throws Exception {
++        try (var e = new TestEconomy(directory.resolve("staff.sqlite"), true)) {
++            pendingStaff(e, e.id, target); accept(e, 0, true); e.coordinator.processTick(e.id, 1);
++            assertEquals(target, e.staffingRepository.load(e.id).employed().getOrDefault("laborer", 0));
++            assertTrue(e.staffingRepository.load(e.id).pending().isEmpty());
++            assertEquals(target + 4, e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));
++            assertEquals(14, e.scalar("SELECT remainder FROM payroll_accruals WHERE closed_tick IS NULL"));
++        }
++    }
++
++    @Test void sharedSupplyChangesConsumePendingOnceWithoutAutomaticRehiring() throws Exception {
++        try (var e = new TestEconomy(directory.resolve("supply.sqlite"), true)) {
++            e.staffing.requestTarget(e.id, "laborer", 0); UUID second = e.createBuilding().getId();
++            e.setSupply("laborer", 5); pendingStaff(e, e.id, 7); pendingStaff(e, second, 7);
++            e.ticks(1);
++            assertEquals(5, e.supply.occupied(com.bbmurloc.victoriaeconomics.server.TestIdentities.REGION, "laborer"));
++            assertEquals(5, e.staffingRepository.load(e.id).employed().getOrDefault("laborer", 0)
++                    + e.staffingRepository.load(second).employed().getOrDefault("laborer", 0));
++            assertTrue(e.staffingRepository.load(e.id).pending().isEmpty()); assertTrue(e.staffingRepository.load(second).pending().isEmpty());
++            e.setSupply("laborer", 100); e.ticks(1);
++            assertEquals(5, e.supply.occupied(com.bbmurloc.victoriaeconomics.server.TestIdentities.REGION, "laborer"));
++            // A new explicit request sees the new supply immediately, with no lazy-Tick delay.
++            UUID empty = e.staffingRepository.load(e.id).employed().getOrDefault("laborer", 0) == 0 ? e.id : second;
++            e.staffing.requestTarget(empty, "laborer", 7);
++            assertEquals(12, e.supply.occupied(com.bbmurloc.victoriaeconomics.server.TestIdentities.REGION, "laborer"));
++        }
++    }
++
++    @Test void unprocessedPayrollDoesNotUseTheNoChangePath() throws Exception {
++        try (var e = new TestEconomy(directory.resolve("recovery.sqlite"), true)) {
++            accept(e, 0, false);
++            assertEquals(com.bbmurloc.victoriaeconomics.server.production.port.BuildingPayrollPort.State.RECOVERY, e.payroll.state(e.id));
++            try (var recording = EconomyDiagnostics.start()) {
++                e.coordinator.processTick(e.id, 1);
++                assertEquals(0L, recording.snapshot().counts().getOrDefault("production.idle.noChange", 0L));
++            }
++            assertFalse(new SqliteEconomicTimeRepository(e.connection, e.lock).load().payrollCaughtUp());
++            assertEquals(com.bbmurloc.victoriaeconomics.server.production.port.BuildingPayrollPort.State.RECOVERY, e.payroll.state(e.id));
++            e.accrual.recoverAcceptedTime(); e.production.onEconomicTick();
++            assertEquals(14, e.scalar("SELECT remainder FROM payroll_accruals WHERE closed_tick IS NULL"));
++        }
++    }
++
++    @Test void closedRemainderAndNewWageRateAreNotLostDuringIdleTicks() throws Exception {
++        try (var e = new TestEconomy(directory.resolve("history.sqlite"), true)) {
++            e.ticks(1);
++            var currency = SqliteTransactions.write(e.connection, tx -> {
++                var repo = e.payrollRepository.inTransaction(tx); var prior = repo.currentForBuilding(e.id);
++                repo.close(prior.id(), 1); repo.enroll(UUID.randomUUID(), e.id, prior.currency()); return prior.currency();
++            });
++            e.accrual.configureRate(new com.bbmurloc.victoriaeconomics.server.payroll.domain.RegionalWageRate(
++                    com.bbmurloc.victoriaeconomics.server.TestIdentities.REGION, currency, 1, 3, 1));
++            e.ticks(10);
++            assertEquals(14, e.scalar("SELECT remainder FROM payroll_accruals WHERE closed_tick IS NOT NULL"));
++            assertEquals(420, e.scalar("SELECT remainder FROM payroll_accruals WHERE closed_tick IS NULL"));
++            assertEquals(11, e.scalar("SELECT last_accrued_tick FROM payroll_accruals WHERE closed_tick IS NULL"));
++        }
++    }
++
++    @Test void checkpointWriteFailureRollsBackAndRetryDoesNotRepeatWages() throws Exception {
++        try (var e = new TestEconomy(directory.resolve("failure.sqlite"), true)) {
++            accept(e, 0, true);
++            e.sql("CREATE TRIGGER fail_idle BEFORE UPDATE ON production_executions BEGIN SELECT RAISE(ABORT,'idle failed'); END");
++            assertThrows(IllegalStateException.class, () -> e.coordinator.processTick(e.id, 1));
++            assertEquals(0, e.execution().lastCompletedTick()); assertNull(e.execution().processingTick());
++            e.sql("DROP TRIGGER fail_idle"); e.recover();
++            assertEquals(1, e.execution().lastCompletedTick());
++            assertEquals(14, e.scalar("SELECT remainder FROM payroll_accruals WHERE closed_tick IS NULL"));
++            var checkpoint = EconomyCheckpoint.capture(e.connection); checkpoint.validate();
++            try (var restored = SqliteConnectionGuard.protect(DriverManager.getConnection("jdbc:sqlite::memory:"))) {
++                EconomySchema.initialize(restored);
++                SqliteTransactions.write(restored, tx -> { checkpoint.install(restored, tx); return null; });
++                assertEquals(checkpoint.sha256(), EconomyCheckpoint.capture(restored).sha256());
++                assertEquals(1, new SqliteProductionExecutionRepository(restored, new Object()).load(e.id).lastCompletedTick());
++            }
++        }
++    }
++
++    @ParameterizedTest @ValueSource(booleans = {false, true})
++    void unknownCommitIsVerifiedUsingFreshConnectionAndNeverAssumed(boolean committed) throws Exception {
++        Path file = directory.resolve("unknown.sqlite"); UUID id;
++        try (var e = new TestEconomy(file, true)) {
++            id = e.id; accept(e, 0, true);
++            e.faults.beforeSql = sql -> { if (sql.startsWith("UPDATE production_executions")) {
++                e.faults.beforeCommit = !committed; e.faults.afterCommit = committed;
++            }};
++            assertThrows(CommitOutcomeUnknownException.class, () -> e.coordinator.processTick(e.id, 1));
++            assertThrows(CommitOutcomeUnknownException.class, e::execution);
++            try (var fresh = SqliteEconomyDatabase.open(file)) {
++                assertEquals(committed ? 1 : 0, new SqliteProductionExecutionRepository(fresh, new Object()).load(id).lastCompletedTick());
++            }
++        }
++        try (var reopened = new TestEconomy(file, false)) {
++            assertEquals(1, reopened.execution().lastCompletedTick());
++            assertEquals(14, reopened.scalar("SELECT remainder FROM payroll_accruals WHERE closed_tick IS NULL"));
++        }
++    }
++
++    @Test void unchangedAndPendingTicksMatchTheOriginalFullReconfigurationFacts() throws Exception {
++        try (var optimized = new TestEconomy(directory.resolve("new.sqlite"), true);
++             var reference = new TestEconomy(directory.resolve("old.sqlite"), true)) {
++            for (int tick = 1; tick <= 1201; tick++) {
++                if (tick == 400) for (var e : List.of(optimized, reference)) pendingPm(e);
++                if (tick == 700) for (var e : List.of(optimized, reference)) pendingStaff(e, e.id, 3);
++                optimized.ticks(1); accept(reference, tick - 1, true); reference.periods.recoverAcceptedTime();
++                reference.coordinator.advance(reference.id, tick); reference.coordinator.reconfigure(reference.id);
++                reference.coordinator.finishTick(reference.id, tick); reference.production.onEconomicTick();
++            }
++            assertEquals(facts(reference), facts(optimized));
++        }
++    }
++
++    private static List<Object> facts(TestEconomy e) throws Exception {
++        var p = SqliteTransactions.write(e.connection, tx -> e.payrollRepository.inTransaction(tx).currentForBuilding(e.id));
++        return List.of(e.staffingRepository.load(e.id).employed(), e.staffingRepository.load(e.id).pending(),
++                e.methods().effective(), e.methods().pending(), e.execution().lastCompletedTick(),
++                p.employees(), p.accrued(), p.matured(), p.paid(), p.remainder(), p.lastAccruedTick(),
++                e.stockState().quantities(), e.supply.occupied(com.bbmurloc.victoriaeconomics.server.TestIdentities.REGION, "laborer"));
++    }
++    private static void pendingPm(TestEconomy e) {
++        var m = e.methods(); long revision = m.configurationRevision();
++        m.requestSelection("tooling_workshop_base", "reduced_tools", true); e.configurations.save(m, revision);
++    }
++    private static void pendingStaff(TestEconomy e, UUID id, int target) {
++        SqliteTransactions.write(e.connection, tx -> {
++            var repo = e.staffingRepository.inTransaction(tx); var prior = repo.load(id);
++            BuildingStaffing next = prior.requestTarget("laborer", target, e.configurations.inTransaction(tx).load(id).recipe().requiredWorkers());
++            repo.save(next, prior.revision()); return null;
++        });
++    }
++    private static void accept(TestEconomy e, long previous, boolean accrue) {
++        new SqliteEconomicTimeRepository(e.connection, e.lock).acceptNext(previous);
++        if (accrue) e.accrual.recoverAcceptedTime();
++    }
++}

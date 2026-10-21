@@ -13,3 +13,12 @@
 - [resume-measurement.patch](resume-measurement.patch)：在独立干净 `10c3260` 副本添加本次优化前探针与 active32 入口。不要反向应用到当前工作区。配对参考使用 `build` 内 git archive 副本；未 reset/切换当前分支。
 
 **严格性能验收未通过。** 有确定的 SQL/JSON/事务重复减少，但环境漂移明显，部分配对结果回退，不能用名义均值降幅或最好轮宣称稳定 20 TPS。原 40 次阶段数据保持不变；新结果和失败/未测项见报告第 12 节。
+
+借鉴 Create 的限额实验（基线 `4ccf5112`）：
+
+- [决策报告](../VE-Task-P-Create借鉴与后续决策.md)：本轮结论和交给 ChatGPT 的审查问题。
+- [create-experiment-results.json](create-experiment-results.json)：idle16 / active16 / active32 各一次参考与候选，6 个独立 JVM、共 7800 Tick。没有复跑或关闭探针校准。
+- [create-experiment-evidence.json](create-experiment-evidence.json)：Create 固定源码、单次诊断、候选 63 项/恢复原版 19 项测试、环境、顺序与哈希。
+- [create-candidate.patch](create-candidate.patch)：**未应用、默认不参与编译**的唯一候选及 11 项新增测试。在干净 `4ccf5112` 副本上通过应用检查；供审查，不代表已获准纳入正式代码。
+
+无变化快速路径确实降低空闲查询量，但稳定耗时收益尚不确定；未命中该路径的 active32 也出现巨大耗时变化。实验到达 6 次上限后停止，候选已撤回，正式源码保持原基线。没有重新执行完整 688 项及保存/重启/崩溃套件，相关已验基线仍见第 12 节；本轮实际范围和未通过项见第 13 节。
