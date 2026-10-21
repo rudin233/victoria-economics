@@ -1,0 +1,13 @@
+modLoader="javafml"
+loaderVersion="[4,)"
+license="All Rights Reserved"
+[[mods]]
+modId="victoria_economics_gametests"
+version="1"
+displayName="Victoria Economics isolated acceptance tests"
+[[dependencies.victoria_economics_gametests]]
+modId="victoria_economics"
+type="required"
+versionRange="[0,)"
+ordering="AFTER"
+side="SERVER"

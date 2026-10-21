@@ -206,3 +206,51 @@ idea {
         downloadJavadoc = true
     }
 }
+
+// Isolated Minecraft acceptance sources: no test fixtures or issuance helpers enter the distributable mod.
+sourceSets {
+    gameTest {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+configurations {
+    gameTestImplementation.extendsFrom implementation
+    gameTestRuntimeOnly.extendsFrom runtimeOnly
+}
+neoForge.addModdingDependenciesTo(sourceSets.gameTest)
+tasks.named('check') { dependsOn tasks.named('gameTestClasses') }
+neoForge {
+    mods {
+        victoria_economics_gametests { sourceSet sourceSets.gameTest }
+    }
+    runs {
+        configureEach { loadedMods = [neoForge.mods.victoria_economics] }
+        gameTestServer {
+            sourceSet = sourceSets.gameTest
+            loadedMods = [neoForge.mods.victoria_economics, neoForge.mods.victoria_economics_gametests]
+            gameDirectory = layout.buildDirectory.dir(providers.gradleProperty('veGameTestRun').map { name ->
+                if (!(name ==~ /[a-zA-Z0-9_-]{1,48}/)) throw new GradleException('veGameTestRun must be a simple isolated run name')
+                'task-e-gametest-' + name
+            }.orElse('task-e-gametest'))
+            def acceptanceMode = providers.gradleProperty('veGameTestMode').orElse('full').get()
+            if (!(acceptanceMode in ['full','restart'])) throw new GradleException('veGameTestMode must be full or restart')
+            systemProperty 've.acceptanceMode', acceptanceMode
+            systemProperty 'neoforge.enabledGameTestNamespaces', acceptanceMode == 'restart' ? 'victoria_economics_restarttests' : 'victoria_economics_gametests'
+        }
+    }
+}
+
+// NeoForge can exit with code zero when it discovered no GameTests. Require this run's actual assertion receipt.
+def acceptanceMarker = neoForge.runs.gameTestServer.gameDirectory.file('acceptance-result.txt').get().asFile
+def requiredAcceptanceMode = providers.gradleProperty('veGameTestMode').orElse('full').get()
+tasks.named('runGameTestServer') {
+    doFirst {
+        acceptanceMarker.parentFile.mkdirs()
+        acceptanceMarker.setText('RUNNING', 'UTF-8')
+    }
+    doLast {
+        if (acceptanceMarker.getText('UTF-8') != 'PASSED ' + requiredAcceptanceMode)
+            throw new GradleException('The isolated GameTest assertions did not complete; a zero process exit is insufficient')
+    }
+}

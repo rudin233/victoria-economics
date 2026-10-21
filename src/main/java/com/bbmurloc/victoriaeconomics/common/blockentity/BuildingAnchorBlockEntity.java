@@ -23,6 +23,8 @@ public class BuildingAnchorBlockEntity extends BlockEntity {
     }
 
     public void setBuildingId(UUID buildingId) {
+        java.util.Objects.requireNonNull(buildingId,"Economic identity binding cannot be cleared by a physical anchor");
+        if(this.buildingId!=null&&!this.buildingId.equals(buildingId))throw new IllegalStateException("Anchor identity cannot be rebound");
         this.buildingId = buildingId;
         setChanged();
     }

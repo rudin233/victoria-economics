@@ -1,5 +1,7 @@
 # Victoria Economics — ADR-PO-02：双聚合与全新 SQLite 初始 Schema
 
+> **部分 Superseded（2026-10-21）**：双聚合、CAS、Journal 与库存恢复仍有效；设备、NPC、三阶段屏障、1200 Tick 批次和旧 Schema 已被后续工作包替代。 [当前运行合同](../../domain/production-operations/current-runtime.md)。保留原文作为历史，不表示当前仍执行旧规则。
+
 **状态：已确认采用方案 B'；本文为实施设计，具体 SQL 字段允许在代码审查中做等价调整。**  
 **基础版本：** GitHub `rudin233/victoria-economics`，`main` HEAD `01a8c0a8a6380006fe9e937491675b67b5e23c76`（2026-10-09）。  
 **关联决策：** ADR-PO-01（两个独立聚合根）；生产事件风暴 PO-ES-01～PO-ES-23。  

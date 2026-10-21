@@ -65,5 +65,9 @@
   "victoria_economics.configuration.items": "Item List",
   "victoria_economics.configuration.logDirtBlock": "Log Dirt Block",
   "victoria_economics.configuration.magicNumberIntroduction": "Magic Number Text",
-  "victoria_economics.configuration.magicNumber": "Magic Number"
+  "victoria_economics.configuration.magicNumber": "Magic Number",
+  "block.victoria_economics.building_anchor_block": "Building Anchor",
+  "message.victoria_economics.anchor.unbound": "This building anchor is not bound.",
+  "message.victoria_economics.anchor.missing": "The bound economic building was not found.",
+  "message.victoria_economics.anchor.status": "Building %s / %s / %s / %s"
 }

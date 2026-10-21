@@ -6,5 +6,6 @@
  * 生产进度与每建筑 Tick 标记同事务；崩溃按持久检查点继续资源结算和重配置，不重复推进。
  * StaffingCalculator 查询唯一整数 Staffing、有效 PM 和区域供给；运行 Batch 使用历史冻结快照。
  * ProductionBoundaryCoordinator 在一个既有 WriteSession 中累计旧工资、提交 PM/人数/工资基数并清除屏障。
+ * 生命周期意图接管开工屏障时只完成原冻结结算，不应用卖方 Pending；最终交割未决期间继续计薪。
  */
 package com.bbmurloc.victoriaeconomics.server.production.application;

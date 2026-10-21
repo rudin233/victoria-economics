@@ -65,5 +65,9 @@
   "victoria_economics.configuration.items": "物品列表",
   "victoria_economics.configuration.logDirtBlock": "记录泥土方块",
   "victoria_economics.configuration.magicNumberIntroduction": "魔法数字说明",
-  "victoria_economics.configuration.magicNumber": "魔法数字"
+  "victoria_economics.configuration.magicNumber": "魔法数字",
+  "block.victoria_economics.building_anchor_block": "建筑锚点",
+  "message.victoria_economics.anchor.unbound": "建筑锚点尚未绑定。",
+  "message.victoria_economics.anchor.missing": "未找到锚点绑定的经济建筑。",
+  "message.victoria_economics.anchor.status": "建筑 %s / %s / %s / %s"
 }

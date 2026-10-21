@@ -1,5 +1,7 @@
 # 生产代码阅读地图
 
+> **部分 Superseded（2026-10-21）**：以下路径地图是历史快照，部分文件已在 M1～任务 C 删除；当前入口见新版阅读地图。 [当前运行合同](current-runtime.md)。保留原文作为历史，不表示当前仍执行旧规则。
+
 本图对应 [ADR-PO-02](../../architecture/adr/ADR-PO-02.md) 的双聚合实现。领域职责见 [概览](overview.md)；[包迁移审计](package-refactoring.md) 和 [第二轮解耦审计](context-decoupling-review.md) 是历史记录，不能用其中的旧建筑 checkpoint 描述推断当前所有权。
 
 ## 1. 权威对象与入口

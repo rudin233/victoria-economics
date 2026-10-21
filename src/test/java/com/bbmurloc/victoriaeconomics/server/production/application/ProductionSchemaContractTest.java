@@ -13,11 +13,11 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ProductionSchemaContractTest {
     @TempDir Path dir;Path file(){return dir.resolve("contract.sqlite");}
-    @Test void v8StoresOnlyIntegerParticipationAndReloadsWithoutRewritingBytes()throws Exception{
+    @Test void v9StoresOnlyIntegerParticipationAndReloadsWithoutRewritingBytes()throws Exception{
         UUID id;ProductionBatchConfiguration snapshot;
         try(var e=new TestEconomy(file(),true)){
             id=e.id;snapshot=e.production.startBatch(id).getConfiguration();
-            try(var s=e.connection.createStatement();var r=s.executeQuery("SELECT configuration_json FROM production_batches")){r.next();String json=r.getString(1);assertTrue(json.contains("\"formatVersion\":8"));assertTrue(json.contains("\"participatingWorkers\""));assertFalse(json.contains("\"employees\""));}
+            try(var s=e.connection.createStatement();var r=s.executeQuery("SELECT configuration_json FROM production_batches")){r.next();String json=r.getString(1);assertTrue(json.contains("\"formatVersion\":9"));assertTrue(json.contains("\"participatingWorkers\""));assertFalse(json.contains("\"employees\""));}
             assertEquals(0,e.scalar("SELECT COUNT(*) FROM sqlite_master WHERE name='employment_state'"));
         }
         byte[] before=Files.readAllBytes(file());try(var c=SqliteEconomyDatabase.open(file())){assertEquals(snapshot,new SqliteProductionExecutionRepository(c,new Object()).load(id).batch().getConfiguration());}assertArrayEquals(before,Files.readAllBytes(file()));

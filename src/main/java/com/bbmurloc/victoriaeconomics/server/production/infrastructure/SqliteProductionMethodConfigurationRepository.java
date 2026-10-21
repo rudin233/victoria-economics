@@ -37,7 +37,7 @@ public final class SqliteProductionMethodConfigurationRepository implements Prod
             }
             @Override public void save(ProductionMethodConfiguration changed, long expectedRevision) {
                 session.requireConnection(connection);
-                try { persist(changed, expectedRevision); }
+                try { session.perform(()->{persist(changed, expectedRevision);return null;}); }
                 catch (SQLException failure) { throw new IllegalStateException("Cannot save production configuration", failure); }
             }
         };
@@ -95,6 +95,9 @@ public final class SqliteProductionMethodConfigurationRepository implements Prod
     }
 
     private void persist(ProductionMethodConfiguration changed, long expectedRevision) throws SQLException {
+        try(var s=connection.prepareStatement("SELECT 1 FROM economic_buildings b LEFT JOIN building_lifecycle_operations o ON o.building_id=b.id WHERE b.id=? AND (b.lifecycle<>'EXISTING' OR o.id IS NOT NULL)")) {
+            s.setString(1,changed.buildingId().toString());try(var r=s.executeQuery()){if(r.next())throw new IllegalStateException("Lifecycle identity blocks production method changes");}
+        }
         if (changed.configurationRevision() != Math.incrementExact(expectedRevision))
             throw new IllegalArgumentException("Save exactly one configuration change per commit");
         try (var statement = connection.prepareStatement("UPDATE production_method_configurations SET effective_json=?,pending_json=?,configuration_revision=?,effective_revision=? WHERE building_id=? AND configuration_revision=?")) {

@@ -1,3 +1,5 @@
+历史审计快照（部分 Superseded，2026-10-21）：设备、NPC、旧边界及旧批次规则已退出当前运行链。当前依据见 docs/domain/production-operations/current-runtime.md 与任务 E 验收报告；下文保留历史原貌。
+
 Victoria Economics 生产重构交付记录
 日期：2026-10-09
 

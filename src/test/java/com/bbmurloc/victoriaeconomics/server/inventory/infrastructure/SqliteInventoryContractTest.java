@@ -165,7 +165,7 @@ class SqliteInventoryContractTest {
     void existingV8JsonLoadsWithoutRewriteAndReceiptsKeepFrozenCommands() throws Exception {
         UUID reserved = UUID.randomUUID(), settled = UUID.randomUUID();
         String json = """
-                {"formatVersion":8,"snapshot":{"location":"%s","capacity":100,"quantities":{"ore":12,"metal":1},
+                {"formatVersion":9,"snapshot":{"location":"%s","capacity":100,"quantities":{"ore":12,"metal":1},
                  "reservations":{"%s":{"ore":5}},
                  "settlements":{"%s":{"command":{"batchId":"%s","outcome":"COMPLETED","inputs":{"ore":10},"outputs":{"metal":5}}}}}}
                 """.formatted(location, reserved, settled, settled);

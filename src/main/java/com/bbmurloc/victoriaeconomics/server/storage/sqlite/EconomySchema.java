@@ -5,10 +5,10 @@ import java.util.*;
 
 /** Fresh world schema. Existing incompatible worlds are rejected, never converted or cleared. */
 public final class EconomySchema {
-    public static final int VERSION = 8;
+    public static final int VERSION = 9;
     private EconomySchema() {}
 
-    // v8 adds verifiable company-period payments and household purpose allowances.
+    // v9 adds durable lifecycle quiescence and explicit unfinished-policy gates.
     // Creation and compatibility use the same DDL, with no legacy migration.
     private static final List<String> DDL = List.of(
             "CREATE TABLE economy_schema_migrations(version INTEGER PRIMARY KEY)",
@@ -41,6 +41,7 @@ public final class EconomySchema {
                 for (String ddl : DDL) statement.executeUpdate(ddl);
                 for (String ddl : EconomyFinancialSchema.DDL) statement.executeUpdate(ddl);
                 for (String ddl : EconomyPaymentSchema.DDL) statement.executeUpdate(ddl);
+                for (String ddl : EconomyLifecycleSchema.DDL) statement.executeUpdate(ddl);
                 statement.executeUpdate("INSERT INTO economy_schema_migrations(version) VALUES (" + VERSION + ")");
                 statement.executeUpdate("INSERT INTO economic_time VALUES(1,0,0,NULL,0)");
                 statement.executeUpdate("INSERT INTO payroll_runtime VALUES(1,'BUILDING_STAFFING',0,0)");
@@ -64,6 +65,7 @@ public final class EconomySchema {
             DDL.forEach(ddl -> expected.add(normalize(ddl)));
             EconomyFinancialSchema.DDL.forEach(ddl -> expected.add(normalize(ddl)));
             EconomyPaymentSchema.DDL.forEach(ddl -> expected.add(normalize(ddl)));
+            EconomyLifecycleSchema.DDL.forEach(ddl -> expected.add(normalize(ddl)));
             if (!definitions(connection).equals(expected)) throw incompatible();
             try (var statement = connection.createStatement()) {
                 try (var rows = statement.executeQuery("SELECT version, typeof(version) AS kind FROM economy_schema_migrations")) {
@@ -80,6 +82,7 @@ public final class EconomySchema {
                     if (rows.next()) throw incompatible();
                 }
                 EconomyPaymentValidation.validate(connection, snapshot);
+                EconomyLifecycleValidation.validate(connection, snapshot);
                 for (String table : List.of("companies", "regions")) {
                     try (var rows = statement.executeQuery("SELECT id FROM " + table)) {
                         while (rows.next()) storedId(rows.getString(1));
@@ -91,7 +94,7 @@ public final class EconomySchema {
                 try (var rows = statement.executeQuery("SELECT b.id FROM economic_buildings b LEFT JOIN production_method_configurations m ON m.building_id=b.id LEFT JOIN production_executions e ON e.building_id=b.id LEFT JOIN building_staffing s ON s.building_id=b.id WHERE m.building_id IS NULL OR e.building_id IS NULL OR s.building_id IS NULL")) {
                     if (rows.next()) throw incompatible();
                 }
-                try(var rows=statement.executeQuery("SELECT b.id FROM economic_buildings b LEFT JOIN payroll_accruals p ON p.building_id=b.id AND p.closed_tick IS NULL WHERE p.id IS NULL")){
+                try(var rows=statement.executeQuery("SELECT b.id FROM economic_buildings b LEFT JOIN payroll_accruals p ON p.building_id=b.id AND p.closed_tick IS NULL WHERE b.lifecycle='EXISTING' AND p.id IS NULL")){
                     if(rows.next())throw incompatible();
                 }
                 long accepted=com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository.inSnapshot(connection,snapshot).acceptedTick();

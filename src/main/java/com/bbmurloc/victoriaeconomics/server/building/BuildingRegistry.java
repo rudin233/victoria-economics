@@ -33,7 +33,4 @@ public class BuildingRegistry {
         return buildings.containsKey(id);
     }
 
-    public void remove(UUID id) {
-        buildings.remove(id);
-    }
 }

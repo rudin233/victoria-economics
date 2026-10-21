@@ -46,6 +46,7 @@ public final class SqliteBuildingStaffingRepository implements BuildingStaffingR
                 try { tx.perform(() -> {
                     if (changed.revision() != Math.incrementExact(expected)) throw new IllegalArgumentException("Save one staffing revision");
                     var prior = read(changed.buildingId());
+                    com.bbmurloc.victoriaeconomics.server.building.infrastructure.SqliteBuildingLifecycleOperationRepository.requireOperational(connection,tx,changed.buildingId());
                     if (prior.revision() != expected) throw new IllegalStateException("Staffing revision conflict");
                     var building = buildings.inTransaction(tx).load(changed.buildingId());
                     if (building.lifecycle() != com.bbmurloc.victoriaeconomics.server.building.BuildingLifecycle.EXISTING)

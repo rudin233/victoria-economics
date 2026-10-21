@@ -11,6 +11,10 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 
 import java.util.*;
 import java.util.function.Consumer;
+import com.bbmurloc.victoriaeconomics.server.building.domain.BuildingLifecycleOperation;
+import com.bbmurloc.victoriaeconomics.server.company.domain.CompanyId;
+import com.bbmurloc.victoriaeconomics.server.region.domain.RegionId;
+import com.mojang.brigadier.CommandDispatcher;
 
 import static net.minecraft.commands.Commands.*;
 
@@ -22,7 +26,23 @@ public final class ProductionCommands {
     }
 
     public static void register(RegisterCommandsEvent event) {
-        event.getDispatcher().register(literal("ve").requires(source -> source.hasPermission(2))
+        registerCommands(event.getDispatcher());
+    }
+    public static void registerCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
+        dispatcher.register(literal("ve").requires(source -> source.hasPermission(2))
+                .then(literal("building").then(argument("building",StringArgumentType.word())
+                        .then(literal("lifecycle")
+                                .then(literal("status").executes(ctx->run(ctx,economy->reply(ctx,economy.getLifecycleService().forBuilding(id(ctx)).toString()))))
+                                .then(literal("sale").requires(source->source.hasPermission(4))
+                                        .then(argument("operation",StringArgumentType.word()).then(argument("seller",StringArgumentType.word()).then(argument("buyer",StringArgumentType.word()).then(argument("revision",LongArgumentType.longArg(0))
+                                                .executes(ctx->run(ctx,economy->reply(ctx,economy.getLifecycleService().request(lifecycleCommand(ctx,BuildingLifecycleOperation.Kind.SALE)).toString()))))))))
+                                .then(literal("demolish").requires(source->source.hasPermission(4))
+                                        .then(argument("operation",StringArgumentType.word()).then(argument("seller",StringArgumentType.word()).then(argument("revision",LongArgumentType.longArg(0))
+                                                .executes(ctx->run(ctx,economy->reply(ctx,economy.getLifecycleService().request(lifecycleCommand(ctx,BuildingLifecycleOperation.Kind.DEMOLITION)).toString())))))))
+                                .then(literal("retry").requires(source->source.hasPermission(4)).then(argument("operation",StringArgumentType.word())
+                                        .executes(ctx->run(ctx,economy->{var op=economy.getLifecycleService().find(operation(ctx)).orElseThrow();if(!op.command().buildingId().equals(id(ctx)))throw new IllegalArgumentException("Operation belongs to another building");reply(ctx,economy.getLifecycleService().recover(operation(ctx)).toString());}))))
+                                .then(literal("verify").requires(source->source.hasPermission(4)).then(argument("operation",StringArgumentType.word())
+                                        .executes(ctx->run(ctx,economy->reply(ctx,economy.getLifecycleService().verify(operation(ctx),id(ctx)).toString()))))))))
                 .then(literal("production")
                         .then(literal("list").executes(ctx -> run(ctx, economy -> reply(ctx, economy.getBuildingRegistry().getAll().stream().map(b -> b.getId() + " " + b.getBuildingTypeId()).toList().toString()))))
                         .then(argument("building", StringArgumentType.word())
@@ -50,9 +70,14 @@ public final class ProductionCommands {
                         .then(literal("create").then(argument("type", StringArgumentType.word()).then(argument("capacity", LongArgumentType.longArg(0))
                                 .executes(ctx -> run(ctx, economy -> {
                                     var building = economy.getBuildingService().createBuilding(StringArgumentType.getString(ctx, "type"));
-                                    reply(ctx, "Created building " + building.getId());
                                     economy.getInventoryStore().createLocation(building.getId(), LongArgumentType.getLong(ctx, "capacity"));
-                                })))))
+                                    reply(ctx, "Created building " + building.getId());
+                                }))
+                                .then(argument("company",StringArgumentType.word()).then(argument("region",StringArgumentType.word())
+                                        .executes(ctx->run(ctx,economy->{
+                                            var b=economy.getBuildingService().createBuilding(StringArgumentType.getString(ctx,"type"),CompanyId.parse(StringArgumentType.getString(ctx,"company")),RegionId.parse(StringArgumentType.getString(ctx,"region")));
+                                            economy.getInventoryStore().createLocation(b.getId(),LongArgumentType.getLong(ctx,"capacity"));reply(ctx,"Created building "+b.getId());
+                                        })))))))
                         .then(argument("building", StringArgumentType.word())
                                 .then(literal("configure_storage").then(argument("capacity", LongArgumentType.longArg(0))
                                         .executes(ctx -> run(ctx, economy -> {
@@ -89,6 +114,11 @@ public final class ProductionCommands {
     private static UUID id(CommandContext<CommandSourceStack> ctx) {
         return UUID.fromString(StringArgumentType.getString(ctx, "building"));
     }
+    private static UUID operation(CommandContext<CommandSourceStack> ctx) {return UUID.fromString(StringArgumentType.getString(ctx,"operation"));}
+    private static BuildingLifecycleOperation.Command lifecycleCommand(CommandContext<CommandSourceStack> ctx,BuildingLifecycleOperation.Kind kind) {
+        return new BuildingLifecycleOperation.Command(operation(ctx),id(ctx),CompanyId.parse(StringArgumentType.getString(ctx,"seller")),
+                kind==BuildingLifecycleOperation.Kind.SALE?CompanyId.parse(StringArgumentType.getString(ctx,"buyer")):null,kind,LongArgumentType.getLong(ctx,"revision"));
+    }
 
     private static int run(CommandContext<CommandSourceStack> ctx, Consumer<ServerEconomyContext> action) {
         try {
@@ -110,7 +140,7 @@ public final class ProductionCommands {
         var configuration = economy.getProductionService().methods(id(ctx));
         var execution = economy.getProductionService().execution(id(ctx));
         var batch = execution.batch() == null ? execution.lastBatch() : execution.batch();
-        reply(ctx, "Building " + id(ctx) + " " + building.getStatus() + "; PM=" + configuration.effective().methods()
+        reply(ctx, "Building " + id(ctx) + " " + building.getStatus() + "; lifecycle="+building.lifecycle()+"; owner="+building.ownerCompanyId()+"; region="+building.regionId()+"; operation="+economy.getLifecycleService().forBuilding(id(ctx))+"; PM=" + configuration.effective().methods()
                 + "; configRevision=" + configuration.configurationRevision() + "; effectiveRevision=" + configuration.effectiveRevision()
                 + "; executionRevision=" + execution.executionRevision() + "; completedTick=" + execution.lastCompletedTick()
                 + "; pending=" + configuration.pending() + "; boundary=" + execution.boundary()

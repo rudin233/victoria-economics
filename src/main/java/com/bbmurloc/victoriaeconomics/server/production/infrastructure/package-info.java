@@ -1,5 +1,5 @@
 /**
- * 独立生产 Repository、恢复日志及生命周期事实适配器。
+ * 独立生产 Repository 与恢复日志。建筑生命周期意图由 building 独立保存。
  * <p>
  * Configuration 与 Execution 分别保存；Execution 和内部 Batch 在同一事务提交。
  * Batch 表是唯一可变批次记录，Journal 据此核实提交；未知事务状态拒绝提供权威查询结果。

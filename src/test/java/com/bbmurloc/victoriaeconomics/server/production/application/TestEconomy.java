@@ -54,6 +54,7 @@ final class TestEconomy implements AutoCloseable {
     final com.bbmurloc.victoriaeconomics.server.payroll.application.CompanyPayrollService payments;
     final com.bbmurloc.victoriaeconomics.server.payroll.application.PayrollPeriodService periods;
     final com.bbmurloc.victoriaeconomics.server.household.application.RegionalHouseholdService households;
+    final com.bbmurloc.victoriaeconomics.server.building.application.BuildingLifecycleService lifecycle;
     final UUID companyCash,householdCash;
     EconomicClock clock;
     final UUID id;
@@ -81,6 +82,7 @@ final class TestEconomy implements AutoCloseable {
         payments=new com.bbmurloc.victoriaeconomics.server.payroll.application.CompanyPayrollService(connection,lock);
         periods=new com.bbmurloc.victoriaeconomics.server.payroll.application.PayrollPeriodService(connection,lock);
         households=new com.bbmurloc.victoriaeconomics.server.household.application.RegionalHouseholdService(connection,lock);
+        lifecycle=new com.bbmurloc.victoriaeconomics.server.building.application.BuildingLifecycleService(connection,lock,resolver,production::settleForLifecycle,()->SqliteEconomyDatabase.open(file));
         var currency=new com.bbmurloc.victoriaeconomics.server.finance.domain.CurrencyId(new UUID(700,1));
         // Explicit zero-cash test accounts, with no issuance. Real zero-payment periods preserve arrears assertions.
         companyCash=finance.open(new UUID(800,1),com.bbmurloc.victoriaeconomics.server.finance.domain.FinanceAccount.OwnerKind.COMPANY,TestIdentities.COMPANY.value(),currency).id();
@@ -89,7 +91,7 @@ final class TestEconomy implements AutoCloseable {
         else id=buildings.getAll().getFirst().getId();
         recover();
     }
-    void recover(){clock=new EconomicClock(new SqliteEconomicTimeRepository(connection,lock),accrual::recoverAcceptedTime,production::onEconomicTick,production::recoverAcceptedTick,periods::recoverAcceptedTime);}
+    void recover(){clock=new EconomicClock(new SqliteEconomicTimeRepository(connection,lock),accrual::recoverAcceptedTime,production::onEconomicTick,()->{lifecycle.recoverUnfinished();production.recoverAcceptedTick();},periods::recoverAcceptedTime);}
     EconomicBuilding building(){return buildings.get(id);}
     EconomicBuilding createBuilding(){return buildingService.createBuilding("tooling_workshop",TestIdentities.COMPANY,TestIdentities.REGION);}
     ProductionExecution execution(){return repository.load(id);}

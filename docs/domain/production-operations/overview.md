@@ -1,5 +1,7 @@
 # Production Operations — 生产运营限界上下文
 
+> **部分 Superseded（2026-10-21）**：本文保留历史领域事件与设计背景；设备、个体任职、比例结算和旧架构说明不再描述当前运行链。 [当前运行合同](current-runtime.md)。保留原文作为历史，不表示当前仍执行旧规则。
+
 ## 1. 领域定位
 
 Production Operations 负责 Victoria Economics 中生产建筑的生产方案管理、配方解析、生产批次组织、实际参产人员安排、生产进度推进和生产结果结算的业务协调。

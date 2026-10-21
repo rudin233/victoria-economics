@@ -2,6 +2,7 @@ package com.bbmurloc.victoriaeconomics.server.production.application;
 
 import com.bbmurloc.victoriaeconomics.common.definition.occupation.OccupationRegistry;
 import com.bbmurloc.victoriaeconomics.server.building.*;
+import com.bbmurloc.victoriaeconomics.server.building.infrastructure.SqliteBuildingLifecycleOperationRepository;
 import com.bbmurloc.victoriaeconomics.server.production.domain.*;
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.*;
 import com.bbmurloc.victoriaeconomics.server.production.port.BuildingPayrollPort.State;
@@ -38,7 +39,7 @@ public final class ProductionBoundaryCoordinator {
     public ProductionExecution execution(UUID id){return executions.load(id);}
     public ProductionMethodConfiguration methods(UUID id){return methods.load(id);}
     public long acceptedTick(){return new SqliteEconomicTimeRepository(connection,lock).load().acceptedTick();}
-    public List<UUID> buildingIds(){synchronized(lock){return buildings.loadAll().stream().map(EconomicBuilding::getId).toList();}}
+    public List<UUID> buildingIds(){synchronized(lock){return buildings.loadAll().stream().filter(b->b.lifecycle()==BuildingLifecycle.EXISTING).map(EconomicBuilding::getId).toList();}}
     private <T>T write(SqliteTransactions.WriteWork<T> work){synchronized(lock){
         try{return SqliteTransactions.write(connection,work);}
         catch(CommitOutcomeUnknownException unknown){SqliteConnectionGuard.quarantine(connection,unknown);throw unknown;}
@@ -46,13 +47,17 @@ public final class ProductionBoundaryCoordinator {
     private EconomicBuilding live(SqliteTransactions.WriteSession tx,UUID id){
         var b=buildings.inTransaction(tx).load(id);if(b.lifecycle()!=BuildingLifecycle.EXISTING)throw new IllegalStateException("Historical building cannot operate");return b;
     }
+    private EconomicBuilding admit(SqliteTransactions.WriteSession tx,UUID id)throws SQLException{
+        var b=live(tx,id);SqliteBuildingLifecycleOperationRepository.requireOperational(connection,tx,id);return b;
+    }
+    public boolean lifecycleHeld(UUID id){return new SqliteBuildingLifecycleOperationRepository(connection,lock).forBuilding(id).isPresent();}
     private void noUnresolvedStart(SqliteTransactions.WriteSession tx,UUID id)throws SQLException{
         tx.requireConnection(connection);try(var s=connection.prepareStatement("SELECT 1 FROM production_start_intents WHERE building_id=?")){
             s.setString(1,id.toString());try(var r=s.executeQuery()){if(r.next())throw new IllegalStateException("Verify and recover StartIntent before reconfiguration");}
         }
     }
     public void changeMethods(UUID id,BiConsumer<ProductionMethodConfiguration,Boolean> change){write(tx->{
-        live(tx,id);noUnresolvedStart(tx,id);var e=executions.inTransaction(tx).load(id);var m=methods.inTransaction(tx).load(id);long revision=m.configurationRevision();
+        admit(tx,id);noUnresolvedStart(tx,id);var e=executions.inTransaction(tx).load(id);var m=methods.inTransaction(tx).load(id);long revision=m.configurationRevision();
         change.accept(m,e.blocksConfiguration());
         if(m.configurationRevision()==revision)return null;
         if(e.blocksConfiguration())methods.inTransaction(tx).save(m,revision);
@@ -61,7 +66,7 @@ public final class ProductionBoundaryCoordinator {
     });}
     /** Returns true only when a durable arrears-dismissal abort decision now needs resource settlement. */
     public boolean requestStaffing(UUID id,String role,Integer target){return write(tx->{
-        var b=live(tx,id);noUnresolvedStart(tx,id);if(occupations.get(role)==null)throw new IllegalArgumentException("Unknown occupation");
+        var b=admit(tx,id);noUnresolvedStart(tx,id);if(occupations.get(role)==null)throw new IllegalArgumentException("Unknown occupation");
         var repo=staffing.inTransaction(tx);var old=repo.load(id);var m=methods.inTransaction(tx).load(id);var e=executions.inTransaction(tx).load(id);
         var requested=target==null?old.cancel(role):old.requestTarget(role,target,m.recipe().requiredWorkers());
         if(requested==old)return false;
@@ -80,7 +85,7 @@ public final class ProductionBoundaryCoordinator {
         var m=methods.inTransaction(tx).load(id);reconfigure(tx,id,e,m,m.configurationRevision(),staffing.inTransaction(tx).load(id));return null;
     });}
     private void reconfigure(SqliteTransactions.WriteSession tx,UUID id,ProductionExecution e,ProductionMethodConfiguration m,long pmRevision,BuildingStaffing requested)throws SQLException{
-        var b=live(tx,id);noUnresolvedStart(tx,id);if(e.hasUnfinishedBatch())throw new IllegalStateException("Previous Batch unfinished");
+        var b=admit(tx,id);noUnresolvedStart(tx,id);if(e.hasUnfinishedBatch())throw new IllegalStateException("Previous Batch unfinished");
         long tick=SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick();
         var wagesRepo=payroll.inTransaction(tx);var segment=wagesRepo.currentForBuilding(id);
         if(!wagesRepo.currencyForRegion(b.regionId()).equals(segment.currency()))throw new IllegalStateException("Regional wage currency mismatch");
@@ -108,7 +113,7 @@ public final class ProductionBoundaryCoordinator {
     public record StartPlan(ProductionBatchConfiguration configuration,long executionRevision){}
     public StartPlan prepare(UUID id){return write(tx->new StartPlan(prepare(tx,id,null),executions.inTransaction(tx).load(id).executionRevision()));}
     private ProductionBatchConfiguration prepare(SqliteTransactions.WriteSession tx,UUID id,UUID reservedBatch)throws SQLException{
-        var b=live(tx,id);if(b.getStatus()!=BuildingStatus.ACTIVE)throw new ProductionStartBlocked("Building stopped");
+        var b=admit(tx,id);if(b.getStatus()!=BuildingStatus.ACTIVE)throw new ProductionStartBlocked("Building stopped");
         var e=executions.inTransaction(tx).load(id);if(e.batch()!=null||e.boundary()!=ProductionExecution.Boundary.NONE)throw new ProductionStartBlocked("Previous Batch or reconfiguration unfinished");
         if(wages.inTransaction(tx,id,b.ownerCompanyId())!=State.CURRENT)throw new ProductionStartBlocked("Payroll is not CURRENT or is unavailable");
         if(!inventory.configured(tx,id))throw new ProductionStartBlocked("Storage location has not been configured");
@@ -139,6 +144,9 @@ public final class ProductionBoundaryCoordinator {
         var b=live(tx,id);var e=executions.inTransaction(tx).load(id);
         if(e.processingTick()==null&&e.lastCompletedTick()>=tick)return false;
         if(e.beginTick(tick)){
+            if(SqliteBuildingLifecycleOperationRepository.holds(connection,tx,id)){
+                e.terminate();executions.inTransaction(tx).save(e,e.executionRevision());return true;
+            }
             State state=wages.inTransaction(tx,id,b.ownerCompanyId());
             for(var reason:List.of(ProductionExecution.PauseReason.PAYROLL_ARREARS,ProductionExecution.PauseReason.PAYROLL_RECOVERY,ProductionExecution.PauseReason.PAYROLL_UNAVAILABLE))e.resume(reason);
             switch(state){
@@ -152,16 +160,16 @@ public final class ProductionBoundaryCoordinator {
         return true;
     });}
     public void finishTick(UUID id,long tick){write(tx->{var e=executions.inTransaction(tx).load(id);if(e.lastCompletedTick()==tick&&e.processingTick()==null)return null;e.finishTick(tick);executions.inTransaction(tx).save(e,e.executionRevision());return null;});}
-    public void confirmSettlement(UUID id,UUID batch){write(tx->{var e=executions.inTransaction(tx).load(id);if(e.batch()==null||!e.batch().getId().equals(batch))throw new IllegalStateException("Foreign settlement receipt");if(!e.batch().isEnded()){e.settlementCompleted(batch);executions.inTransaction(tx).save(e,e.executionRevision());}return null;});}
+    public void confirmSettlement(UUID id,UUID batch){write(tx->{var e=executions.inTransaction(tx).load(id);if(e.batch()==null&&e.lastBatch()!=null&&e.lastBatch().getId().equals(batch)&&e.lastBatch().isEnded())return null;if(e.batch()==null||!e.batch().getId().equals(batch))throw new IllegalStateException("Foreign settlement receipt");if(!e.batch().isEnded()){e.settlementCompleted(batch);executions.inTransaction(tx).save(e,e.executionRevision());}return null;});}
     public void abort(UUID id){write(tx->{live(tx,id);var e=executions.inTransaction(tx).load(id);e.terminate();executions.inTransaction(tx).save(e,e.executionRevision());return null;});}
-    public void automatic(UUID id,boolean enabled){write(tx->{live(tx,id);var e=executions.inTransaction(tx).load(id);e.requestAutomatic(enabled);executions.inTransaction(tx).save(e,e.executionRevision());return null;});}
-    public void manualPause(UUID id,boolean pause){write(tx->{var e=executions.inTransaction(tx).load(id);if(pause)e.pause();else e.resume();executions.inTransaction(tx).save(e,e.executionRevision());return null;});}
+    public void automatic(UUID id,boolean enabled){write(tx->{admit(tx,id);var e=executions.inTransaction(tx).load(id);e.requestAutomatic(enabled);executions.inTransaction(tx).save(e,e.executionRevision());return null;});}
+    public void manualPause(UUID id,boolean pause){write(tx->{admit(tx,id);var e=executions.inTransaction(tx).load(id);if(pause)e.pause();else e.resume();executions.inTransaction(tx).save(e,e.executionRevision());return null;});}
     public void confirmWholeTick(long tick){write(tx->{
         var time=SqliteEconomicTimeRepository.inTransaction(connection,tx);if(time.acceptedTick()!=tick||!time.payrollCaughtUp())throw new IllegalStateException("Time/payroll not ready");
         try(var s=connection.createStatement();var r=s.executeQuery("SELECT processed_period FROM payroll_payment_runtime WHERE id=1")){
             if(!r.next()||r.getLong(1)<time.periodId())throw new IllegalStateException("Payment cycle not confirmed");
         }
-        try(var s=connection.createStatement();var r=s.executeQuery("SELECT 1 FROM production_executions e LEFT JOIN production_batches b ON b.batch_id=e.current_batch_id WHERE e.last_completed_tick<>"+tick+" OR e.processing_tick IS NOT NULL OR e.boundary<>'NONE' OR b.status IN ('SETTLING_COMPLETED','SETTLING_ABORTED')")){if(r.next())throw new IllegalStateException("Unfinished per-building production Tick");}
+        try(var s=connection.createStatement();var r=s.executeQuery("SELECT 1 FROM production_executions e JOIN economic_buildings identity ON identity.id=e.building_id LEFT JOIN production_batches b ON b.batch_id=e.current_batch_id WHERE identity.lifecycle='EXISTING' AND (e.last_completed_tick<>"+tick+" OR e.processing_tick IS NOT NULL OR e.boundary<>'NONE' OR b.status IN ('SETTLING_COMPLETED','SETTLING_ABORTED'))")){if(r.next())throw new IllegalStateException("Unfinished per-building production Tick");}
         try(var s=connection.createStatement();var r=s.executeQuery("SELECT 1 FROM production_start_intents")){if(r.next())throw new IllegalStateException("Unresolved StartIntent");}
         if(time.firstUncertainProductionTick()!=null||time.productionCallbackReturnedTick()!=tick)
             try(var s=connection.prepareStatement("UPDATE economic_time SET first_uncertain_production_tick=NULL,production_callback_returned_tick=?,revision=? WHERE id=1 AND accepted_tick=? AND revision=?")){
@@ -171,7 +179,7 @@ public final class ProductionBoundaryCoordinator {
     });}
     public boolean needsRecovery(){synchronized(lock){return SqliteTransactions.read(connection,tx->{
         var time=SqliteEconomicTimeRepository.inSnapshot(connection,tx);if(time.hasUnconfirmedProductionCallback())return true;
-        try(var s=connection.prepareStatement("SELECT 1 FROM production_executions e LEFT JOIN production_batches b ON b.batch_id=e.current_batch_id WHERE e.processing_tick IS NOT NULL OR e.last_completed_tick<? OR e.boundary<>'NONE' OR b.status IN ('SETTLING_COMPLETED','SETTLING_ABORTED') UNION ALL SELECT 1 FROM production_start_intents")){
+        try(var s=connection.prepareStatement("SELECT 1 FROM production_executions e JOIN economic_buildings identity ON identity.id=e.building_id LEFT JOIN production_batches b ON b.batch_id=e.current_batch_id WHERE identity.lifecycle='EXISTING' AND (e.processing_tick IS NOT NULL OR e.last_completed_tick<? OR e.boundary<>'NONE' OR b.status IN ('SETTLING_COMPLETED','SETTLING_ABORTED')) UNION ALL SELECT 1 FROM production_start_intents")){
             s.setLong(1,time.acceptedTick());try(var r=s.executeQuery()){return r.next();}
         }
     });}}

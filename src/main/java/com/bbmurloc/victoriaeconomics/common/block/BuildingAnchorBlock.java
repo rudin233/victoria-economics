@@ -29,11 +29,12 @@ public class BuildingAnchorBlock extends Block implements EntityBlock {
         if (level.isClientSide()) return InteractionResult.SUCCESS;
         if (level instanceof ServerLevel serverLevel && level.getBlockEntity(pos) instanceof BuildingAnchorBlockEntity anchor) {
             if (anchor.getBuildingId() == null) {
-                player.sendSystemMessage(Component.literal("建筑锚点尚未绑定。"));
+                player.sendSystemMessage(Component.translatable("message.victoria_economics.anchor.unbound"));
             } else {
-                var building = ServerEconomyRuntime.get(serverLevel.getServer()).getBuildingRegistry().get(anchor.getBuildingId());
-                player.sendSystemMessage(Component.literal(building == null ? "未找到锚点绑定的经济建筑。" :
-                        "建筑 " + building.getId() + " / " + building.getStatus()));
+                var economy=ServerEconomyRuntime.get(serverLevel.getServer());
+                var building = economy.getBuildingRegistry().get(anchor.getBuildingId());
+                player.sendSystemMessage(building==null?Component.translatable("message.victoria_economics.anchor.missing"):
+                        Component.translatable("message.victoria_economics.anchor.status",building.getId().toString(),building.getStatus().name(),building.lifecycle().name(),economy.getLifecycleService().forBuilding(building.getId()).toString()));
             }
         }
         return InteractionResult.CONSUME;

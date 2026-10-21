@@ -152,8 +152,13 @@ public final class SqliteConnectionGuard {
             } catch (InvocationTargetException failure) {
                 throw failure.getCause();
             }
+            if (result == null) return null;
             if (result instanceof Connection) return owner;
-            Class<?> contract = result instanceof CallableStatement ? CallableStatement.class
+            // Xerial returns the ResultSet itself as ResultSetMetaData, and a prepared statement as
+            // ParameterMetaData. Preserve the declared JDBC view before considering runtime handle types.
+            Class<?> contract = method.getReturnType() == ResultSetMetaData.class ? ResultSetMetaData.class
+                    : method.getReturnType() == ParameterMetaData.class ? ParameterMetaData.class
+                    : result instanceof CallableStatement ? CallableStatement.class
                     : result instanceof PreparedStatement ? PreparedStatement.class
                     : result instanceof Statement ? Statement.class
                     : result instanceof ResultSet ? ResultSet.class

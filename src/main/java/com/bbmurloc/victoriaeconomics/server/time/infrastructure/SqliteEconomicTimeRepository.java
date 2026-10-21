@@ -30,7 +30,7 @@ public final class SqliteEconomicTimeRepository implements EconomicTimeRepositor
             try(var s=connection.createStatement();var r=s.executeQuery("SELECT processed_period FROM payroll_payment_runtime WHERE id=1")){
                 if(!r.next()||r.getLong(1)<before.periodId())throw new IllegalStateException("Previous accepted payroll payment cycle remains pending");
             }
-            try(var s=connection.prepareStatement("SELECT 1 FROM production_executions e LEFT JOIN production_batches b ON b.batch_id=e.current_batch_id WHERE e.last_completed_tick<? OR e.processing_tick IS NOT NULL OR e.boundary<>'NONE' OR b.status IN ('SETTLING_COMPLETED','SETTLING_ABORTED') UNION ALL SELECT 1 FROM production_start_intents")){
+            try(var s=connection.prepareStatement("SELECT 1 FROM production_executions e JOIN economic_buildings identity ON identity.id=e.building_id LEFT JOIN production_batches b ON b.batch_id=e.current_batch_id WHERE identity.lifecycle='EXISTING' AND (e.last_completed_tick<? OR e.processing_tick IS NOT NULL OR e.boundary<>'NONE' OR b.status IN ('SETTLING_COMPLETED','SETTLING_ABORTED')) UNION ALL SELECT 1 FROM production_start_intents")){
                 s.setLong(1,expected);try(var r=s.executeQuery()){if(r.next())throw new IllegalStateException("Previous accepted Tick has unfinished production facts");}
             }
             try (var s = connection.prepareStatement("UPDATE economic_time SET accepted_tick=?,revision=?,first_uncertain_production_tick=CASE WHEN first_uncertain_production_tick IS NULL AND production_callback_returned_tick<accepted_tick THEN production_callback_returned_tick+1 ELSE first_uncertain_production_tick END WHERE id=1 AND revision=?")) {

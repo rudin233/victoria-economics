@@ -58,6 +58,7 @@ public final class ServerEconomyContext implements AutoCloseable {
     private final CompanyPayrollService payrollPayments;
     private final PayrollPeriodService payrollPeriods;
     private final RegionalHouseholdService households;
+    private final com.bbmurloc.victoriaeconomics.server.building.application.BuildingLifecycleService lifecycle;
 
     public ServerEconomyContext(MinecraftServer server) {
         DefaultDefinitions.registerIndustries(industries);
@@ -92,8 +93,9 @@ public final class ServerEconomyContext implements AutoCloseable {
             payrollPayments=new CompanyPayrollService(connection,economyLock);
             payrollPeriods=new PayrollPeriodService(connection,economyLock);
             households=new RegionalHouseholdService(connection,economyLock);
+            lifecycle=new com.bbmurloc.victoriaeconomics.server.building.application.BuildingLifecycleService(connection,economyLock,recipes,production::settleForLifecycle,database::openVerificationConnection);
             clock = new EconomicClock(new SqliteEconomicTimeRepository(connection, economyLock),
-                    payrollAccrual::recoverAcceptedTime, production::onEconomicTick,production::recoverAcceptedTick,payrollPeriods::recoverAcceptedTime);
+                    payrollAccrual::recoverAcceptedTime, production::onEconomicTick,()->{lifecycle.recoverUnfinished();production.recoverAcceptedTick();},payrollPeriods::recoverAcceptedTime);
         } catch (RuntimeException failure) {
             database.close();
             throw failure;
@@ -146,6 +148,7 @@ public final class ServerEconomyContext implements AutoCloseable {
     public CompanyPayrollService getPayrollPayments(){return payrollPayments;}
     public PayrollPeriodService getPayrollPeriods(){return payrollPeriods;}
     public RegionalHouseholdService getHouseholds(){return households;}
+    public com.bbmurloc.victoriaeconomics.server.building.application.BuildingLifecycleService getLifecycleService(){return lifecycle;}
 
     @Override
     public void close() {

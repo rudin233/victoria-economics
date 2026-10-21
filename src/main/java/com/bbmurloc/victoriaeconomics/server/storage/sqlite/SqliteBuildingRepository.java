@@ -55,6 +55,7 @@ public final class SqliteBuildingRepository implements BuildingRepository {
                 try { tx.perform(() -> {
                     if (building.identityRevision() != Math.incrementExact(expected)) throw new IllegalArgumentException("Save one identity revision");
                     var current = read(building.getId());
+                    com.bbmurloc.victoriaeconomics.server.building.infrastructure.SqliteBuildingLifecycleOperationRepository.requireOperational(connection,tx,building.getId());
                     if (current.lifecycle() != BuildingLifecycle.EXISTING) throw new IllegalStateException("Historical identity is immutable");
                     if (!current.getBuildingTypeId().equals(building.getBuildingTypeId())
                             || !current.ownerCompanyId().equals(building.ownerCompanyId()) || !current.regionId().equals(building.regionId())

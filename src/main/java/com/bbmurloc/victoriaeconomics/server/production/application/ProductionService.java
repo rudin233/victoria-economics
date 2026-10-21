@@ -41,6 +41,11 @@ public final class ProductionService {
     public void setAutomatic(UUID id,boolean enabled){coordinator.automatic(id,enabled);}
     public void setManualPause(UUID id,boolean pause){coordinator.manualPause(id,pause);}
     public void retry(UUID id){synchronized(lock){recoverStarts();settleAndHandleBoundary(id);blocked.remove(id);}}
+    /** Lifecycle reuses the exact Journal/settlement protocol without applying seller Pending changes. */
+    public void settleForLifecycle(UUID id){synchronized(lock){
+        if(!coordinator.lifecycleHeld(id))throw new IllegalStateException("Durable lifecycle intent required");
+        recoverStarts();settleAndHandleBoundary(id);
+    }}
     private void settleAndHandleBoundary(UUID id){
         var e=coordinator.execution(id);var batch=e.batch();
         if(batch!=null&&batch.needsSettlement()){
@@ -51,7 +56,7 @@ public final class ProductionService {
             coordinator.confirmSettlement(id,batch.getId());
         }
         e=coordinator.execution(id);
-        if(!e.hasUnfinishedBatch())coordinator.reconfigure(id);
+        if(!e.hasUnfinishedBatch()&&!coordinator.lifecycleHeld(id))coordinator.reconfigure(id);
     }
     /** One durable advance per building/accepted Tick. A failure leaves that Tick pending and stops global allocation. */
     public void onEconomicTick(){synchronized(lock){
@@ -59,7 +64,8 @@ public final class ProductionService {
         for(UUID id:coordinator.buildingIds())try{
             if(!coordinator.advance(id,tick))continue;
             settleAndHandleBoundary(id);var e=coordinator.execution(id);
-            if(e.batch()==null&&e.automatic())try{startBatch(id,true);}catch(ProductionStartBlocked denied){block(id,denied);}
+            if(e.batch()==null&&e.automatic()&&!coordinator.lifecycleHeld(id))try{startBatch(id,true);}catch(ProductionStartBlocked denied){block(id,denied);}
+            if(e.boundary()!=ProductionExecution.Boundary.NONE&&coordinator.lifecycleHeld(id))throw new IllegalStateException("Lifecycle resource handoff remains incomplete; recover its OperationId");
             coordinator.finishTick(id,tick);
         }catch(RuntimeException failure){block(id,failure);failures.add(failure);}
         if(!failures.isEmpty()){var failure=new IllegalStateException("Production Tick remains incomplete: "+tick);failures.forEach(failure::addSuppressed);throw failure;}

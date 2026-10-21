@@ -1,5 +1,7 @@
 # 第二轮 DDD 审计：Production Operations 跨上下文契约
 
+> **部分 Superseded（2026-10-21）**：本文是历史解耦审查；旧类、持有关系和当时未实现的工资能力不能作为当前源码说明。 [当前运行合同](current-runtime.md)。保留原文作为历史，不表示当前仍执行旧规则。
+
 > 历史记录：本文对应 `ef94beb` 到 `01a8c0a` 的第二轮契约解耦，保留当时证据与 A/B 建议。后续用户已经通过 [ADR-PO-02](../../architecture/adr/ADR-PO-02.md) 确认 B′，当前已实现独立生产 Repository、全新初始 Schema 和生命周期事实 Port。现行入口见 [代码阅读地图](code-reading-map.md)；本文的“本轮不实施”及联合建筑 checkpoint 描述仅指当时任务，不代表当前代码。
 
 2026-10-09。本轮以本地实际源码和 [领域概览](overview.md)、[阅读地图](code-reading-map.md)、[第一轮包迁移审计](package-refactoring.md) 为依据。本文记录实现与建议，不改变概览中已确认的聚合结论。设备协议和 ProductionSite 均为待评审建议，本轮没有实施。

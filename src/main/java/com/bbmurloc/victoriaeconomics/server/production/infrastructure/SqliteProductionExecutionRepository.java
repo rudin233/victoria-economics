@@ -95,6 +95,19 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
     }
 
     private void persist(ProductionExecution changed, long expectedRevision) throws SQLException {
+        try(var s=connection.prepareStatement("SELECT b.lifecycle,o.id,e.current_batch_id,e.last_batch_id FROM economic_buildings b JOIN production_executions e ON e.building_id=b.id LEFT JOIN building_lifecycle_operations o ON o.building_id=b.id WHERE b.id=?")) {
+            s.setString(1,changed.buildingId().toString());try(var r=s.executeQuery()) {
+                if(!r.next())throw new IllegalStateException("Unknown building identity");
+                if(!r.getString(1).equals("EXISTING")||r.getString(2)!=null) {
+                    if(changed.automatic()||(changed.batch()!=null&&(changed.batch().isActive()||changed.batch().getStatus()==ProductionBatch.Status.PAUSED)))
+                        throw new IllegalStateException("Lifecycle identity blocks new or resumed production");
+                    if(changed.batch()!=null&&!changed.batch().getId().toString().equals(r.getString("current_batch_id")))
+                        throw new IllegalStateException("Lifecycle identity cannot acquire another Batch even in a settling state");
+                    if(changed.lastBatch()!=null&&!changed.lastBatch().getId().toString().equals(r.getString("last_batch_id"))&&!changed.lastBatch().getId().toString().equals(r.getString("current_batch_id")))
+                        throw new IllegalStateException("Lifecycle identity cannot invent another historical Batch");
+                }
+            }
+        }
         if (changed.executionRevision() != expectedRevision) throw new ProductionRevisionConflict("Stale execution object");
         try(var s=connection.prepareStatement("SELECT last_completed_tick,processing_tick FROM production_executions WHERE building_id=?")){
             s.setString(1,changed.buildingId().toString());try(var r=s.executeQuery()){

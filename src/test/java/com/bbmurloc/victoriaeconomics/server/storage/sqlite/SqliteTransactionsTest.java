@@ -566,6 +566,36 @@ class SqliteTransactionsTest {
             statement.executeUpdate();
         }
     }
+    @Test
+    void xerialMetadataKeepsItsDeclaredJdbcInterfaceAndCannotExposeThePhysicalHandle() throws Exception {
+        var protectedConnection=SqliteConnectionGuard.protect(actual);
+        try(var statement=protectedConnection.prepareStatement("SELECT ? AS value")) {
+            statement.setInt(1,7);var parameters=statement.getParameterMetaData();
+            assertEquals(1,parameters.getParameterCount());assertSame(parameters,parameters.unwrap(java.sql.ParameterMetaData.class));
+            assertFalse(parameters.isWrapperFor(org.sqlite.SQLiteConnection.class));
+            try(var rows=statement.executeQuery()) {
+                assertTrue(rows.next());var metadata=rows.getMetaData();assertEquals(1,metadata.getColumnCount());assertEquals("value",metadata.getColumnLabel(1));
+                assertSame(metadata,metadata.unwrap(java.sql.ResultSetMetaData.class));assertFalse(metadata.isWrapperFor(java.sql.ResultSet.class));
+                assertThrows(SQLFeatureNotSupportedException.class,()->metadata.unwrap(org.sqlite.jdbc4.JDBC4ResultSet.class));
+                assertEquals(7,rows.getInt(1));
+            }
+        }
+    }
+
+    @Test
+    void previouslyReturnedResultAndParameterMetadataShareStickyQuarantine() throws Exception {
+        var protectedConnection=SqliteConnectionGuard.protect(actual);
+        try(var statement=protectedConnection.prepareStatement("SELECT ? AS value")) {
+            statement.setInt(1,7);var parameters=statement.getParameterMetaData();
+            try(var rows=statement.executeQuery()) {
+                assertTrue(rows.next());var metadata=rows.getMetaData();assertEquals(1,metadata.getColumnCount());
+                SqliteConnectionGuard.quarantine(protectedConnection,new SQLException("Uncertain test commit"));
+                assertThrows(SQLException.class,metadata::getColumnCount);assertThrows(SQLException.class,parameters::getParameterCount);
+                assertThrows(SQLException.class,()->metadata.unwrap(java.sql.ResultSetMetaData.class));assertThrows(SQLException.class,rows::next);
+                assertThrows(CommitOutcomeUnknownException.class,()->SqliteTransactions.requireCommittedReads(protectedConnection));
+            }
+        }
+    }
 
     private List<Integer> committedValues() throws SQLException {
         try (var observer = DriverManager.getConnection("jdbc:sqlite:" + file);

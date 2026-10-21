@@ -1,5 +1,7 @@
 # 交给 Codex 的本地实施任务 — ADR-PO-01 + ADR-PO-02（方案 B'）
 
+> **部分 Superseded（2026-10-21）**：这是已执行的历史任务单；其设备/NPC、三阶段、比例结算和旧 Tick 验收要求已被正式新规则取代。 [当前运行合同](../domain/production-operations/current-runtime.md)。保留原文作为历史，不表示当前仍执行旧规则。
+
 你正在 `victoria-economics` 的 IDEA 本地源码工作区内工作。请以**实际修改代码并验证通过**为任务，而不是仅提交设计报告。
 
 ## 1. 当前背景

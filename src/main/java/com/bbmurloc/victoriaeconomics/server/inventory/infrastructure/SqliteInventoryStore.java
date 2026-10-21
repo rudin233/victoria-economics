@@ -64,6 +64,11 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
         }
     }
 
+    /** Explicit lifecycle verification under the caller's write lock; never a second inventory authority. */
+    public GoodsInventory.State inspect(SqliteTransactions.WriteSession tx,UUID location) throws SQLException {
+        return tx.perform(()->{tx.requireConnection(connection);return read(location).inventory().state();});
+    }
+
     @Override
     public void reserve(UUID location, UUID batch, Map<String, Long> inputs) {
         mutate(location, i -> {

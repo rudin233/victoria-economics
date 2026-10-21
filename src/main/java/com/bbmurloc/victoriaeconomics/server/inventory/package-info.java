@@ -3,5 +3,6 @@
  * <p>
  * domain 保护单地点整数商品库存、容量、排他预留及完整结算回执；
  * infrastructure 通过受控 SQLite 写事务与地点 revision CAS 保存权威状态。
+ * 当前地点没有资产所有者合同；locationId 不证明产权，也不授权随建筑转移或销毁商品。
  */
 package com.bbmurloc.victoriaeconomics.server.inventory;
