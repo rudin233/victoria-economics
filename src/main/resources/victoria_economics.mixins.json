@@ -2,7 +2,7 @@
   "required": true,
   "package": "com.bbmurloc.victoriaeconomics.mixin",
   "compatibilityLevel": "JAVA_21",
-  "mixins": [],
+  "mixins": ["EconomySaveMixin"],
   "injectors": {
     "defaultRequire": 1
   },

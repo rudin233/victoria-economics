@@ -1,5 +1,7 @@
 package com.bbmurloc.victoriaeconomics.server.payroll.application;
 
+import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
+
 import com.bbmurloc.victoriaeconomics.server.payroll.domain.*;
 import com.bbmurloc.victoriaeconomics.server.payroll.infrastructure.SqlitePayrollRepository;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.*;
@@ -16,7 +18,8 @@ public final class PayrollAccrualService {
         SqliteTransactions.write(connection, tx -> { repository.inTransaction(tx).addRate(rate); return null; });
     } }
     /** Recovery is bounded by accepted SQLite time, never wall time; rerunning cannot duplicate a period. */
-    public void recoverAcceptedTime() { synchronized (lock) {
+    public void recoverAcceptedTime() {
+        try (var diagnosticScope = EconomyDiagnostics.scope("payroll.accrual")) { synchronized (lock) {
         SqliteTransactions.write(connection, tx -> {
             var time = SqliteEconomicTimeRepository.inTransaction(connection, tx);
             var session = repository.inTransaction(tx); var segments = session.all();
@@ -25,15 +28,15 @@ public final class PayrollAccrualService {
                 if (r.next()) throw new IllegalStateException("Employed Staffing has no trusted payroll enrollment; cursor cannot skip its wage history");
             }
             // A caught-up global cursor alone never establishes a building's enrollment or wage readiness.
-            for (var segment : segments) {
-                session.validateEmployees(segment);
-                session.accrue(segment, time.acceptedTick());
-            }
+            session.accrueAll(segments,time.acceptedTick());
+            if(time.payrollTick()==time.acceptedTick())return null; // All enrollment/base checks above still run.
             try (var s = connection.prepareStatement("UPDATE payroll_runtime SET processed_tick=?,revision=revision+1 WHERE id=1 AND processed_tick=? AND revision<9223372036854775807")) {
                 s.setLong(1, time.acceptedTick()); s.setLong(2, time.payrollTick());
                 if (s.executeUpdate() != 1) throw new IllegalStateException("Payroll cursor CAS/overflow conflict");
             }
             return null;
         });
-    } }
+    }
+        }
+    }
 }

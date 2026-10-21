@@ -12,7 +12,7 @@ import java.math.BigDecimal;
 import java.util.*;
 import java.util.function.Function;
 
-/** Schema v9 integer goods and participation; normalized payments share this version contract. */
+/** Schema v10 checkpoints retain the unchanged, explicitly tagged v9 business JSON contract. */
 public final class EconomyStateCodec {
     private static final Gson GSON = new Gson();
     private static final int FULL_SPEED_TICKS = 200;
@@ -20,8 +20,8 @@ public final class EconomyStateCodec {
 
     /** A future semantic change must replace the schema/codec together, never reinterpret old snapshots in place. */
     public static void requireCurrentFormat() {
-        if (EconomySchema.VERSION != 9 || ProductionBatch.FULL_SPEED_TICKS != FULL_SPEED_TICKS)
-            throw new IllegalStateException("Schema v9 codec requires integer goods and participation; change schema and codec together");
+        if (EconomySchema.VERSION != 10 || ProductionBatch.FULL_SPEED_TICKS != FULL_SPEED_TICKS)
+            throw new IllegalStateException("Schema v10 requires payload format 9 integer goods/participation and 200 ticks");
     }
 
     public static ProductionBatchConfiguration decodeBatchConfiguration(String json) {
@@ -219,6 +219,6 @@ public final class EconomyStateCodec {
 
     private static IllegalArgumentException invalid(String message) { return new IllegalArgumentException(message); }
     private static IllegalStateException incompatible(String kind, RuntimeException failure) {
-        return new IllegalStateException("Invalid or incompatible Schema v9 " + kind + "; no conversion was attempted", failure);
+        return new IllegalStateException("Invalid or incompatible payload format 9 " + kind + " (Schema v10); no conversion was attempted", failure);
     }
 }

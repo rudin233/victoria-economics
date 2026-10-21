@@ -1,5 +1,7 @@
 package com.bbmurloc.victoriaeconomics.server.storage.sqlite;
 
+import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
+
 import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteOpenMode;
 
@@ -13,7 +15,24 @@ import java.sql.SQLException;
 public final class SqliteEconomyDatabase {
     private SqliteEconomyDatabase() {}
 
+    /** Compatibility/recovery never obtains a writable file handle, including for WAL worlds. */
+    public static Connection openReadOnly(Path file) {
+        Connection connection = null;
+        try {
+            var config = new SQLiteConfig();
+            config.setReadOnly(true);
+            connection = SqliteConnectionGuard.protect(DriverManager.getConnection(
+                    "jdbc:sqlite:" + file.toAbsolutePath(), config.toProperties()));
+            EconomySchema.validateExisting(connection);
+            return connection;
+        } catch (SQLException | RuntimeException failure) {
+            if (connection != null) try { connection.close(); } catch (SQLException close) { failure.addSuppressed(close); }
+            throw new IllegalStateException("Cannot read compatible economy checkpoint; no migration was attempted", failure);
+        }
+    }
+
     public static Connection open(Path file) {
+        try (var diagnosticScope = EconomyDiagnostics.scope("database.open")) {
         Connection connection = null;
         try {
             boolean existing = Files.exists(file);
@@ -37,6 +56,8 @@ public final class SqliteEconomyDatabase {
             if (connection != null) try { connection.close(); }
             catch (SQLException close) { failure.addSuppressed(close); }
             throw new IllegalStateException("Cannot open Victoria Economics database; use a new world if incompatible. No migration was attempted: " + failure.getMessage(), failure);
+        }
+
         }
     }
 }

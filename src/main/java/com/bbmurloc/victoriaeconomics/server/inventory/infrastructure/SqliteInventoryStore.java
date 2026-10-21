@@ -1,5 +1,7 @@
 package com.bbmurloc.victoriaeconomics.server.inventory.infrastructure;
 
+import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
+
 import com.bbmurloc.victoriaeconomics.server.production.port.ProductionInventoryPort;
 import com.bbmurloc.victoriaeconomics.server.inventory.domain.GoodsInventory;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.EconomyStateCodec;
@@ -37,14 +39,14 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
     }
 
     public void deposit(UUID location, Map<String, Long> amounts) {
-        mutate(location, i -> {
+        mutate(location, "inventory.deposit", i -> {
             i.deposit(amounts);
             return null;
         });
     }
 
     public void withdraw(UUID location, Map<String, Long> amounts) {
-        mutate(location, i -> {
+        mutate(location, "inventory.withdraw", i -> {
             i.withdraw(amounts);
             return null;
         });
@@ -71,7 +73,7 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
 
     @Override
     public void reserve(UUID location, UUID batch, Map<String, Long> inputs) {
-        mutate(location, i -> {
+        mutate(location, "inventory.reserve", i -> {
             i.reserve(batch, inputs);
             return null;
         });
@@ -86,7 +88,7 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
 
     @Override
     public void release(UUID location, UUID batch) {
-        mutate(location, i -> {
+        mutate(location, "inventory.release", i -> {
             i.release(batch);
             return null;
         });
@@ -94,7 +96,8 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
 
     @Override
     public SettlementReceipt settle(UUID location, ProductionSettlement command) {
-        var settlement = mutate(location, i -> i.settle(command));
+        EconomyDiagnostics.count("inventory.settlement");
+        var settlement = mutate(location, "inventory.settle", i -> i.settle(command));
         return new SettlementReceipt(settlement.command());
     }
 
@@ -128,6 +131,7 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
     }
 
     private Loaded read(UUID location) {
+        try (var diagnosticScope = EconomyDiagnostics.scope("inventory.read")) {
         try (var statement = connection.prepareStatement("SELECT state_json, revision, typeof(revision) AS revision_type FROM inventory_locations WHERE location_id = ?")) {
             statement.setString(1, location.toString());
             try (var rows = statement.executeQuery()) {
@@ -140,16 +144,21 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
         } catch (SQLException e) {
             throw failure(location, e);
         }
+
+        }
     }
 
-    private <T> T mutate(UUID location, Function<GoodsInventory, T> operation) {
+    private <T> T mutate(UUID location, String diagnosticOperation, Function<GoodsInventory, T> operation) {
+        try (var diagnosticScope = EconomyDiagnostics.scope("inventory.mutate");
+             var operationScope = EconomyDiagnostics.scope(diagnosticOperation)) {
         synchronized (lock) {
             return SqliteTransactions.write(connection, session -> {
                 session.requireConnection(connection);
                 Loaded loaded = read(location); // Authoritative re-read only after BEGIN IMMEDIATE.
                 GoodsInventory inventory = loaded.inventory();
                 var before = inventory.state();
-                T result = operation.apply(inventory);
+                T result;
+                try (var domainScope = EconomyDiagnostics.scope("inventory.domain")) { result = operation.apply(inventory); }
                 if (before.equals(inventory.state())) return result;
                 try (var statement = connection.prepareStatement("UPDATE inventory_locations SET state_json = ?, revision = ? WHERE location_id = ? AND revision = ?")) {
                     statement.setString(1, EconomyStateCodec.encodeInventory(inventory.state()));
@@ -162,6 +171,8 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
                     throw failure(location, e);
                 }
             });
+        }
+
         }
     }
 

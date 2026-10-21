@@ -42,7 +42,7 @@ final class GameEconomyFixture {
         }
     }
     ServerEconomyContext context(){return ServerEconomyRuntime.get(server);}
-    Connection connect(){return SqliteEconomyDatabase.open(database);}
+    Connection connect(){return context().openRuntimeVerificationConnection();}
     EconomicBuilding create(int laborers,int machinists)throws Exception{
         var before=context().getBuildingRegistry().getAll().stream().map(EconomicBuilding::getId).collect(java.util.stream.Collectors.toSet());
         if(command("ve debug create tooling_workshop 1000000 "+company+" "+region,4)!=1)throw new AssertionError("Actual creation command failed");

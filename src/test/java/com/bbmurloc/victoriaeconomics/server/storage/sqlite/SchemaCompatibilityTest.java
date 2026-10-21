@@ -25,7 +25,7 @@ class SchemaCompatibilityTest {
     private static final UUID RESERVED = UUID.fromString("00000000-0000-0000-0000-000000000004");
     private static final UUID SETTLED = UUID.fromString("00000000-0000-0000-0000-000000000005");
 
-    // Literal v9 and historical v2-v8 fixtures, independent of the current writer.
+    // Literal format-9 business JSON in v10 and historical v2-v9 fixtures, independent of the current writer.
     private static final String BATCH_JSON = """
             {"formatVersion":9,"fullSpeedTicks":200,"snapshot":{"productionMethodSelections":{"base":"a"},
              "resolvedRecipe":{"inputs":{"ore":10},"outputs":{"metal":5},"requiredWorkers":{"worker":1}},
@@ -67,7 +67,7 @@ class SchemaCompatibilityTest {
              "workforcePlan":{"employees":{"worker":["%s"]},"speedNumerator":1,"speedDenominator":1},"effectiveRevision":0}}
             """.formatted(EMPLOYEE);
 
-    @Test void validV9LoadsIntegerGoodsAndIntegerParticipation() throws Exception {
+    @Test void validV10LoadsIntegerGoodsAndIntegerParticipation() throws Exception {
         Path file = fixture("v9.sqlite");
         seedBatch(file, BATCH_JSON, "ACTIVE", 100);
         byte[] before = Files.readAllBytes(file);
@@ -83,9 +83,9 @@ class SchemaCompatibilityTest {
             assertEquals(12L, stock.quantities().get("ore"));
             assertEquals(5L, stock.reservations().get(RESERVED).get("ore"));
             assertEquals(1L, stock.settlements().get(SETTLED).produced().get("metal"));
-            assertEquals(9, scalar(connection, "SELECT version FROM economy_schema_migrations"));
+            assertEquals(10, scalar(connection, "SELECT version FROM economy_schema_migrations"));
         }
-        assertArrayEquals(before, Files.readAllBytes(file), "Read-only startup must not rewrite valid v9 data");
+        assertArrayEquals(before, Files.readAllBytes(file), "Read-only startup must not rewrite valid v10 data");
     }
 
     @ParameterizedTest @ValueSource(strings = {"ACTIVE", "PAUSED", "SETTLING_COMPLETED", "SETTLING_ABORTED"})
@@ -101,7 +101,7 @@ class SchemaCompatibilityTest {
     }
 
     @ParameterizedTest @ValueSource(strings = {"ACTIVE", "PAUSED", "SETTLING_COMPLETED", "SETTLING_ABORTED"})
-    void currentV9BatchStatesUseThe200TickBasis(String status) throws Exception {
+    void currentV10BatchStatesUseThe200TickBasis(String status) throws Exception {
         Path file = fixture("current-batch.sqlite");
         long progress = status.equals("SETTLING_COMPLETED") ? 200 : 199;
         seedBatch(file, BATCH_JSON, status, progress);
@@ -131,7 +131,7 @@ class SchemaCompatibilityTest {
         }
     }
 
-    @ParameterizedTest @ValueSource(ints = {-1, 0, 2, 3, 4, 5, 6, 7, 99})
+    @ParameterizedTest @ValueSource(ints = {-1, 0, 2, 3, 4, 5, 6, 7, 8, 9, 99})
     void unknownSchemaVersionsAreRejectedBeforeAnyWritableHandleIsExposed(int version) throws Exception {
         Path file = fixture("unknown.sqlite");
         try (var connection = connect(file)) { sql(connection, "UPDATE economy_schema_migrations SET version=" + version); }
@@ -474,7 +474,7 @@ class SchemaCompatibilityTest {
         Path file = directory.resolve("new.sqlite");
         assertFalse(Files.exists(file));
         try (var connection = SqliteEconomyDatabase.open(file)) {
-            assertEquals(9, scalar(connection, "SELECT version FROM economy_schema_migrations"));
+            assertEquals(10, scalar(connection, "SELECT version FROM economy_schema_migrations"));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM sqlite_master WHERE name='equipment_holdings'"));
             var store = new SqliteInventoryStore(connection, new Object());
             store.createLocation(BUILDING, 100);
@@ -539,7 +539,7 @@ class SchemaCompatibilityTest {
     private Path fixture(String name) throws Exception { return fixture(name, UnaryOperator.identity()); }
 
     private Path fixture(String name, UnaryOperator<String> change) throws Exception {
-        return fixture(name, change, 9);
+        return fixture(name, change, 10);
     }
 
     @ParameterizedTest @ValueSource(strings={"ACTIVE","PAUSED","SETTLING_COMPLETED","SETTLING_ABORTED","COMPLETED","ABORTED"})
@@ -597,7 +597,7 @@ class SchemaCompatibilityTest {
             sql(connection, "INSERT INTO production_executions VALUES('" + BUILDING + "',NULL,NULL,'NONE',0,0,0" + (version >= 7 ? ",NULL,'[]'" : "") + ")");
             try (var insert = connection.prepareStatement(version == 2 ? "INSERT INTO inventory_locations VALUES(?,?)" : "INSERT INTO inventory_locations VALUES(?,?,0)")) {
                 insert.setString(1, BUILDING.toString());
-                insert.setString(2, version == 2 ? LEGACY_INVENTORY_JSON : INVENTORY_JSON.replace("\"formatVersion\":9", "\"formatVersion\":" + version));
+                insert.setString(2, version == 2 ? LEGACY_INVENTORY_JSON : version == 10 ? INVENTORY_JSON : INVENTORY_JSON.replace("\"formatVersion\":9", "\"formatVersion\":" + version));
                 insert.executeUpdate();
             }
         }

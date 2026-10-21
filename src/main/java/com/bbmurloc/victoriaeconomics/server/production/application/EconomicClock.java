@@ -1,5 +1,7 @@
 package com.bbmurloc.victoriaeconomics.server.production.application;
 
+import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
+
 import java.util.Objects;
 import com.bbmurloc.victoriaeconomics.server.time.port.EconomicTimeRepository;
 import com.bbmurloc.victoriaeconomics.server.time.domain.EconomicTime;
@@ -37,25 +39,29 @@ public final class EconomicClock {
         this.tick = Objects.requireNonNull(tick);
         this.productionRecovery=Objects.requireNonNull(productionRecovery);
         this.paymentRecovery=Objects.requireNonNull(paymentRecovery);
-        repository.recordRecoveryGap(); payrollRecovery.run();
-        paymentRecovery.run();
-        productionRecovery.run();
+        repository.recordRecoveryGap(); EconomyDiagnostics.measure("clock.payroll", payrollRecovery);
+        EconomyDiagnostics.measure("clock.payments", paymentRecovery);
+        EconomyDiagnostics.measure("clock.productionRecovery", productionRecovery);
     }
 
     public void onServerTick() {
+        try (var diagnosticScope = EconomyDiagnostics.scope("clock.tick")) {
         if (repository == null) { tick.run(); ticks = Math.incrementExact(ticks); return; }
         if (halted) throw new IllegalStateException("Economic clock halted after failure; reopen a trusted connection and verify persisted cursors");
         try {
-            paymentRecovery.run();
-            productionRecovery.run();
-            var accepted = repository.acceptNext(repository.load().acceptedTick());
-            payrollRecovery.run();
-            paymentRecovery.run();
+            EconomyDiagnostics.measure("clock.payments", paymentRecovery);
+            EconomyDiagnostics.measure("clock.productionRecovery", productionRecovery);
+            com.bbmurloc.victoriaeconomics.server.time.domain.EconomicTime accepted;
+            try (var acceptance = EconomyDiagnostics.scope("clock.accept")) { accepted = repository.acceptNext(repository.load().acceptedTick()); }
+            EconomyDiagnostics.measure("clock.payroll", payrollRecovery);
+            EconomyDiagnostics.measure("clock.payments", paymentRecovery);
             tick.run();
             // Formal production already verified every building and confirmed this Tick in SQLite.
             // This idempotent invocation receipt alone is never evidence of business completion.
             repository.acknowledgeProductionCallback(accepted.acceptedTick());
         } catch (RuntimeException | Error failure) { halted = true; throw failure; }
+
+        }
     }
 
     public long elapsedTicks() {

@@ -1,5 +1,7 @@
 package com.bbmurloc.victoriaeconomics.server;
 
+import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
+
 import com.bbmurloc.victoriaeconomics.common.definition.*;
 import com.bbmurloc.victoriaeconomics.common.definition.building.*;
 import com.bbmurloc.victoriaeconomics.common.definition.good.*;
@@ -59,6 +61,8 @@ public final class ServerEconomyContext implements AutoCloseable {
     private final PayrollPeriodService payrollPeriods;
     private final RegionalHouseholdService households;
     private final com.bbmurloc.victoriaeconomics.server.building.application.BuildingLifecycleService lifecycle;
+    private boolean stopping;
+    private long nativeSaves, nativeAutomaticSaves, nativeFlushSaves, captureFailures;
 
     public ServerEconomyContext(MinecraftServer server) {
         DefaultDefinitions.registerIndustries(industries);
@@ -69,7 +73,7 @@ public final class ServerEconomyContext implements AutoCloseable {
         DefaultDefinitions.registerBuildingTypes(types);
         DefinitionValidator.validateAll(industries, goods, occupations, types, groups, methods);
         recipes = new ProductionRecipeResolver(types, groups, methods);
-        database = EconomyDatabase.open(server);
+        database = EconomyDatabase.open(server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT));
         try {
             var connection = database.getConnection();
             SqliteOccupationCatalog.register(connection, occupations);
@@ -103,8 +107,12 @@ public final class ServerEconomyContext implements AutoCloseable {
     }
 
     public void onServerTick() {
+        try (var diagnosticScope = EconomyDiagnostics.scope("context.tick")) {
         synchronized (economyLock) {
+            if (stopping) return;
             clock.onServerTick();
+        }
+
         }
     }
 
@@ -150,10 +158,65 @@ public final class ServerEconomyContext implements AutoCloseable {
     public RegionalHouseholdService getHouseholds(){return households;}
     public com.bbmurloc.victoriaeconomics.server.building.application.BuildingLifecycleService getLifecycleService(){return lifecycle;}
 
+    /** Queue acceptance is not a successful save. Capture touches no unresolved business transaction. */
+    public void onNativeSave() {
+        synchronized (economyLock) {
+            try { database.requestCheckpoint().whenComplete((receipt, failure) -> {
+                if (failure != null) com.bbmurloc.victoriaeconomics.VictoriaEconomics.LOGGER.error("VE economic checkpoint FAILED; previous save retained", failure);
+                else com.bbmurloc.victoriaeconomics.VictoriaEconomics.LOGGER.debug("VE economic checkpoint committed: {} at tick {}", receipt.checkpointId(), receipt.economicTick());
+            }); } catch (RuntimeException failure) {
+                captureFailures = Math.incrementExact(captureFailures); throw failure;
+            }
+        }
+    }
+    public void onNativeSave(boolean flush, boolean forced) {
+        synchronized (economyLock) {
+            nativeSaves = Math.incrementExact(nativeSaves);
+            if (!forced && !stopping) nativeAutomaticSaves = Math.incrementExact(nativeAutomaticSaves);
+            if (flush) nativeFlushSaves = Math.incrementExact(nativeFlushSaves);
+            onNativeSave();
+        }
+    }
+    public record NativeSaveStatus(long requests, long automaticRequests, long flushRequests, long rejectedCaptures) {}
+    public NativeSaveStatus nativeSaveStatus() { return new NativeSaveStatus(nativeSaves, nativeAutomaticSaves, nativeFlushSaves, captureFailures); }
+    public void awaitEconomicSave() {
+        try (var ignored = EconomyDiagnostics.scope("checkpoint.wait")) {
+            synchronized (economyLock) { database.awaitLatestCheckpoint(); }
+        }
+    }
+    public void awaitNativeSave() {
+        try { awaitEconomicSave(); }
+        catch (RuntimeException failure) {
+            if (!stopping) throw failure;
+            com.bbmurloc.victoriaeconomics.VictoriaEconomics.LOGGER.error("VE shutdown checkpoint NOT confirmed; continue closing native world files", failure);
+        }
+    }
+    public void flushEconomicSave() { onNativeSave(); awaitEconomicSave(); }
+    public void beginStopping() {
+        synchronized (economyLock) { stopping = true; recoverBeforeSave(); }
+        flushEconomicSave();
+    }
+    private void recoverBeforeSave() { lifecycle.recoverUnfinished(); production.recoverAcceptedTick(); }
+    public com.bbmurloc.victoriaeconomics.server.storage.EconomicCheckpointWriter.Status checkpointStatus() { return database.checkpointStatus(); }
+    public java.util.List<com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteCheckpointStore.Timing> checkpointTimings() { return database.checkpointTimings(); }
+    /** Infrastructure verification reads current RAM authority, never the older disk image. */
+    public java.sql.Connection openRuntimeVerificationConnection() {
+        synchronized (economyLock) { return database.openVerificationConnection(); }
+    }
+
     @Override
     public void close() {
         synchronized (economyLock) {
+            stopping = true;
+            RuntimeException recovery = null;
+            try { recoverBeforeSave(); } catch (RuntimeException failure) { recovery = failure; }
+            try {
             database.close();
+            } catch (RuntimeException failure) {
+                if (recovery != null) failure.addSuppressed(recovery);
+                throw failure;
+            }
+            if (recovery != null) throw recovery;
         }
     }
 }

@@ -30,6 +30,16 @@ public final class ProductionCommands {
     }
     public static void registerCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(literal("ve").requires(source -> source.hasPermission(2))
+                .then(literal("checkpoint")
+                        .then(literal("status").executes(ctx -> run(ctx, economy -> {
+                            var status=economy.checkpointStatus();
+                            reply(ctx,"Saved tick="+status.committed().economicTick()+", checkpoint="+status.committed().checkpointId()
+                                    +", in-flight="+status.inFlightSequence()+", pending="+status.pendingSequence()+", failed="+status.failed()
+                                    +", rejected captures="+economy.nativeSaveStatus().rejectedCaptures()+", blocked="+status.blocked()+", last failure="+status.lastFailure());
+                        })))
+                        .then(literal("flush").requires(source -> source.hasPermission(4)).executes(ctx -> run(ctx, economy -> {
+                            economy.flushEconomicSave(); reply(ctx, "Economic checkpoint committed: " + economy.checkpointStatus().committed());
+                        }))))
                 .then(literal("building").then(argument("building",StringArgumentType.word())
                         .then(literal("lifecycle")
                                 .then(literal("status").executes(ctx->run(ctx,economy->reply(ctx,economy.getLifecycleService().forBuilding(id(ctx)).toString()))))
@@ -104,6 +114,8 @@ public final class ProductionCommands {
                                             throw new IllegalArgumentException("Position is not a building anchor");
                                         if (anchor.getBuildingId() != null && !anchor.getBuildingId().equals(id(ctx)))
                                             throw new IllegalStateException("Anchor already bound");
+                                        // Persist this referenced identity before exposing its non-authoritative NBT hint.
+                                        economy.flushEconomicSave();
                                         anchor.setBuildingId(id(ctx));
                                     } catch (com.mojang.brigadier.exceptions.CommandSyntaxException e) {
                                         throw new IllegalArgumentException(e.getMessage(), e);

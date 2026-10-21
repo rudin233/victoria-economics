@@ -1,5 +1,7 @@
 package com.bbmurloc.victoriaeconomics.server.storage.sqlite;
 
+import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
+
 import java.sql.*;
 import org.sqlite.SQLiteConfig.TransactionMode;
 
@@ -29,6 +31,7 @@ public final class SqliteTransactions {
     }
 
     public static <T> T read(Connection connection, ReadWork<T> work) {
+        try (var diagnosticScope = EconomyDiagnostics.scope("sqlite.read")) {
         requireCommittedReads(connection);
         var config = SqliteConnectionGuard.transactionConfig(connection);
         TransactionMode previous = config.getTransactionMode();
@@ -40,6 +43,8 @@ public final class SqliteTransactions {
                 finally { session.active = false; }
             });
         } finally { config.setTransactionMode(previous); }
+
+        }
     }
 
     /** Unforgeable, thread-confined capability for explicit transaction-local repository access. */
@@ -68,6 +73,7 @@ public final class SqliteTransactions {
 
     /** Owns an IMMEDIATE JDBC transaction; nesting cannot establish the required lock-before-read order. */
     public static <T> T write(Connection connection, WriteWork<T> work) {
+        try (var diagnosticScope = EconomyDiagnostics.scope("sqlite.write")) {
         requireCommittedReads(connection);
         var config = SqliteConnectionGuard.transactionConfig(connection);
         TransactionMode previous = config.getTransactionMode();
@@ -90,6 +96,8 @@ public final class SqliteTransactions {
             // Local driver configuration only, including after quarantine; no JDBC reset/SQL here.
             config.setTransactionMode(previous);
         }
+
+        }
     }
 
     /** Standalone authority queries must never mistake an unresolved local transaction for a committed fact. */
@@ -108,6 +116,7 @@ public final class SqliteTransactions {
     }
 
     public static <T> T run(Connection connection, Work<T> work) {
+        try (var diagnosticScope = EconomyDiagnostics.transaction()) {
         SqliteConnectionGuard.requireTrusted(connection);
         boolean own = false;
         boolean started = false;
@@ -117,15 +126,20 @@ public final class SqliteTransactions {
         Throwable pending = null;
         try {
             own = connection.getAutoCommit();
-            if (own) connection.setAutoCommit(false);
-            else point = connection.setSavepoint();
+            EconomyDiagnostics.count(own ? "tx.physical" : "tx.savepoint");
+            try (var diagnosticBegin = EconomyDiagnostics.scope("sqlite.begin")) {
+                if (own) connection.setAutoCommit(false);
+                else point = connection.setSavepoint();
+            }
             started = true;
-            result = work.run();
+            try (var diagnosticWork = EconomyDiagnostics.scope("sqlite.work")) { result = work.run(); }
             // An inner scope may have failed and been caught by the callback. It must still poison this commit.
             SqliteConnectionGuard.requireTrusted(connection);
             committing = true;
-            if (own) connection.commit();
-            else connection.releaseSavepoint(point);
+            try (var diagnosticCommit = EconomyDiagnostics.scope("sqlite.commit")) {
+                if (own) connection.commit();
+                else connection.releaseSavepoint(point);
+            }
         } catch (SQLException | RuntimeException | Error failure) {
             pending = failure;
             if (SqliteConnectionGuard.isQuarantined(connection)) {
@@ -154,7 +168,7 @@ public final class SqliteTransactions {
         // Only a confirmed commit or rollback permits reset: JDBC reset can itself commit.
         if (own && started && !SqliteConnectionGuard.isQuarantined(connection)) {
             try {
-                connection.setAutoCommit(true);
+                try (var diagnosticCleanup = EconomyDiagnostics.scope("sqlite.cleanup")) { connection.setAutoCommit(true); }
             } catch (SQLException | RuntimeException | Error cleanup) {
                 if (pending == null) pending = cleanup;
                 else if (pending != cleanup) pending.addSuppressed(cleanup);
@@ -166,5 +180,7 @@ public final class SqliteTransactions {
         if (pending instanceof Error error) throw error;
         if (pending != null) throw new IllegalStateException("SQLite transaction failed", pending);
         return result;
+
+        }
     }
 }

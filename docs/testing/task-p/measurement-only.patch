@@ -1,0 +1,869 @@
+diff --git a/build.gradle b/build.gradle
+index bedc4da..a363010 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -234,9 +234,11 @@ neoForge {
+                 'task-e-gametest-' + name
+             }.orElse('task-e-gametest'))
+             def acceptanceMode = providers.gradleProperty('veGameTestMode').orElse('full').get()
+-            if (!(acceptanceMode in ['full','restart'])) throw new GradleException('veGameTestMode must be full or restart')
++            if (!(acceptanceMode in ['full','restart','perf'])) throw new GradleException('veGameTestMode must be full, restart or perf')
+             systemProperty 've.acceptanceMode', acceptanceMode
+-            systemProperty 'neoforge.enabledGameTestNamespaces', acceptanceMode == 'restart' ? 'victoria_economics_restarttests' : 'victoria_economics_gametests'
++            systemProperty 've.perfScenario', providers.gradleProperty('vePerfScenario').orElse('active4').get()
++            systemProperty 've.perfLabel', providers.gradleProperty('vePerfLabel').orElse('unspecified').get()
++            systemProperty 'neoforge.enabledGameTestNamespaces', acceptanceMode == 'restart' ? 'victoria_economics_restarttests' : acceptanceMode == 'perf' ? 'victoria_economics_perftests' : 'victoria_economics_gametests'
+         }
+     }
+ }
+@@ -254,3 +256,13 @@ tasks.named('runGameTestServer') {
+             throw new GradleException('The isolated GameTest assertions did not complete; a zero process exit is insufficient')
+     }
+ }
++
++// Read-only startup-cost probe, restricted by the Java entry point to an existing isolated build world.
++tasks.register('profileEconomyPreflight', JavaExec) {
++    dependsOn tasks.named('gameTestClasses')
++    classpath = sourceSets.gameTest.runtimeClasspath
++    mainClass = 'com.bbmurloc.victoriaeconomics.gametest.SchemaPreflightMeasurements'
++    def name = providers.gradleProperty('vePreflightRun').orElse('unspecified').get()
++    if (!(name ==~ /[a-zA-Z0-9_-]{1,48}/)) throw new GradleException('vePreflightRun must identify an isolated run')
++    args = [layout.buildDirectory.dir('task-e-gametest-' + name).get().asFile.absolutePath]
++}
+diff --git a/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/AcceptanceTestMod.java b/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/AcceptanceTestMod.java
+index 70fd703..07c75ff 100644
+--- a/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/AcceptanceTestMod.java
++++ b/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/AcceptanceTestMod.java
+@@ -6,8 +6,8 @@ import net.neoforged.fml.common.Mod;
+ @Mod("victoria_economics_gametests")
+ public final class AcceptanceTestMod {
+     public AcceptanceTestMod() {
+-        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(net.neoforged.bus.api.EventPriority.HIGHEST,(net.neoforged.neoforge.event.server.ServerAboutToStartEvent event)->RestartAcceptanceGameTests.beforeContext(event.getServer()));
+-        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(net.neoforged.bus.api.EventPriority.LOWEST,(net.neoforged.neoforge.event.server.ServerStartingEvent event)->RestartAcceptanceGameTests.afterContext(event.getServer()));
++        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(net.neoforged.bus.api.EventPriority.HIGHEST,(net.neoforged.neoforge.event.server.ServerAboutToStartEvent event)->{PerformanceMeasurements.beforeContext();RestartAcceptanceGameTests.beforeContext(event.getServer());});
++        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(net.neoforged.bus.api.EventPriority.LOWEST,(net.neoforged.neoforge.event.server.ServerStartingEvent event)->{RestartAcceptanceGameTests.afterContext(event.getServer());PerformanceMeasurements.afterContext();});
+         net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.tick.ServerTickEvent.Pre event)->AcceptanceMetrics.beforeTick());
+         net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.tick.ServerTickEvent.Post event)->{AcceptanceMetrics.afterTick();RestartAcceptanceGameTests.afterLogicalTick();});
+     }
+diff --git a/src/gameTest/resources/META-INF/neoforge.mods.toml b/src/gameTest/resources/META-INF/neoforge.mods.toml
+index 405ab67..86c8704 100644
+--- a/src/gameTest/resources/META-INF/neoforge.mods.toml
++++ b/src/gameTest/resources/META-INF/neoforge.mods.toml
+@@ -11,3 +11,6 @@ type="required"
+ versionRange="[0,)"
+ ordering="AFTER"
+ side="SERVER"
++
++[[mixins]]
++config="ve-performance.mixins.json"
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/ServerEconomyContext.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/ServerEconomyContext.java
+index e78253b..57bcab5 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/ServerEconomyContext.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/ServerEconomyContext.java
+@@ -103,9 +103,12 @@ public final class ServerEconomyContext implements AutoCloseable {
+     }
+ 
+     public void onServerTick() {
++        try (var diagnosticScope = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("context.tick")) {
+         synchronized (economyLock) {
+             clock.onServerTick();
+         }
++    
++        }
+     }
+ 
+     public BuildingRegistry getBuildingRegistry() {
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/inventory/infrastructure/SqliteInventoryStore.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/inventory/infrastructure/SqliteInventoryStore.java
+index 3a3ac05..ba76938 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/inventory/infrastructure/SqliteInventoryStore.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/inventory/infrastructure/SqliteInventoryStore.java
+@@ -128,6 +128,7 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
+     }
+ 
+     private Loaded read(UUID location) {
++        try (var diagnosticScope = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("inventory.read")) {
+         try (var statement = connection.prepareStatement("SELECT state_json, revision, typeof(revision) AS revision_type FROM inventory_locations WHERE location_id = ?")) {
+             statement.setString(1, location.toString());
+             try (var rows = statement.executeQuery()) {
+@@ -140,9 +141,12 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
+         } catch (SQLException e) {
+             throw failure(location, e);
+         }
++    
++        }
+     }
+ 
+     private <T> T mutate(UUID location, Function<GoodsInventory, T> operation) {
++        try (var diagnosticScope = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("inventory.mutate")) {
+         synchronized (lock) {
+             return SqliteTransactions.write(connection, session -> {
+                 session.requireConnection(connection);
+@@ -163,6 +167,8 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
+                 }
+             });
+         }
++    
++        }
+     }
+ 
+     private RuntimeException failure(UUID location, SQLException e) {
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/payroll/application/PayrollAccrualService.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/payroll/application/PayrollAccrualService.java
+index 8c8fad4..b67df0e 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/payroll/application/PayrollAccrualService.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/payroll/application/PayrollAccrualService.java
+@@ -16,7 +16,8 @@ public final class PayrollAccrualService {
+         SqliteTransactions.write(connection, tx -> { repository.inTransaction(tx).addRate(rate); return null; });
+     } }
+     /** Recovery is bounded by accepted SQLite time, never wall time; rerunning cannot duplicate a period. */
+-    public void recoverAcceptedTime() { synchronized (lock) {
++    public void recoverAcceptedTime() {
++        try (var diagnosticScope = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("payroll.accrual")) { synchronized (lock) {
+         SqliteTransactions.write(connection, tx -> {
+             var time = SqliteEconomicTimeRepository.inTransaction(connection, tx);
+             var session = repository.inTransaction(tx); var segments = session.all();
+@@ -35,5 +36,7 @@ public final class PayrollAccrualService {
+             }
+             return null;
+         });
+-    } }
++    } 
++        }
++    }
+ }
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/payroll/application/PayrollPeriodService.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/payroll/application/PayrollPeriodService.java
+index 7c517d7..9eebb55 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/payroll/application/PayrollPeriodService.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/payroll/application/PayrollPeriodService.java
+@@ -11,7 +11,8 @@ public final class PayrollPeriodService {
+     private static final System.Logger LOG=System.getLogger(PayrollPeriodService.class.getName());
+     private final Object lock;private final CompanyPayrollService payments;private final SqliteEconomicTimeRepository time;
+     public PayrollPeriodService(Connection c,Object lock){this.lock=lock;payments=new CompanyPayrollService(c,lock);time=new SqliteEconomicTimeRepository(c,lock);}
+-    public void recoverAcceptedTime(){synchronized(lock){
++    public void recoverAcceptedTime(){
++        try (var diagnosticScope = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("payroll.period")) {synchronized(lock){
+         var accepted=time.load();long done=payments.processedPeriod();
+         while(done<accepted.periodId()){
+             long period=Math.incrementExact(done);payments.preparePeriod(period);var failures=new ArrayList<RuntimeException>();
+@@ -24,5 +25,7 @@ public final class PayrollPeriodService {
+             }
+             payments.finishPeriod(period);done=period;
+         }
+-    }}
++    }
++        }
++    }
+ }
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/EconomicClock.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/EconomicClock.java
+index e07f701..be97741 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/EconomicClock.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/EconomicClock.java
+@@ -37,25 +37,29 @@ public final class EconomicClock {
+         this.tick = Objects.requireNonNull(tick);
+         this.productionRecovery=Objects.requireNonNull(productionRecovery);
+         this.paymentRecovery=Objects.requireNonNull(paymentRecovery);
+-        repository.recordRecoveryGap(); payrollRecovery.run();
+-        paymentRecovery.run();
+-        productionRecovery.run();
++        repository.recordRecoveryGap(); com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.measure("clock.payroll", payrollRecovery);
++        com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.measure("clock.payments", paymentRecovery);
++        com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.measure("clock.productionRecovery", productionRecovery);
+     }
+ 
+     public void onServerTick() {
++        try (var diagnosticScope = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("clock.tick")) {
+         if (repository == null) { tick.run(); ticks = Math.incrementExact(ticks); return; }
+         if (halted) throw new IllegalStateException("Economic clock halted after failure; reopen a trusted connection and verify persisted cursors");
+         try {
+-            paymentRecovery.run();
+-            productionRecovery.run();
+-            var accepted = repository.acceptNext(repository.load().acceptedTick());
+-            payrollRecovery.run();
+-            paymentRecovery.run();
++            com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.measure("clock.payments", paymentRecovery);
++            com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.measure("clock.productionRecovery", productionRecovery);
++            com.bbmurloc.victoriaeconomics.server.time.domain.EconomicTime accepted;
++            try (var acceptance = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("clock.accept")) { accepted = repository.acceptNext(repository.load().acceptedTick()); }
++            com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.measure("clock.payroll", payrollRecovery);
++            com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.measure("clock.payments", paymentRecovery);
+             tick.run();
+             // Formal production already verified every building and confirmed this Tick in SQLite.
+             // This idempotent invocation receipt alone is never evidence of business completion.
+             repository.acknowledgeProductionCallback(accepted.acceptedTick());
+         } catch (RuntimeException | Error failure) { halted = true; throw failure; }
++    
++        }
+     }
+ 
+     public long elapsedTicks() {
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionBoundaryCoordinator.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionBoundaryCoordinator.java
+index 4df52bf..72dc154 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionBoundaryCoordinator.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionBoundaryCoordinator.java
+@@ -40,10 +40,13 @@ public final class ProductionBoundaryCoordinator {
+     public ProductionMethodConfiguration methods(UUID id){return methods.load(id);}
+     public long acceptedTick(){return new SqliteEconomicTimeRepository(connection,lock).load().acceptedTick();}
+     public List<UUID> buildingIds(){synchronized(lock){return buildings.loadAll().stream().filter(b->b.lifecycle()==BuildingLifecycle.EXISTING).map(EconomicBuilding::getId).toList();}}
+-    private <T>T write(SqliteTransactions.WriteWork<T> work){synchronized(lock){
++    private <T>T write(SqliteTransactions.WriteWork<T> work){
++        try (var diagnosticScope = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("production.coordinator.write")) {synchronized(lock){
+         try{return SqliteTransactions.write(connection,work);}
+         catch(CommitOutcomeUnknownException unknown){SqliteConnectionGuard.quarantine(connection,unknown);throw unknown;}
+-    }}
++    }
++        }
++    }
+     private EconomicBuilding live(SqliteTransactions.WriteSession tx,UUID id){
+         var b=buildings.inTransaction(tx).load(id);if(b.lifecycle()!=BuildingLifecycle.EXISTING)throw new IllegalStateException("Historical building cannot operate");return b;
+     }
+@@ -177,10 +180,13 @@ public final class ProductionBoundaryCoordinator {
+             }
+         return null;
+     });}
+-    public boolean needsRecovery(){synchronized(lock){return SqliteTransactions.read(connection,tx->{
++    public boolean needsRecovery(){
++        try (var diagnosticScope = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("production.recoveryCheck")) {synchronized(lock){return SqliteTransactions.read(connection,tx->{
+         var time=SqliteEconomicTimeRepository.inSnapshot(connection,tx);if(time.hasUnconfirmedProductionCallback())return true;
+         try(var s=connection.prepareStatement("SELECT 1 FROM production_executions e JOIN economic_buildings identity ON identity.id=e.building_id LEFT JOIN production_batches b ON b.batch_id=e.current_batch_id WHERE identity.lifecycle='EXISTING' AND (e.processing_tick IS NOT NULL OR e.last_completed_tick<? OR e.boundary<>'NONE' OR b.status IN ('SETTLING_COMPLETED','SETTLING_ABORTED')) UNION ALL SELECT 1 FROM production_start_intents")){
+             s.setLong(1,time.acceptedTick());try(var r=s.executeQuery()){return r.next();}
+         }
+-    });}}
++    });}
++        }
++    }
+ }
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionService.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionService.java
+index b42f155..5fedf7d 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionService.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/production/application/ProductionService.java
+@@ -59,9 +59,10 @@ public final class ProductionService {
+         if(!e.hasUnfinishedBatch()&&!coordinator.lifecycleHeld(id))coordinator.reconfigure(id);
+     }
+     /** One durable advance per building/accepted Tick. A failure leaves that Tick pending and stops global allocation. */
+-    public void onEconomicTick(){synchronized(lock){
++    public void onEconomicTick(){
++        try (var diagnosticScope = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("production.tick")) {synchronized(lock){
+         long tick=coordinator.acceptedTick();recoverStarts();var failures=new ArrayList<RuntimeException>();
+-        for(UUID id:coordinator.buildingIds())try{
++        for(UUID id:coordinator.buildingIds())try(var buildingMeasurement=com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("production.building")){
+             if(!coordinator.advance(id,tick))continue;
+             settleAndHandleBoundary(id);var e=coordinator.execution(id);
+             if(e.batch()==null&&e.automatic()&&!coordinator.lifecycleHeld(id))try{startBatch(id,true);}catch(ProductionStartBlocked denied){block(id,denied);}
+@@ -70,9 +71,14 @@ public final class ProductionService {
+         }catch(RuntimeException failure){block(id,failure);failures.add(failure);}
+         if(!failures.isEmpty()){var failure=new IllegalStateException("Production Tick remains incomplete: "+tick);failures.forEach(failure::addSuppressed);throw failure;}
+         coordinator.confirmWholeTick(tick);
+-    }}
++    }
++        }
++    }
+     /** Restart uses the existing accepted Tick and checkpoints; it neither allocates nor guesses missed Ticks. */
+-    public void recoverAcceptedTick(){synchronized(lock){if(!coordinator.needsRecovery())return;recoverStarts();recoverBoundaries();onEconomicTick();}}
++    public void recoverAcceptedTick(){
++        try (var diagnosticScope = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("production.recovery")) {synchronized(lock){if(!coordinator.needsRecovery())return;recoverStarts();recoverBoundaries();onEconomicTick();}
++        }
++    }
+     public void recoverBoundaries(){synchronized(lock){
+         for(UUID id:coordinator.buildingIds()){
+             var e=coordinator.execution(id);
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/EconomySchema.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/EconomySchema.java
+index f140d61..5616303 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/EconomySchema.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/EconomySchema.java
+@@ -58,6 +58,7 @@ public final class EconomySchema {
+ 
+     /** Pure validation of a single committed snapshot; works on a physically read-only connection. */
+     public static void validateExisting(Connection connection) {
++        try (var diagnosticScope = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("schema.validate")) {
+         SqliteTransactions.requireCommittedReads(connection);
+         EconomyStateCodec.requireCurrentFormat();
+         SqliteTransactions.read(connection, snapshot -> {
+@@ -133,6 +134,8 @@ public final class EconomySchema {
+             }
+             return null;
+         });
++    
++        }
+     }
+ 
+     private static Set<String> definitions(Connection connection) throws SQLException {
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/SqliteConnectionGuard.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/SqliteConnectionGuard.java
+index fb032a6..64e1c3e 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/SqliteConnectionGuard.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/SqliteConnectionGuard.java
+@@ -117,6 +117,7 @@ public final class SqliteConnectionGuard {
+         private final Object delegate;
+         private final State state;
+         private Connection owner;
++        private String sql;
+ 
+         private Guard(Object delegate, State state, Connection owner) {
+             this.delegate = delegate;
+@@ -148,7 +149,12 @@ public final class SqliteConnectionGuard {
+ 
+             Object result;
+             try {
++                boolean measured = delegate instanceof Statement && name.startsWith("execute") && com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.enabled();
++                long started = measured ? System.nanoTime() : 0;
+                 result = method.invoke(delegate, arguments);
++                if (measured) com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.sql(
++                        arguments != null && arguments.length > 0 && arguments[0] instanceof String text ? text : sql,
++                        name, result, System.nanoTime() - started);
+             } catch (InvocationTargetException failure) {
+                 throw failure.getCause();
+             }
+@@ -164,8 +170,9 @@ public final class SqliteConnectionGuard {
+                     : result instanceof ResultSet ? ResultSet.class
+                     : result instanceof DatabaseMetaData ? DatabaseMetaData.class : null;
+             if (contract == null) return result;
+-            return Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract},
+-                    new Guard(result, state, owner));
++            var child = new Guard(result, state, owner);
++            child.sql = name.startsWith("prepare") && arguments != null && arguments.length > 0 && arguments[0] instanceof String text ? text : sql;
++            return Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract}, child);
+         }
+     }
+ }
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/SqliteEconomyDatabase.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/SqliteEconomyDatabase.java
+index 6ae8d56..0025053 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/SqliteEconomyDatabase.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/SqliteEconomyDatabase.java
+@@ -14,6 +14,7 @@ public final class SqliteEconomyDatabase {
+     private SqliteEconomyDatabase() {}
+ 
+     public static Connection open(Path file) {
++        try (var diagnosticScope = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("database.open")) {
+         Connection connection = null;
+         try {
+             boolean existing = Files.exists(file);
+@@ -38,5 +39,7 @@ public final class SqliteEconomyDatabase {
+             catch (SQLException close) { failure.addSuppressed(close); }
+             throw new IllegalStateException("Cannot open Victoria Economics database; use a new world if incompatible. No migration was attempted: " + failure.getMessage(), failure);
+         }
++    
++        }
+     }
+ }
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/SqliteTransactions.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/SqliteTransactions.java
+index fff61b1..3c35bfb 100644
+--- a/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/SqliteTransactions.java
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/SqliteTransactions.java
+@@ -29,6 +29,7 @@ public final class SqliteTransactions {
+     }
+ 
+     public static <T> T read(Connection connection, ReadWork<T> work) {
++        try (var diagnosticScope = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("sqlite.read")) {
+         requireCommittedReads(connection);
+         var config = SqliteConnectionGuard.transactionConfig(connection);
+         TransactionMode previous = config.getTransactionMode();
+@@ -40,6 +41,8 @@ public final class SqliteTransactions {
+                 finally { session.active = false; }
+             });
+         } finally { config.setTransactionMode(previous); }
++    
++        }
+     }
+ 
+     /** Unforgeable, thread-confined capability for explicit transaction-local repository access. */
+@@ -68,6 +71,7 @@ public final class SqliteTransactions {
+ 
+     /** Owns an IMMEDIATE JDBC transaction; nesting cannot establish the required lock-before-read order. */
+     public static <T> T write(Connection connection, WriteWork<T> work) {
++        try (var diagnosticScope = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("sqlite.write")) {
+         requireCommittedReads(connection);
+         var config = SqliteConnectionGuard.transactionConfig(connection);
+         TransactionMode previous = config.getTransactionMode();
+@@ -90,6 +94,8 @@ public final class SqliteTransactions {
+             // Local driver configuration only, including after quarantine; no JDBC reset/SQL here.
+             config.setTransactionMode(previous);
+         }
++    
++        }
+     }
+ 
+     /** Standalone authority queries must never mistake an unresolved local transaction for a committed fact. */
+@@ -108,6 +114,7 @@ public final class SqliteTransactions {
+     }
+ 
+     public static <T> T run(Connection connection, Work<T> work) {
++        try (var diagnosticScope = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.transaction()) {
+         SqliteConnectionGuard.requireTrusted(connection);
+         boolean own = false;
+         boolean started = false;
+@@ -117,15 +124,20 @@ public final class SqliteTransactions {
+         Throwable pending = null;
+         try {
+             own = connection.getAutoCommit();
+-            if (own) connection.setAutoCommit(false);
+-            else point = connection.setSavepoint();
++            com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.count(own ? "tx.physical" : "tx.savepoint");
++            try (var diagnosticBegin = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("sqlite.begin")) {
++                if (own) connection.setAutoCommit(false);
++                else point = connection.setSavepoint();
++            }
+             started = true;
+-            result = work.run();
++            try (var diagnosticWork = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("sqlite.work")) { result = work.run(); }
+             // An inner scope may have failed and been caught by the callback. It must still poison this commit.
+             SqliteConnectionGuard.requireTrusted(connection);
+             committing = true;
+-            if (own) connection.commit();
+-            else connection.releaseSavepoint(point);
++            try (var diagnosticCommit = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("sqlite.commit")) {
++                if (own) connection.commit();
++                else connection.releaseSavepoint(point);
++            }
+         } catch (SQLException | RuntimeException | Error failure) {
+             pending = failure;
+             if (SqliteConnectionGuard.isQuarantined(connection)) {
+@@ -154,7 +166,7 @@ public final class SqliteTransactions {
+         // Only a confirmed commit or rollback permits reset: JDBC reset can itself commit.
+         if (own && started && !SqliteConnectionGuard.isQuarantined(connection)) {
+             try {
+-                connection.setAutoCommit(true);
++                try (var diagnosticCleanup = com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("sqlite.cleanup")) { connection.setAutoCommit(true); }
+             } catch (SQLException | RuntimeException | Error cleanup) {
+                 if (pending == null) pending = cleanup;
+                 else if (pending != cleanup) pending.addSuppressed(cleanup);
+@@ -166,5 +178,7 @@ public final class SqliteTransactions {
+         if (pending instanceof Error error) throw error;
+         if (pending != null) throw new IllegalStateException("SQLite transaction failed", pending);
+         return result;
++    
++        }
+     }
+ }
+diff --git a/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/EconomyPerformanceGameTests.java b/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/EconomyPerformanceGameTests.java
+new file mode 100644
+index 0000000..15d7959
+--- /dev/null
++++ b/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/EconomyPerformanceGameTests.java
+@@ -0,0 +1,82 @@
++package com.bbmurloc.victoriaeconomics.gametest;
++
++import com.bbmurloc.victoriaeconomics.server.ServerEconomyRuntime;
++import com.bbmurloc.victoriaeconomics.server.building.EconomicBuilding;
++import com.bbmurloc.victoriaeconomics.server.finance.domain.TransferReceipt;
++import com.bbmurloc.victoriaeconomics.server.payroll.infrastructure.SqlitePayrollRepository;
++import com.bbmurloc.victoriaeconomics.server.storage.sqlite.*;
++import com.bbmurloc.victoriaeconomics.server.workforce.domain.RegionalLaborSupply;
++import com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteRegionalLaborSupplyRepository;
++import net.minecraft.gametest.framework.*;
++import net.neoforged.neoforge.gametest.*;
++import java.nio.file.Files;
++import java.util.*;
++import java.util.concurrent.atomic.AtomicBoolean;
++
++/** Same formal Tick/payroll/payment/production paths in every scenario; isolated recorded test funding only. */
++@GameTestHolder("victoria_economics_perftests")
++@PrefixGameTestTemplate(false)
++public final class EconomyPerformanceGameTests {
++    @GameTest(template="empty",timeoutTicks=2000)
++    public static void profileFormalEconomy(GameTestHelper helper)throws Exception{
++        String scenario=System.getProperty("ve.perfScenario");
++        if(!Set.of("empty","idle4","active4","idle16","active16","history4").contains(scenario))throw new IllegalArgumentException("Unknown performance scenario");
++        var server=helper.getLevel().getServer();var ctx=ServerEconomyRuntime.get(server);
++        helper.assertTrue(ctx.getBuildingRegistry().getAll().isEmpty(),"Performance comparison requires a fresh isolated world");
++        List<EconomicBuilding> buildings=new ArrayList<>();GameEconomyFixture fixture;
++        if(!scenario.equals("empty")){
++            fixture=new GameEconomyFixture(server);fixture.fund(10_000_000);
++            try(var c=fixture.connect()){
++                var supply=new SqliteRegionalLaborSupplyRepository(c,ctx.getOccupationRegistry(),new Object());
++                SqliteTransactions.write(c,tx->{for(String role:List.of("laborer","machinist"))supply.inTransaction(tx).save(new RegionalLaborSupply(fixture.region,role,2000,1),0);return null;});
++            }
++            int count=scenario.endsWith("16")?16:4;
++            for(int i=0;i<count;i++)buildings.add(fixture.create(10,4));
++            if(scenario.equals("history4"))seedVerifiableHistory(fixture,buildings);
++            if(scenario.startsWith("active")||scenario.equals("history4"))for(var b:buildings)ctx.getProductionService().startBatch(b.getId());
++        }else fixture=null;
++        long began=ctx.getEconomicTime().acceptedTick();var measuring=new AtomicBoolean();var finished=new AtomicBoolean();
++        helper.onEachTick(()->{
++            if(finished.get())return;
++            try{
++                var current=ServerEconomyRuntime.get(server);long tick=current.getEconomicTime().acceptedTick();
++                if(tick-began>=150&&measuring.compareAndSet(false,true))PerformanceMeasurements.begin(1300);
++                if(!PerformanceMeasurements.done())return;
++                finished.set(true);
++                for(var b:buildings){
++                    var e=current.getProductionService().execution(b.getId());
++                    helper.assertTrue(e.lastCompletedTick()==tick&&e.processingTick()==null,"Unconfirmed per-building Tick");
++                    helper.assertTrue(current.getPayrollQuery().state(b.getId())==com.bbmurloc.victoriaeconomics.server.production.port.BuildingPayrollPort.State.CURRENT,"Normal paid payroll path was bypassed or failed");
++                    if(scenario.startsWith("active")||scenario.equals("history4")){
++                        helper.assertTrue(e.lastBatch()!=null&&e.lastBatch().isCompleted(),"No real continuous completion");
++                        helper.assertTrue(e.batch()!=null&&e.batch().getProgressUnits()==(tick-began)%200,"Repeated, omitted or idle production Tick");
++                    }
++                }
++                var file=server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT).resolve("victoria_economics/economy.sqlite");
++                try(var c=SqliteEconomyDatabase.open(file);var s=c.createStatement()){
++                    EconomySchema.validateExisting(c);String settings;
++                    try(var r=s.executeQuery("PRAGMA journal_mode")){r.next();settings="journal_mode="+r.getString(1);}
++                    try(var r=s.executeQuery("PRAGMA synchronous")){r.next();settings+=",synchronous="+r.getInt(1);}
++                    PerformanceMeasurements.write(scenario,tick,settings,Files.size(file));
++                }
++                helper.succeed();
++            }catch(Exception failure){throw new IllegalStateException(failure);}
++        });
++    }
++    /** Explicit test-only valid historical segments/ledger, not history pruning or a server mutation API. */
++    private static void seedVerifiableHistory(GameEconomyFixture f,List<EconomicBuilding> buildings)throws Exception{
++        try(var c=f.connect()){
++            var wages=new SqlitePayrollRepository(c,new Object());
++            SqliteTransactions.write(c,tx->{
++                var repo=wages.inTransaction(tx);long tick=f.context().getEconomicTime().acceptedTick();
++                for(var b:buildings)for(int i=0;i<10;i++){
++                    repo.close(repo.currentForBuilding(b.getId()).id(),tick);repo.enroll(UUID.randomUUID(),b.getId(),f.currency);
++                }return null;
++            });
++        }
++        for(int i=0;i<250;i++){
++            f.context().getFinanceService().transfer(new TransferReceipt(UUID.randomUUID(),f.companyCash,f.householdCash,f.currency,1));
++            f.context().getFinanceService().transfer(new TransferReceipt(UUID.randomUUID(),f.householdCash,f.companyCash,f.currency,1));
++        }
++    }
++}
+diff --git a/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/PerformanceMeasurements.java b/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/PerformanceMeasurements.java
+new file mode 100644
+index 0000000..4a93030
+--- /dev/null
++++ b/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/PerformanceMeasurements.java
+@@ -0,0 +1,53 @@
++package com.bbmurloc.victoriaeconomics.gametest;
++
++import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
++import com.google.gson.GsonBuilder;
++import net.minecraft.server.MinecraftServer;
++import java.nio.file.*;
++import java.util.*;
++
++/** Full server method and economy measurements, buffered in memory and written once after sampling. */
++public final class PerformanceMeasurements {
++    private static EconomyDiagnostics.Recording recording;
++    private static EconomyDiagnostics.Snapshot startup, fixtureAndWarmup, sample;
++    private static final List<Long> ticks = new ArrayList<>(), nativeTicks = new ArrayList<>(), intervals = new ArrayList<>();
++    private static long started, previousStart;
++    private static int requested;
++    private static boolean pendingStart, sampling, done;
++    static boolean enabled(){return "perf".equals(System.getProperty("ve.acceptanceMode"));}
++    static void beforeContext(){if(enabled()&&recording==null)recording=EconomyDiagnostics.start();}
++    static void afterContext(){if(enabled()){startup=recording.snapshot();recording.reset();}}
++    static void begin(int samples){
++        if(recording==null)throw new IllegalStateException("Startup recording hook missing");
++        fixtureAndWarmup=recording.snapshot();requested=samples;previousStart=0;pendingStart=true;
++    }
++    public static void beforeTick(){
++        if(pendingStart){recording.reset();pendingStart=false;sampling=true;}
++        if(!sampling)return;
++        started=System.nanoTime();
++        if(previousStart!=0)intervals.add(started-previousStart);
++        previousStart=started;
++    }
++    public static void afterTick(MinecraftServer server){
++        if(!sampling||started==0)return;
++        ticks.add(System.nanoTime()-started);
++        nativeTicks.add(server.getTickTimesNanos()[server.getTickCount()%100]);
++        if(ticks.size()==requested){sampling=false;sample=recording.snapshot();recording.close();done=true;}
++    }
++    static boolean done(){return done;}
++    static void write(String scenario,long acceptedTick,String settings,long fileBytes)throws Exception{
++        var result=new TreeMap<String,Object>();
++        result.put("label",System.getProperty("ve.perfLabel"));result.put("scenario",scenario);
++        result.put("serverTick",EconomyDiagnostics.summarize(ticks));result.put("minecraftBeforePost",EconomyDiagnostics.summarize(nativeTicks));
++        result.put("startInterval",EconomyDiagnostics.summarize(intervals));
++        result.put("observedTps",1e9/intervals.stream().mapToDouble(Long::doubleValue).average().orElseThrow());
++        result.put("startup",startup);result.put("fixtureAndWarmup",fixtureAndWarmup);result.put("sample",sample);
++        result.put("acceptedTick",acceptedTick);result.put("sqlite",settings);result.put("databaseBytes",fileBytes);
++        result.put("java",System.getProperty("java.version"));result.put("vm",System.getProperty("java.vm.name"));
++        result.put("maxHeapBytes",Runtime.getRuntime().maxMemory());result.put("processors",Runtime.getRuntime().availableProcessors());
++        result.put("os",System.getProperty("os.name")+" "+System.getProperty("os.version"));
++        Files.writeString(Path.of("performance.json"),new GsonBuilder().setPrettyPrinting().create().toJson(result)+System.lineSeparator());
++        Files.writeString(Path.of("acceptance-result.txt"),"PASSED perf");
++        System.out.println("VE performance "+scenario+": "+result.get("serverTick")+", TPS="+result.get("observedTps"));
++    }
++}
+diff --git a/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/SchemaPreflightMeasurements.java b/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/SchemaPreflightMeasurements.java
+new file mode 100644
+index 0000000..9715336
+--- /dev/null
++++ b/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/SchemaPreflightMeasurements.java
+@@ -0,0 +1,33 @@
++package com.bbmurloc.victoriaeconomics.gametest;
++
++import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
++import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteEconomyDatabase;
++import com.google.gson.GsonBuilder;
++import java.nio.file.*;
++import java.security.MessageDigest;
++import java.util.*;
++
++/** Non-Tick measurement of the unchanged formal read-only preflight and writable recheck. */
++public final class SchemaPreflightMeasurements {
++    public static void main(String[] args)throws Exception{
++        Path build=Path.of("build").toRealPath(),directory=Path.of(args[0]).toRealPath();
++        if(!directory.startsWith(build)||!directory.getFileName().toString().startsWith("task-e-gametest-"))throw new IllegalArgumentException("Only owned isolated GameTest files are accepted");
++        Path file=directory.resolve("world/victoria_economics/economy.sqlite");
++        if(!Files.isRegularFile(file)){
++            try(var files=Files.walk(directory,5)){file=files.filter(p->p.getFileName().toString().equals("economy.sqlite")).findFirst().orElseThrow();}
++        }
++        file=file.toRealPath();if(!file.startsWith(directory))throw new IllegalArgumentException("Database escaped the isolated directory");
++        Path wal=Path.of(file+"-wal");byte[] before=hash(file),beforeWal=Files.exists(wal)?hash(wal):null;
++        // First opening warms class loading separately; it still goes through the complete gate.
++        try(var ignored=SqliteEconomyDatabase.open(file)){}
++        EconomyDiagnostics.Snapshot result;
++        try(var recording=EconomyDiagnostics.start()){
++            for(int i=0;i<5;i++)try(var ignored=SqliteEconomyDatabase.open(file)){}
++            result=recording.snapshot();
++        }
++        if(!Arrays.equals(before,hash(file))||!Arrays.equals(beforeWal,Files.exists(wal)?hash(wal):null))throw new IllegalStateException("Preflight modified database bytes");
++        Files.writeString(directory.resolve("preflight-performance.json"),new GsonBuilder().setPrettyPrinting().create().toJson(result)+System.lineSeparator());
++        System.out.println(directory.getFileName()+": "+result.timings().get("database.open"));
++    }
++    private static byte[] hash(Path file)throws Exception{return MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file));}
++}
+diff --git a/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/mixin/PerformanceServerMixin.java b/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/mixin/PerformanceServerMixin.java
+new file mode 100644
+index 0000000..f14df29
+--- /dev/null
++++ b/src/gameTest/java/com/bbmurloc/victoriaeconomics/gametest/mixin/PerformanceServerMixin.java
+@@ -0,0 +1,15 @@
++package com.bbmurloc.victoriaeconomics.gametest.mixin;
++import com.bbmurloc.victoriaeconomics.gametest.PerformanceMeasurements;
++import net.minecraft.server.MinecraftServer;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.*;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++import java.util.function.BooleanSupplier;
++/** Test mod only: includes the Post callbacks omitted by Minecraft's own tickTimesNanos. */
++@Mixin(MinecraftServer.class)
++public abstract class PerformanceServerMixin {
++    @Inject(method="tickServer",at=@At("HEAD"))
++    private void veBeforeTick(BooleanSupplier budget,CallbackInfo ci){PerformanceMeasurements.beforeTick();}
++    @Inject(method="tickServer",at=@At("RETURN"))
++    private void veAfterTick(BooleanSupplier budget,CallbackInfo ci){PerformanceMeasurements.afterTick((MinecraftServer)(Object)this);}
++}
+diff --git a/src/gameTest/resources/data/victoria_economics_perftests/structure/empty.nbt b/src/gameTest/resources/data/victoria_economics_perftests/structure/empty.nbt
+new file mode 100644
+index 0000000000000000000000000000000000000000..6b4e3f98777a89ecf5fb5729be2d66d06764fbb2
+GIT binary patch
+literal 110
+zcmb2|=3oE=F4Znau0sX_4DM1}J3Ib=e6!R2eRf2mp|9%A$?NqGUN$(RGGm9$k*6!y
+z-VS?sO?lyMe|5JOWdSzj=j%mEud~Rc9a36d6uUMn@6)&45z0kXQ+4Zq&FDB2b@$Gf
+O_iq&b*B2B4tpNbab21PB
+
+literal 0
+HcmV?d00001
+
+diff --git a/src/gameTest/resources/ve-performance.mixins.json b/src/gameTest/resources/ve-performance.mixins.json
+new file mode 100644
+index 0000000..7507ef5
+--- /dev/null
++++ b/src/gameTest/resources/ve-performance.mixins.json
+@@ -0,0 +1,12 @@
++{
++  "required": true,
++  "minVersion": "0.8",
++  "package": "com.bbmurloc.victoriaeconomics.gametest.mixin",
++  "compatibilityLevel": "JAVA_21",
++  "mixins": [
++    "PerformanceServerMixin"
++  ],
++  "injectors": {
++    "defaultRequire": 1
++  }
++}
+diff --git a/src/main/java/com/bbmurloc/victoriaeconomics/server/diagnostics/EconomyDiagnostics.java b/src/main/java/com/bbmurloc/victoriaeconomics/server/diagnostics/EconomyDiagnostics.java
+new file mode 100644
+index 0000000..f236a87
+--- /dev/null
++++ b/src/main/java/com/bbmurloc/victoriaeconomics/server/diagnostics/EconomyDiagnostics.java
+@@ -0,0 +1,103 @@
++package com.bbmurloc.victoriaeconomics.server.diagnostics;
++
++import java.util.*;
++
++/** Optional, bounded, thread-owned observations. Never supplies time, readiness, or transaction authority. */
++public final class EconomyDiagnostics {
++    private EconomyDiagnostics() {}
++    private static volatile Recording recording;
++    private static final Scope DISABLED = new Scope(null, null, 0, false);
++    private static final int SAMPLE_LIMIT = 1_000_000;
++
++    public record Summary(long count, double meanMs, double p50Ms, double p95Ms, double p99Ms, double maxMs) {}
++    public record Snapshot(Map<String, Summary> timings, Map<String, Long> counts) {}
++
++    /** Install only for an explicitly requested diagnostic run; other threads are not observed. */
++    public static Recording start() {
++        if (recording != null) throw new IllegalStateException("A diagnostic recording is already active");
++        var next = new Recording();
++        recording = next;
++        return next;
++    }
++    public static Scope scope(String name) { return scope(name, false); }
++    public static Scope transaction() { return scope("sqlite.transaction", true); }
++    private static Scope scope(String name, boolean transaction) {
++        var r = recording;
++        return r == null || r.owner != Thread.currentThread() ? DISABLED : new Scope(r, name, System.nanoTime(), transaction);
++    }
++    public static void measure(String name, Runnable operation) {
++        try (var scope = scope(name)) { operation.run(); }
++    }
++    public static void count(String name) {
++        var r = recording;
++        if (r != null && r.owner == Thread.currentThread()) r.count(name);
++    }
++    /** Counts successful DML invocations affecting rows, not inferred fsyncs or economic changes. */
++    public static void sql(String sql, String method, Object result, long elapsedNanos) {
++        var r = recording;
++        if (r == null || r.owner != Thread.currentThread()) return;
++        String text = sql == null ? "" : sql.stripLeading().toUpperCase(Locale.ROOT);
++        String kind = text.startsWith("SELECT") || method.equals("executeQuery") ? "read"
++                : text.startsWith("UPDATE") || text.startsWith("INSERT") || text.startsWith("DELETE") ? "dml" : "other";
++        r.add("sql." + kind, elapsedNanos);
++        r.count("sql." + kind);
++        if (kind.equals("dml") && (!(result instanceof Number n) || n.longValue() > 0)) r.mutations++;
++    }
++    public static boolean enabled() {
++        var r = recording;
++        return r != null && r.owner == Thread.currentThread();
++    }
++    public static final class Scope implements AutoCloseable {
++        private final Recording recording;
++        private final String name;
++        private final long started;
++        private final long mutations;
++        private final boolean transaction;
++        private boolean closed;
++        private Scope(Recording recording, String name, long started, boolean transaction) {
++            this.recording = recording; this.name = name; this.started = started; this.transaction = transaction;
++            mutations = recording == null ? 0 : recording.mutations;
++        }
++        @Override public void close() {
++            if (recording == null || closed) return;
++            closed = true;
++            recording.add(name, System.nanoTime() - started);
++            if (transaction) recording.count(recording.mutations == mutations ? "tx.withoutDml" : "tx.withDml");
++            if (name.equals("sqlite.write")) recording.count(recording.mutations == mutations ? "tx.write.withoutDml" : "tx.write.withDml");
++        }
++    }
++    public static final class Recording implements AutoCloseable {
++        private final Thread owner = Thread.currentThread();
++        private final Map<String, List<Long>> timings = new TreeMap<>();
++        private final Map<String, Long> counts = new TreeMap<>();
++        private long mutations;
++        private Recording() {}
++        private void add(String name, long nanos) {
++            var samples = timings.computeIfAbsent(name, key -> new ArrayList<>());
++            if (samples.size() < SAMPLE_LIMIT) samples.add(nanos);
++            else count("dropped." + name);
++        }
++        private void count(String name) { counts.merge(name, 1L, Long::sum); }
++        /** Called between measured operations, never from inside a transaction. */
++        public Snapshot snapshot() {
++            if (Thread.currentThread() != owner) throw new IllegalStateException("Diagnostic recording belongs to another thread");
++            var result = new TreeMap<String, Summary>();
++            timings.forEach((name, samples) -> result.put(name, summarize(samples)));
++            return new Snapshot(Map.copyOf(result), Map.copyOf(counts));
++        }
++        public void reset() {
++            if (Thread.currentThread() != owner) throw new IllegalStateException("Diagnostic recording belongs to another thread");
++            timings.clear(); counts.clear(); mutations = 0;
++        }
++        @Override public void close() { if (recording == this) recording = null; }
++    }
++    public static Summary summarize(Collection<Long> samples) {
++        if (samples.isEmpty()) return new Summary(0, 0, 0, 0, 0, 0);
++        var sorted = samples.stream().sorted().toList();
++        return new Summary(sorted.size(), sorted.stream().mapToDouble(Long::doubleValue).average().orElseThrow()/1e6,
++                percentile(sorted, .50), percentile(sorted, .95), percentile(sorted, .99), sorted.getLast()/1e6);
++    }
++    private static double percentile(List<Long> sorted, double fraction) {
++        return sorted.get((int)Math.ceil(sorted.size()*fraction)-1)/1e6;
++    }
++}
+diff --git a/tools/Measure-Economy.ps1 b/tools/Measure-Economy.ps1
+new file mode 100644
+index 0000000..624ab82
+--- /dev/null
++++ b/tools/Measure-Economy.ps1
+@@ -0,0 +1,25 @@
++param(
++    [Parameter(Mandatory=$true)][ValidatePattern('^[a-zA-Z0-9_-]{1,20}$')][string]$Label,
++    [ValidateRange(1,5)][int]$Repetitions = 2,
++    [ValidateSet('empty','idle4','active4','idle16','active16','history4')][string[]]$Scenarios = @('empty','idle4','active4','idle16','active16','history4')
++)
++$ErrorActionPreference = 'Stop'
++$workspace = Split-Path -Parent $PSScriptRoot
++foreach ($round in 1..$Repetitions) {
++    foreach ($scenario in $Scenarios) {
++        $runName = 'p_' + $Label + '_' + $scenario + '_' + $round
++        $directory = Join-Path $workspace ('build/task-e-gametest-' + $runName)
++        if (Test-Path -LiteralPath $directory) { throw "Refusing to reuse an existing world: $directory" }
++        $log = Join-Path $workspace ('build/task-p-' + $Label + '-' + $scenario + '-' + $round + '.log')
++        Write-Output "Starting $runName"
++        # PowerShell 5.1 treats native stderr (including ordinary JVM notices) as ErrorRecord.
++        $ErrorActionPreference = 'Continue'
++        & (Join-Path $workspace 'gradlew.bat') runGameTestServer "-PveGameTestRun=$runName" -PveGameTestMode=perf "-PvePerfScenario=$scenario" "-PvePerfLabel=$Label" --console=plain *> $log
++        $code = $LASTEXITCODE
++        $ErrorActionPreference = 'Stop'
++        if ($code -ne 0) { throw "GameTest failed with exit $code; inspect $log" }
++        $result = Get-Content -LiteralPath (Join-Path $directory 'performance.json') -Raw | ConvertFrom-Json
++        if ($result.serverTick.count -ne 1300 -or $result.sample.timings.'context.tick'.count -ne 1300) { throw 'Unaligned or incomplete sample' }
++        Write-Output ($runName + ': ' + ($result.serverTick | ConvertTo-Json -Compress) + '; TPS=' + $result.observedTps)
++    }
++}
+diff --git a/tools/Summarize-Economy.mjs b/tools/Summarize-Economy.mjs
+new file mode 100644
+index 0000000..11f05ae
+--- /dev/null
++++ b/tools/Summarize-Economy.mjs
+@@ -0,0 +1,52 @@
++import fs from 'node:fs';
++import path from 'node:path';
++
++// Run after all servers/builds have stopped. Reads JSON only; never opens a world database.
++const directory = process.argv[2] ?? 'build';
++const results = [];
++for (const name of fs.readdirSync(directory).sort()) {
++  const file = path.join(directory, name, 'performance.json');
++  if (!name.startsWith('task-e-gametest-p_') || !fs.existsSync(file)) continue;
++  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
++  if (!['baseline', 'optimized'].includes(raw.label)) continue;
++  const t = raw.sample.timings, c = raw.sample.counts, n = raw.serverTick.count;
++  if (n !== 1300 || t['context.tick'].count !== n) throw Error(`Incomplete or unaligned sample: ${name}`);
++  const perTickMs = key => (t[key]?.count ?? 0) * (t[key]?.meanMs ?? 0) / n;
++  // Every measured active scenario starts at zero and warms for 150 ticks (<200).
++  // Seven 200-tick completions per building occur in the next 1300 ticks, each with two
++  // standalone Journal DML commits. These autocommits are not SqliteTransactions.run scopes.
++  const buildings = raw.scenario === 'empty' ? 0 : raw.scenario.endsWith('16') ? 16 : 4;
++  const journalCommits = raw.scenario.startsWith('active') || raw.scenario === 'history4' ? 14 * buildings : 0;
++  results.push({
++    run: name, label: raw.label, scenario: raw.scenario, samples: n,
++    server: raw.serverTick, observedUncappedTps: raw.observedTps,
++    capped20TpsEquivalent: Math.min(20, raw.observedTps),
++    economyMeanMs: perTickMs('context.tick'), economyShare: perTickMs('context.tick') / raw.serverTick.meanMs,
++    minecraftBeforePost: raw.minecraftBeforePost,
++    nonEconomyMeanMs: raw.serverTick.meanMs - perTickMs('context.tick'),
++    stagesMsPerTick: Object.fromEntries(Object.keys(t).map(key => [key, perTickMs(key)])),
++    managedTransactionsPerTick: (c['tx.physical'] ?? 0) / n,
++    journalAutocommitsPerTick: journalCommits / n,
++    writesPerTick: (t['sqlite.write']?.count ?? 0) / n,
++    dirtyWriteScopesPerTick: (c['tx.write.withDml'] ?? 0) / n,
++    emptyWriteScopesPerTick: (c['tx.write.withoutDml'] ?? 0) / n,
++    readSqlPerTick: (c['sql.read'] ?? 0) / n,
++    dmlSqlPerTick: (c['sql.dml'] ?? 0) / n,
++    // One accepted-time query is made by the test harness outside the economy Context per sample.
++    testHarnessReadSqlPerTick: 1,
++    raw,
++    preflight: fs.existsSync(path.join(directory, name, 'preflight-performance.json'))
++      ? JSON.parse(fs.readFileSync(path.join(directory, name, 'preflight-performance.json'), 'utf8')) : null
++  });
++}
++const output = process.argv[3] ?? 'build/task-p-performance-results.json';
++fs.writeFileSync(output, JSON.stringify({
++  note: 'Inclusive timings overlap. Managed scopes exclude the separately reported Journal autocommits. Uncapped GameTest throughput is not live-player TPS. SQL counts include the separately identified harness read.',
++  results
++}, null, 2) + '\n');
++console.log('| Label | Scenario | N | Mean | p50 | p95 | p99 | Max | VE mean | uncapped ticks/s |');
++console.log('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|');
++for (const x of results) {
++  const s = x.server;
++  console.log(`| ${x.label} | ${x.scenario} | ${x.samples} | ${[s.meanMs, s.p50Ms, s.p95Ms, s.p99Ms, s.maxMs, x.economyMeanMs, x.observedUncappedTps].map(v => v.toFixed(3)).join(' | ')} |`);
++}

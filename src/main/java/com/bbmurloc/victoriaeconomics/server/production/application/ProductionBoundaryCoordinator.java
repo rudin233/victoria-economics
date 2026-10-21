@@ -1,5 +1,7 @@
 package com.bbmurloc.victoriaeconomics.server.production.application;
 
+import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
+
 import com.bbmurloc.victoriaeconomics.common.definition.occupation.OccupationRegistry;
 import com.bbmurloc.victoriaeconomics.server.building.*;
 import com.bbmurloc.victoriaeconomics.server.building.infrastructure.SqliteBuildingLifecycleOperationRepository;
@@ -40,10 +42,13 @@ public final class ProductionBoundaryCoordinator {
     public ProductionMethodConfiguration methods(UUID id){return methods.load(id);}
     public long acceptedTick(){return new SqliteEconomicTimeRepository(connection,lock).load().acceptedTick();}
     public List<UUID> buildingIds(){synchronized(lock){return buildings.loadAll().stream().filter(b->b.lifecycle()==BuildingLifecycle.EXISTING).map(EconomicBuilding::getId).toList();}}
-    private <T>T write(SqliteTransactions.WriteWork<T> work){synchronized(lock){
+    private <T>T write(SqliteTransactions.WriteWork<T> work){
+        try (var diagnosticScope = EconomyDiagnostics.scope("production.coordinator.write")) {synchronized(lock){
         try{return SqliteTransactions.write(connection,work);}
         catch(CommitOutcomeUnknownException unknown){SqliteConnectionGuard.quarantine(connection,unknown);throw unknown;}
-    }}
+    }
+        }
+    }
     private EconomicBuilding live(SqliteTransactions.WriteSession tx,UUID id){
         var b=buildings.inTransaction(tx).load(id);if(b.lifecycle()!=BuildingLifecycle.EXISTING)throw new IllegalStateException("Historical building cannot operate");return b;
     }
@@ -138,15 +143,24 @@ public final class ProductionBoundaryCoordinator {
         if(e.processingTick()==null&&e.lastCompletedTick()<tick)e.beginTick(tick);
         e.start(batch,current);if(!automaticRequest)e.requestAutomatic(true);executions.inTransaction(tx).save(e,e.executionRevision());return null;
     });}
-    /** Progress, reasons and the durable replay marker commit together. */
-    public boolean advance(UUID id,long tick){return write(tx->{
+    /** No detached aggregate escapes this decision; success means physical commit and cleanup were confirmed. */
+    public enum TickResult { ALREADY_COMPLETED, COMPLETED, NEEDS_FOLLOW_UP }
+    /** Keeps the explicit staged capability used by recovery/fault clients. */
+    public boolean advance(UUID id,long tick){return write(tx->advance(tx,id,tick,false)!=TickResult.ALREADY_COMPLETED);}
+    /**
+     * Combine advance and completion only when all remaining work fits this building's current transaction.
+     * StartIntent, settlement, reconfiguration barriers and automatic starts retain their journaled protocol.
+     */
+    public TickResult processTick(UUID id,long tick){return write(tx->advance(tx,id,tick,true));}
+    private TickResult advance(SqliteTransactions.WriteSession tx,UUID id,long tick,boolean completeSimple)throws SQLException{
         if(tick!=SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick())throw new IllegalArgumentException("Only accepted economic Tick may advance production");
         var b=live(tx,id);var e=executions.inTransaction(tx).load(id);
-        if(e.processingTick()==null&&e.lastCompletedTick()>=tick)return false;
-        if(e.beginTick(tick)){
-            if(SqliteBuildingLifecycleOperationRepository.holds(connection,tx,id)){
-                e.terminate();executions.inTransaction(tx).save(e,e.executionRevision());return true;
-            }
+        if(e.processingTick()==null&&e.lastCompletedTick()>=tick)return TickResult.ALREADY_COMPLETED;
+        // An existing marker can represent a start born in this Tick or unfinished external work.
+        if(!e.beginTick(tick))return TickResult.NEEDS_FOLLOW_UP;
+        boolean held=SqliteBuildingLifecycleOperationRepository.holds(connection,tx,id);
+        if(held)e.terminate();
+        else{
             State state=wages.inTransaction(tx,id,b.ownerCompanyId());
             for(var reason:List.of(ProductionExecution.PauseReason.PAYROLL_ARREARS,ProductionExecution.PauseReason.PAYROLL_RECOVERY,ProductionExecution.PauseReason.PAYROLL_UNAVAILABLE))e.resume(reason);
             switch(state){
@@ -155,10 +169,33 @@ public final class ProductionBoundaryCoordinator {
                 case UNAVAILABLE->e.pause(ProductionExecution.PauseReason.PAYROLL_UNAVAILABLE);
                 case CURRENT->{ }
             }
-            e.tick(1);executions.inTransaction(tx).save(e,e.executionRevision());
+            try(var ignored=EconomyDiagnostics.scope("production.domain.advance")){e.tick(1);}
         }
-        return true;
-    });}
+        boolean finished=false;
+        if(completeSimple&&e.boundary()==ProductionExecution.Boundary.NONE&&noStartIntent(tx,id)){
+            if(!held&&e.batch()!=null&&!e.batch().needsSettlement()&&!e.batch().isEnded())finished=true;
+            else if(e.batch()==null&&!e.automatic()){
+                if(!held){
+                    var m=methods.inTransaction(tx).load(id);
+                    reconfigure(tx,id,e,m,m.configurationRevision(),staffing.inTransaction(tx).load(id));
+                    finished=true;
+                }else{
+                    var op=new SqliteBuildingLifecycleOperationRepository(connection,lock).inTransaction(tx).forBuilding(id).orElseThrow();
+                    finished=op.status()==com.bbmurloc.victoriaeconomics.server.building.domain.BuildingLifecycleOperation.Status.BLOCKED;
+                }
+            }
+        }
+        if(finished)e.finishTick(tick);
+        executions.inTransaction(tx).save(e,e.executionRevision());
+        return finished?TickResult.COMPLETED:TickResult.NEEDS_FOLLOW_UP;
+    }
+    private boolean noStartIntent(SqliteTransactions.WriteSession tx,UUID id)throws SQLException{
+        return tx.perform(()->{
+            try(var s=connection.prepareStatement("SELECT 1 FROM production_start_intents WHERE building_id=?")){
+                s.setString(1,id.toString());try(var r=s.executeQuery()){return !r.next();}
+            }
+        });
+    }
     public void finishTick(UUID id,long tick){write(tx->{var e=executions.inTransaction(tx).load(id);if(e.lastCompletedTick()==tick&&e.processingTick()==null)return null;e.finishTick(tick);executions.inTransaction(tx).save(e,e.executionRevision());return null;});}
     public void confirmSettlement(UUID id,UUID batch){write(tx->{var e=executions.inTransaction(tx).load(id);if(e.batch()==null&&e.lastBatch()!=null&&e.lastBatch().getId().equals(batch)&&e.lastBatch().isEnded())return null;if(e.batch()==null||!e.batch().getId().equals(batch))throw new IllegalStateException("Foreign settlement receipt");if(!e.batch().isEnded()){e.settlementCompleted(batch);executions.inTransaction(tx).save(e,e.executionRevision());}return null;});}
     public void abort(UUID id){write(tx->{live(tx,id);var e=executions.inTransaction(tx).load(id);e.terminate();executions.inTransaction(tx).save(e,e.executionRevision());return null;});}
@@ -177,10 +214,13 @@ public final class ProductionBoundaryCoordinator {
             }
         return null;
     });}
-    public boolean needsRecovery(){synchronized(lock){return SqliteTransactions.read(connection,tx->{
+    public boolean needsRecovery(){
+        try (var diagnosticScope = EconomyDiagnostics.scope("production.recoveryCheck")) {synchronized(lock){return SqliteTransactions.read(connection,tx->{
         var time=SqliteEconomicTimeRepository.inSnapshot(connection,tx);if(time.hasUnconfirmedProductionCallback())return true;
         try(var s=connection.prepareStatement("SELECT 1 FROM production_executions e JOIN economic_buildings identity ON identity.id=e.building_id LEFT JOIN production_batches b ON b.batch_id=e.current_batch_id WHERE identity.lifecycle='EXISTING' AND (e.processing_tick IS NOT NULL OR e.last_completed_tick<? OR e.boundary<>'NONE' OR b.status IN ('SETTLING_COMPLETED','SETTLING_ABORTED')) UNION ALL SELECT 1 FROM production_start_intents")){
             s.setLong(1,time.acceptedTick());try(var r=s.executeQuery()){return r.next();}
         }
-    });}}
+    });}
+        }
+    }
 }

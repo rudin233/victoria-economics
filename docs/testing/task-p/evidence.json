@@ -1,0 +1,1218 @@
+{
+  "head": "d4080879b76e563afec26d82ca86732b826e748f",
+  "realWorld": {
+    "sha256": "3250D82E8EB2C156211D924A2F8A40A2B018146AB983313F1A09C8D5EC681AE8",
+    "walExists": false,
+    "access": "hash only; never opened through SQLite"
+  },
+  "junit": {
+    "Suites": 48,
+    "Tests": 657,
+    "Failures": 0,
+    "Errors": 0,
+    "Skipped": 0,
+    "Build": "BUILD SUCCESSFUL in 7m 15s",
+    "TransactionFaultTests": "28"
+  },
+  "jar": {
+    "File": "victoria_economics-0.1.1-1.21.1.jar",
+    "SHA256": "40404424DBBFDF799F0613F71DC5322E1CD75EC3B7DCEC0D101F7710FF99C3FD",
+    "FormalSaveMixin": true,
+    "TestLeakCount": 0,
+    "Entries": 298
+  },
+  "native": {
+    "acceptedTick": 6258,
+    "batchSettlementTicks": {
+      "count": 31,
+      "meanMs": 37.12724193548387,
+      "p50Ms": 30.8663,
+      "p95Ms": 61.4002,
+      "p99Ms": 177.4927,
+      "maxMs": 177.4927
+    },
+    "checkpoint": {
+      "committed": {
+        "worldId": "4ed7a72c-b986-4ff1-b3e1-996ea40a552d",
+        "checkpointId": "4cb9d5ab-48b0-487d-a1d3-8315190e5241",
+        "sequence": 5,
+        "economicTick": 6258,
+        "sha256": "5c8ab7252f8e8977a789f8e56ec26471c226fbd3cbd4eb91796041ff099ad52d"
+      },
+      "saved": 4,
+      "coalesced": 0,
+      "failed": 0,
+      "commitNanos": [
+        53611800,
+        58972600,
+        69347700,
+        118827500
+      ],
+      "blocked": false
+    },
+    "checkpointTimings": [
+      {
+        "rows": 4,
+        "validateNanos": 49274900,
+        "openNanos": 22231400,
+        "writeTransactionNanos": 15775200,
+        "outcomeVerificationNanos": 0,
+        "totalNanos": 89240100
+      },
+      {
+        "rows": 76,
+        "validateNanos": 25928900,
+        "openNanos": 11981300,
+        "writeTransactionNanos": 15256100,
+        "outcomeVerificationNanos": 0,
+        "totalNanos": 53587000
+      },
+      {
+        "rows": 80,
+        "validateNanos": 23343100,
+        "openNanos": 21428600,
+        "writeTransactionNanos": 13683100,
+        "outcomeVerificationNanos": 0,
+        "totalNanos": 58959900
+      },
+      {
+        "rows": 280,
+        "validateNanos": 40585000,
+        "openNanos": 13075900,
+        "writeTransactionNanos": 15209300,
+        "outcomeVerificationNanos": 0,
+        "totalNanos": 69338400
+      },
+      {
+        "rows": 311,
+        "validateNanos": 51815900,
+        "openNanos": 44425700,
+        "writeTransactionNanos": 22006500,
+        "outcomeVerificationNanos": 0,
+        "totalNanos": 118816200
+      }
+    ],
+    "databaseBytes": 475136,
+    "details": true,
+    "fixtureAndWarmup": {
+      "timings": {
+        "payroll.accrual": {
+          "count": 57,
+          "meanMs": 0.5402,
+          "p50Ms": 0.4103,
+          "p95Ms": 1.6448,
+          "p99Ms": 4.5597,
+          "maxMs": 4.5597
+        },
+        "clock.accept": {
+          "count": 57,
+          "meanMs": 0.6373947368421052,
+          "p50Ms": 0.4415,
+          "p95Ms": 1.9012,
+          "p99Ms": 2.4126,
+          "maxMs": 2.4126
+        },
+        "sqlite.read": {
+          "count": 234,
+          "meanMs": 0.29446068376068374,
+          "p50Ms": 0.1214,
+          "p95Ms": 1.1655,
+          "p99Ms": 3.4285,
+          "maxMs": 10.6798
+        },
+        "production.recoveryCheck": {
+          "count": 57,
+          "meanMs": 0.3470385964912281,
+          "p50Ms": 0.1879,
+          "p95Ms": 1.2951,
+          "p99Ms": 3.4308,
+          "maxMs": 3.4308
+        },
+        "sql.other": {
+          "count": 4,
+          "meanMs": 0.029625,
+          "p50Ms": 0.0232,
+          "p95Ms": 0.0415,
+          "p99Ms": 0.0415,
+          "maxMs": 0.0415
+        },
+        "inventory.domain": {
+          "count": 8,
+          "meanMs": 0.066175,
+          "p50Ms": 0.0099,
+          "p95Ms": 0.3063,
+          "p99Ms": 0.3063,
+          "maxMs": 0.3063
+        },
+        "sqlite.begin": {
+          "count": 470,
+          "meanMs": 0.011421489361702128,
+          "p50Ms": 0.0069,
+          "p95Ms": 0.025,
+          "p99Ms": 0.1153,
+          "maxMs": 0.3405
+        },
+        "sqlite.commit": {
+          "count": 470,
+          "meanMs": 0.022793191489361705,
+          "p50Ms": 0.0124,
+          "p95Ms": 0.0253,
+          "p99Ms": 0.2853,
+          "maxMs": 1.2592
+        },
+        "production.tick": {
+          "count": 57,
+          "meanMs": 0.6450842105263158,
+          "p50Ms": 0.5121,
+          "p95Ms": 1.8549,
+          "p99Ms": 2.0972,
+          "maxMs": 2.0972
+        },
+        "clock.payroll": {
+          "count": 57,
+          "meanMs": 0.5431368421052631,
+          "p50Ms": 0.412,
+          "p95Ms": 1.647,
+          "p99Ms": 4.5613,
+          "maxMs": 4.5613
+        },
+        "inventory.read": {
+          "count": 24,
+          "meanMs": 0.37415,
+          "p50Ms": 0.1967,
+          "p95Ms": 1.2983,
+          "p99Ms": 2.9886,
+          "maxMs": 2.9886
+        },
+        "inventory.deposit": {
+          "count": 4,
+          "meanMs": 1.7812,
+          "p50Ms": 0.4866,
+          "p95Ms": 5.6873,
+          "p99Ms": 5.6873,
+          "maxMs": 5.6873
+        },
+        "clock.payments": {
+          "count": 114,
+          "meanMs": 0.34320964912280705,
+          "p50Ms": 0.1958,
+          "p95Ms": 1.7274,
+          "p99Ms": 2.3399,
+          "maxMs": 2.7571
+        },
+        "sql.read": {
+          "count": 2103,
+          "meanMs": 0.03376509747979078,
+          "p50Ms": 0.0226,
+          "p95Ms": 0.0612,
+          "p99Ms": 0.2047,
+          "maxMs": 2.742
+        },
+        "payroll.period": {
+          "count": 114,
+          "meanMs": 0.34202017543859653,
+          "p50Ms": 0.1945,
+          "p95Ms": 1.7264,
+          "p99Ms": 2.3383,
+          "maxMs": 2.7559
+        },
+        "clock.tick": {
+          "count": 57,
+          "meanMs": 3.2777929824561403,
+          "p50Ms": 2.4123,
+          "p95Ms": 7.5697,
+          "p99Ms": 12.177,
+          "maxMs": 12.177
+        },
+        "clock.productionRecovery": {
+          "count": 57,
+          "meanMs": 0.6802245614035087,
+          "p50Ms": 0.3031,
+          "p95Ms": 3.3009,
+          "p99Ms": 8.8299,
+          "maxMs": 8.8299
+        },
+        "sqlite.cleanup": {
+          "count": 462,
+          "meanMs": 0.024655844155844157,
+          "p50Ms": 0.0071,
+          "p95Ms": 0.0245,
+          "p99Ms": 0.1483,
+          "maxMs": 2.7717
+        },
+        "sql.dml": {
+          "count": 285,
+          "meanMs": 0.03392736842105264,
+          "p50Ms": 0.0237,
+          "p95Ms": 0.1027,
+          "p99Ms": 0.2072,
+          "maxMs": 0.2465
+        },
+        "context.tick": {
+          "count": 57,
+          "meanMs": 3.280082456140351,
+          "p50Ms": 2.4138,
+          "p95Ms": 7.5714,
+          "p99Ms": 12.1812,
+          "maxMs": 12.1812
+        },
+        "schema.validate": {
+          "count": 2,
+          "meanMs": 7.22195,
+          "p50Ms": 3.7574,
+          "p95Ms": 10.6865,
+          "p99Ms": 10.6865,
+          "maxMs": 10.6865
+        },
+        "sqlite.write": {
+          "count": 216,
+          "meanMs": 0.9931851851851852,
+          "p50Ms": 0.4126,
+          "p95Ms": 3.3119,
+          "p99Ms": 7.9965,
+          "maxMs": 19.6341
+        },
+        "production.coordinator.write": {
+          "count": 77,
+          "meanMs": 1.2857779220779222,
+          "p50Ms": 0.3571,
+          "p95Ms": 4.3848,
+          "p99Ms": 19.6363,
+          "maxMs": 19.6363
+        },
+        "payroll.domain.accrue": {
+          "count": 12,
+          "meanMs": 0.096175,
+          "p50Ms": 0.0016,
+          "p95Ms": 1.1364,
+          "p99Ms": 1.1364,
+          "maxMs": 1.1364
+        },
+        "production.recovery": {
+          "count": 57,
+          "meanMs": 0.4649964912280702,
+          "p50Ms": 0.1889,
+          "p95Ms": 1.2963,
+          "p99Ms": 8.3341,
+          "maxMs": 8.3341
+        },
+        "inventory.reserve": {
+          "count": 4,
+          "meanMs": 1.0189,
+          "p50Ms": 0.5729,
+          "p95Ms": 2.0049,
+          "p99Ms": 2.0049,
+          "maxMs": 2.0049
+        },
+        "sqlite.transaction": {
+          "count": 470,
+          "meanMs": 0.6067974468085107,
+          "p50Ms": 0.2454,
+          "p95Ms": 2.5511,
+          "p99Ms": 7.5683,
+          "maxMs": 19.6255
+        },
+        "inventory.mutate": {
+          "count": 8,
+          "meanMs": 1.4015125,
+          "p50Ms": 0.4997,
+          "p95Ms": 5.6922,
+          "p99Ms": 5.6922,
+          "maxMs": 5.6922
+        },
+        "sqlite.work": {
+          "count": 470,
+          "meanMs": 0.5408840425531916,
+          "p50Ms": 0.2003,
+          "p95Ms": 2.3499,
+          "p99Ms": 7.5251,
+          "maxMs": 19.5886
+        }
+      },
+      "counts": {
+        "tx.savepoint": 8,
+        "tx.physical": 462,
+        "sql.dml": 285,
+        "sql.other": 4,
+        "sql.read": 2103,
+        "tx.write.withoutDml": 8,
+        "tx.write.withDml": 208,
+        "tx.withoutDml": 254,
+        "tx.withDml": 216
+      }
+    },
+    "java": "21.0.12",
+    "label": "unspecified",
+    "maxHeapBytes": 4213178368,
+    "minecraftBeforePost": {
+      "count": 6200,
+      "meanMs": 0.3342192903225807,
+      "p50Ms": 0.2217,
+      "p95Ms": 0.4354,
+      "p99Ms": 0.8096,
+      "maxMs": 114.8556
+    },
+    "nativeSave": {
+      "requests": 3,
+      "automaticRequests": 1,
+      "flushRequests": 1,
+      "rejectedCaptures": 0
+    },
+    "nativeSavingTicks": {
+      "count": 3,
+      "meanMs": 70.17753333333333,
+      "p50Ms": 53.1012,
+      "p95Ms": 119.314,
+      "p99Ms": 119.314,
+      "maxMs": 119.314
+    },
+    "normalTicks": {
+      "count": 6197,
+      "meanMs": 4.64317818299177,
+      "p50Ms": 3.893,
+      "p95Ms": 5.3566,
+      "p99Ms": 19.242,
+      "maxMs": 177.4927
+    },
+    "observedTps": 212.27547391295712,
+    "os": "Windows 11 10.0",
+    "payrollBoundaryTicks": {
+      "count": 5,
+      "meanMs": 18.55102,
+      "p50Ms": 9.7049,
+      "p95Ms": 38.1174,
+      "p99Ms": 38.1174,
+      "maxMs": 38.1174
+    },
+    "processors": 20,
+    "runtimeStorage": "shared-memory SQLite; disk is complete checkpoint only",
+    "sample": {
+      "timings": {
+        "clock.payments": {
+          "count": 12400,
+          "meanMs": 0.0500586935483871,
+          "p50Ms": 0.0421,
+          "p95Ms": 0.0618,
+          "p99Ms": 0.1055,
+          "maxMs": 20.5303
+        },
+        "production.building": {
+          "count": 24800,
+          "meanMs": 0.747375120967742,
+          "p50Ms": 0.5973,
+          "p95Ms": 0.8614,
+          "p99Ms": 2.0259,
+          "maxMs": 147.7594
+        },
+        "sqlite.begin": {
+          "count": 70333,
+          "meanMs": 0.002657904539831942,
+          "p50Ms": 0.0026,
+          "p95Ms": 0.0035,
+          "p99Ms": 0.0049,
+          "maxMs": 0.2194
+        },
+        "clock.payroll": {
+          "count": 6200,
+          "meanMs": 0.7117713548387097,
+          "p50Ms": 0.6168,
+          "p95Ms": 0.8962,
+          "p99Ms": 1.4786,
+          "maxMs": 38.7521
+        },
+        "sqlite.cleanup": {
+          "count": 70333,
+          "meanMs": 0.0023708117100081044,
+          "p50Ms": 0.0021,
+          "p95Ms": 0.0035,
+          "p99Ms": 0.0057,
+          "maxMs": 1.0831
+        },
+        "schema.validate": {
+          "count": 1,
+          "meanMs": 6.1365,
+          "p50Ms": 6.1365,
+          "p95Ms": 6.1365,
+          "p99Ms": 6.1365,
+          "maxMs": 6.1365
+        },
+        "payroll.domain.accrue": {
+          "count": 25048,
+          "meanMs": 0.0055405341743851805,
+          "p50Ms": 0.0018,
+          "p95Ms": 0.0113,
+          "p99Ms": 0.0252,
+          "maxMs": 37.8179
+        },
+        "sqlite.write": {
+          "count": 44407,
+          "meanMs": 0.5497561960952103,
+          "p50Ms": 0.5829,
+          "p95Ms": 0.8299,
+          "p99Ms": 1.294,
+          "maxMs": 83.8275
+        },
+        "sqlite.transaction": {
+          "count": 70333,
+          "meanMs": 0.36382108967341076,
+          "p50Ms": 0.13,
+          "p95Ms": 0.7657,
+          "p99Ms": 1.1409,
+          "maxMs": 83.8246
+        },
+        "production.recoveryCheck": {
+          "count": 6200,
+          "meanMs": 0.07887820967741935,
+          "p50Ms": 0.0726,
+          "p95Ms": 0.095,
+          "p99Ms": 0.179,
+          "maxMs": 7.677
+        },
+        "clock.tick": {
+          "count": 6200,
+          "meanMs": 4.333251467741936,
+          "p50Ms": 3.643,
+          "p95Ms": 4.9114,
+          "p99Ms": 15.5249,
+          "maxMs": 177.0855
+        },
+        "context.tick": {
+          "count": 6200,
+          "meanMs": 4.3339284838709675,
+          "p50Ms": 3.6435,
+          "p95Ms": 4.9128,
+          "p99Ms": 15.5269,
+          "maxMs": 177.0862
+        },
+        "sqlite.read": {
+          "count": 25182,
+          "meanMs": 0.04330875625446748,
+          "p50Ms": 0.0337,
+          "p95Ms": 0.0782,
+          "p99Ms": 0.1048,
+          "maxMs": 57.2109
+        },
+        "sql.read": {
+          "count": 754402,
+          "meanMs": 0.008224124273265448,
+          "p50Ms": 0.0048,
+          "p95Ms": 0.021,
+          "p99Ms": 0.032,
+          "maxMs": 75.8151
+        },
+        "sqlite.work": {
+          "count": 70333,
+          "meanMs": 0.3517018199138385,
+          "p50Ms": 0.119,
+          "p95Ms": 0.7494,
+          "p99Ms": 1.1163,
+          "maxMs": 83.7824
+        },
+        "production.tick": {
+          "count": 6200,
+          "meanMs": 3.204979435483871,
+          "p50Ms": 2.6228,
+          "p95Ms": 3.5368,
+          "p99Ms": 11.5411,
+          "maxMs": 175.8197
+        },
+        "production.recovery": {
+          "count": 6200,
+          "meanMs": 0.07927201612903226,
+          "p50Ms": 0.0729,
+          "p95Ms": 0.0956,
+          "p99Ms": 0.1791,
+          "maxMs": 7.6792
+        },
+        "production.domain.advance": {
+          "count": 24800,
+          "meanMs": 0.0003499637096774193,
+          "p50Ms": 0.0002,
+          "p95Ms": 0.0009,
+          "p99Ms": 0.0033,
+          "maxMs": 0.0936
+        },
+        "production.coordinator.write": {
+          "count": 31744,
+          "meanMs": 0.5956675529233871,
+          "p50Ms": 0.5837,
+          "p95Ms": 0.8431,
+          "p99Ms": 1.323,
+          "maxMs": 83.8284
+        },
+        "payroll.period": {
+          "count": 12400,
+          "meanMs": 0.04965870967741936,
+          "p50Ms": 0.0418,
+          "p95Ms": 0.0611,
+          "p99Ms": 0.1042,
+          "maxMs": 20.5294
+        },
+        "inventory.reserve": {
+          "count": 124,
+          "meanMs": 0.5764040322580645,
+          "p50Ms": 0.4386,
+          "p95Ms": 0.6901,
+          "p99Ms": 1.1322,
+          "maxMs": 14.8513
+        },
+        "inventory.read": {
+          "count": 744,
+          "meanMs": 0.2737825268817204,
+          "p50Ms": 0.1481,
+          "p95Ms": 0.2174,
+          "p99Ms": 0.2909,
+          "maxMs": 77.5512
+        },
+        "clock.accept": {
+          "count": 6200,
+          "meanMs": 0.16251622580645161,
+          "p50Ms": 0.1463,
+          "p95Ms": 0.196,
+          "p99Ms": 0.3298,
+          "maxMs": 37.0148
+        },
+        "payroll.accrual": {
+          "count": 6200,
+          "meanMs": 0.7111489838709678,
+          "p50Ms": 0.6163,
+          "p95Ms": 0.895,
+          "p99Ms": 1.4779,
+          "maxMs": 38.7485
+        },
+        "sql.dml": {
+          "count": 94460,
+          "meanMs": 0.020092801185687063,
+          "p50Ms": 0.0113,
+          "p95Ms": 0.0522,
+          "p99Ms": 0.0959,
+          "maxMs": 64.8514
+        },
+        "checkpoint.capture": {
+          "count": 3,
+          "meanMs": 4.390633333333333,
+          "p50Ms": 4.7383,
+          "p95Ms": 4.9403,
+          "p99Ms": 4.9403,
+          "maxMs": 4.9403
+        },
+        "inventory.settle": {
+          "count": 124,
+          "meanMs": 1.1464685483870967,
+          "p50Ms": 0.4805,
+          "p95Ms": 0.7761,
+          "p99Ms": 1.4724,
+          "maxMs": 80.0713
+        },
+        "checkpoint.wait": {
+          "count": 1,
+          "meanMs": 0.0124,
+          "p50Ms": 0.0124,
+          "p95Ms": 0.0124,
+          "p99Ms": 0.0124,
+          "maxMs": 0.0124
+        },
+        "sqlite.commit": {
+          "count": 70333,
+          "meanMs": 0.005432357499324641,
+          "p50Ms": 0.0051,
+          "p95Ms": 0.0081,
+          "p99Ms": 0.0113,
+          "maxMs": 6.5923
+        },
+        "inventory.mutate": {
+          "count": 248,
+          "meanMs": 0.8621201612903225,
+          "p50Ms": 0.4574,
+          "p95Ms": 0.7303,
+          "p99Ms": 1.4749,
+          "maxMs": 80.0721
+        },
+        "inventory.domain": {
+          "count": 248,
+          "meanMs": 0.016941935483870966,
+          "p50Ms": 0.0162,
+          "p95Ms": 0.0435,
+          "p99Ms": 0.0647,
+          "maxMs": 0.3595
+        },
+        "clock.productionRecovery": {
+          "count": 6200,
+          "meanMs": 0.12832712903225807,
+          "p50Ms": 0.1102,
+          "p95Ms": 0.1459,
+          "p99Ms": 0.2568,
+          "maxMs": 64.8992
+        }
+      },
+      "counts": {
+        "tx.physical": 70333,
+        "sql.dml": 94460,
+        "sql.read": 754402,
+        "tx.write.withoutDml": 248,
+        "tx.write.withDml": 44159,
+        "payroll.cycle": 5,
+        "tx.withoutDml": 26174,
+        "tx.withDml": 44159,
+        "inventory.settlement": 124
+      }
+    },
+    "scenario": "native-save4",
+    "serverTick": {
+      "count": 6200,
+      "meanMs": 4.67488835483871,
+      "p50Ms": 3.8931,
+      "p95Ms": 5.3709,
+      "p99Ms": 21.6372,
+      "maxMs": 177.4927
+    },
+    "sqlite": "disk DELETE/FULL; runtime MEMORY",
+    "startInterval": {
+      "count": 6199,
+      "meanMs": 4.71085981609937,
+      "p50Ms": 3.9281,
+      "p95Ms": 5.4271,
+      "p99Ms": 22.8924,
+      "maxMs": 177.6058
+    },
+    "startup": {
+      "timings": {
+        "sql.read": {
+          "count": 196,
+          "meanMs": 0.10086377551020408,
+          "p50Ms": 0.0422,
+          "p95Ms": 0.1715,
+          "p99Ms": 3.4569,
+          "maxMs": 4.1741
+        },
+        "database.open": {
+          "count": 1,
+          "meanMs": 21.5107,
+          "p50Ms": 21.5107,
+          "p95Ms": 21.5107,
+          "p99Ms": 21.5107,
+          "maxMs": 21.5107
+        },
+        "checkpoint.restore": {
+          "count": 1,
+          "meanMs": 288.4313,
+          "p50Ms": 288.4313,
+          "p95Ms": 288.4313,
+          "p99Ms": 288.4313,
+          "maxMs": 288.4313
+        },
+        "sql.dml": {
+          "count": 92,
+          "meanMs": 0.047269565217391306,
+          "p50Ms": 0.0239,
+          "p95Ms": 0.0975,
+          "p99Ms": 0.8849,
+          "maxMs": 0.8849
+        },
+        "sqlite.begin": {
+          "count": 13,
+          "meanMs": 0.07140769230769231,
+          "p50Ms": 0.0216,
+          "p95Ms": 0.5478,
+          "p99Ms": 0.5478,
+          "maxMs": 0.5478
+        },
+        "sqlite.commit": {
+          "count": 13,
+          "meanMs": 0.8229923076923078,
+          "p50Ms": 0.0234,
+          "p95Ms": 5.321,
+          "p99Ms": 5.321,
+          "maxMs": 5.321
+        },
+        "clock.payroll": {
+          "count": 1,
+          "meanMs": 2.9007,
+          "p50Ms": 2.9007,
+          "p95Ms": 2.9007,
+          "p99Ms": 2.9007,
+          "maxMs": 2.9007
+        },
+        "checkpoint.capture": {
+          "count": 2,
+          "meanMs": 23.54105,
+          "p50Ms": 11.0014,
+          "p95Ms": 36.0807,
+          "p99Ms": 36.0807,
+          "maxMs": 36.0807
+        },
+        "production.recovery": {
+          "count": 1,
+          "meanMs": 0.5044,
+          "p50Ms": 0.5044,
+          "p95Ms": 0.5044,
+          "p99Ms": 0.5044,
+          "maxMs": 0.5044
+        },
+        "sqlite.read": {
+          "count": 6,
+          "meanMs": 11.9212,
+          "p50Ms": 0.3426,
+          "p95Ms": 35.4813,
+          "p99Ms": 35.4813,
+          "maxMs": 35.4813
+        },
+        "sql.other": {
+          "count": 123,
+          "meanMs": 0.10925365853658536,
+          "p50Ms": 0.0876,
+          "p95Ms": 0.1866,
+          "p99Ms": 0.6914,
+          "maxMs": 1.6801
+        },
+        "sqlite.work": {
+          "count": 13,
+          "meanMs": 8.120561538461539,
+          "p50Ms": 4.4883,
+          "p95Ms": 34.963,
+          "p99Ms": 34.963,
+          "maxMs": 34.963
+        },
+        "production.recoveryCheck": {
+          "count": 1,
+          "meanMs": 0.4928,
+          "p50Ms": 0.4928,
+          "p95Ms": 0.4928,
+          "p99Ms": 0.4928,
+          "maxMs": 0.4928
+        },
+        "clock.payments": {
+          "count": 1,
+          "meanMs": 0.4466,
+          "p50Ms": 0.4466,
+          "p95Ms": 0.4466,
+          "p99Ms": 0.4466,
+          "maxMs": 0.4466
+        },
+        "runtime.open": {
+          "count": 1,
+          "meanMs": 295.7219,
+          "p50Ms": 295.7219,
+          "p95Ms": 295.7219,
+          "p99Ms": 295.7219,
+          "maxMs": 295.7219
+        },
+        "schema.validate": {
+          "count": 1,
+          "meanMs": 24.363,
+          "p50Ms": 24.363,
+          "p95Ms": 24.363,
+          "p99Ms": 24.363,
+          "maxMs": 24.363
+        },
+        "sqlite.write": {
+          "count": 4,
+          "meanMs": 6.561725,
+          "p50Ms": 2.7227,
+          "p95Ms": 15.4997,
+          "p99Ms": 15.4997,
+          "maxMs": 15.4997
+        },
+        "sqlite.transaction": {
+          "count": 13,
+          "meanMs": 9.084207692307691,
+          "p50Ms": 7.1657,
+          "p95Ms": 35.1863,
+          "p99Ms": 35.1863,
+          "maxMs": 35.1863
+        },
+        "sqlite.cleanup": {
+          "count": 13,
+          "meanMs": 0.02873076923076923,
+          "p50Ms": 0.0204,
+          "p95Ms": 0.1289,
+          "p99Ms": 0.1289,
+          "maxMs": 0.1289
+        },
+        "payroll.accrual": {
+          "count": 1,
+          "meanMs": 2.8881,
+          "p50Ms": 2.8881,
+          "p95Ms": 2.8881,
+          "p99Ms": 2.8881,
+          "maxMs": 2.8881
+        },
+        "payroll.period": {
+          "count": 1,
+          "meanMs": 0.4376,
+          "p50Ms": 0.4376,
+          "p95Ms": 0.4376,
+          "p99Ms": 0.4376,
+          "maxMs": 0.4376
+        },
+        "clock.productionRecovery": {
+          "count": 1,
+          "meanMs": 0.9927,
+          "p50Ms": 0.9927,
+          "p95Ms": 0.9927,
+          "p99Ms": 0.9927,
+          "maxMs": 0.9927
+        }
+      },
+      "counts": {
+        "tx.physical": 13,
+        "sql.other": 123,
+        "tx.write.withoutDml": 1,
+        "tx.write.withDml": 3,
+        "sql.read": 196,
+        "tx.withoutDml": 7,
+        "tx.withDml": 6,
+        "sql.dml": 92
+      }
+    },
+    "testSaveInterval": 0,
+    "vm": "Java HotSpot(TM) 64-Bit Server VM"
+  },
+  "nativeEvidence": {
+    "checkpoint": {
+      "committed": {
+        "worldId": "4ed7a72c-b986-4ff1-b3e1-996ea40a552d",
+        "checkpointId": "4cb9d5ab-48b0-487d-a1d3-8315190e5241",
+        "sequence": 5,
+        "economicTick": 6258,
+        "sha256": "5c8ab7252f8e8977a789f8e56ec26471c226fbd3cbd4eb91796041ff099ad52d"
+      },
+      "saved": 4,
+      "coalesced": 0,
+      "failed": 0,
+      "commitNanos": [
+        53611800,
+        58972600,
+        69347700,
+        118827500
+      ],
+      "blocked": false
+    },
+    "acceptedTick": 6258,
+    "nativeSave": {
+      "requests": 3,
+      "automaticRequests": 1,
+      "flushRequests": 1,
+      "rejectedCaptures": 0
+    },
+    "levelSaveEvents": 9
+  },
+  "saveFailure": {
+    "checkpoint": {
+      "committed": {
+        "worldId": "a8c0446c-2532-485c-b1c7-d91f8f129b80",
+        "checkpointId": "0e2d8f77-4d0a-49ae-a59c-71e387f46bcd",
+        "sequence": 2,
+        "economicTick": 49,
+        "sha256": "1745eb3e7cca420dfdb91752f84e7f9189a1471752f814cf1d215731ed7bf37d"
+      },
+      "saved": 1,
+      "coalesced": 0,
+      "failed": 0,
+      "commitNanos": [
+        42600000
+      ],
+      "blocked": false
+    },
+    "levelEvents": 9,
+    "native": {
+      "requests": 3,
+      "automaticRequests": 0,
+      "flushRequests": 2,
+      "rejectedCaptures": 2
+    }
+  },
+  "normalProcessRestart": "VE process restart verified at accepted Tick 2403 with identical production, liabilities and cash",
+  "crash": {
+    "reached": "HALTING 73 at runtime tick 297; saved tick 257",
+    "recovered": "VERIFIED entire checkpoint 0082b22a-2245-44df-9949-82b4a83c1f11 at tick 257",
+    "startup": {
+      "timings": {
+        "sqlite.commit": {
+          "count": 14,
+          "meanMs": 0.03812157142857143,
+          "p50Ms": 0.0279,
+          "p95Ms": 0.096101,
+          "p99Ms": 0.096101,
+          "maxMs": 0.096101
+        },
+        "clock.payroll": {
+          "count": 1,
+          "meanMs": 9.582801,
+          "p50Ms": 9.582801,
+          "p95Ms": 9.582801,
+          "p99Ms": 9.582801,
+          "maxMs": 9.582801
+        },
+        "checkpoint.capture": {
+          "count": 1,
+          "meanMs": 9.3248,
+          "p50Ms": 9.3248,
+          "p95Ms": 9.3248,
+          "p99Ms": 9.3248,
+          "maxMs": 9.3248
+        },
+        "production.recovery": {
+          "count": 1,
+          "meanMs": 0.5255,
+          "p50Ms": 0.5255,
+          "p95Ms": 0.5255,
+          "p99Ms": 0.5255,
+          "maxMs": 0.5255
+        },
+        "sqlite.read": {
+          "count": 9,
+          "meanMs": 18.851399777777775,
+          "p50Ms": 9.378,
+          "p95Ms": 90.409799,
+          "p99Ms": 90.409799,
+          "maxMs": 90.409799
+        },
+        "sql.other": {
+          "count": 44,
+          "meanMs": 0.13110906818181817,
+          "p50Ms": 0.1061,
+          "p95Ms": 0.2833,
+          "p99Ms": 0.5965,
+          "maxMs": 0.5965
+        },
+        "sqlite.work": {
+          "count": 14,
+          "meanMs": 13.840092785714285,
+          "p50Ms": 9.036,
+          "p95Ms": 88.6601,
+          "p99Ms": 88.6601,
+          "maxMs": 88.6601
+        },
+        "production.recoveryCheck": {
+          "count": 1,
+          "meanMs": 0.5135,
+          "p50Ms": 0.5135,
+          "p95Ms": 0.5135,
+          "p99Ms": 0.5135,
+          "maxMs": 0.5135
+        },
+        "clock.payments": {
+          "count": 1,
+          "meanMs": 0.516,
+          "p50Ms": 0.516,
+          "p95Ms": 0.516,
+          "p99Ms": 0.516,
+          "maxMs": 0.516
+        },
+        "runtime.open": {
+          "count": 1,
+          "meanMs": 356.025,
+          "p50Ms": 356.025,
+          "p95Ms": 356.025,
+          "p99Ms": 356.025,
+          "maxMs": 356.025
+        },
+        "schema.validate": {
+          "count": 3,
+          "meanMs": 39.34419966666666,
+          "p50Ms": 15.134,
+          "p95Ms": 93.512099,
+          "p99Ms": 93.512099,
+          "maxMs": 93.512099
+        },
+        "sqlite.write": {
+          "count": 3,
+          "meanMs": 6.664233666666667,
+          "p50Ms": 9.191901,
+          "p95Ms": 10.097001,
+          "p99Ms": 10.097001,
+          "maxMs": 10.097001
+        },
+        "payroll.domain.accrue": {
+          "count": 1,
+          "meanMs": 0.006301,
+          "p50Ms": 0.006301,
+          "p95Ms": 0.006301,
+          "p99Ms": 0.006301,
+          "maxMs": 0.006301
+        },
+        "sqlite.transaction": {
+          "count": 14,
+          "meanMs": 13.996414142857144,
+          "p50Ms": 9.122799,
+          "p95Ms": 89.6136,
+          "p99Ms": 89.6136,
+          "maxMs": 89.6136
+        },
+        "sqlite.cleanup": {
+          "count": 14,
+          "meanMs": 0.019528928571428572,
+          "p50Ms": 0.0189,
+          "p95Ms": 0.025,
+          "p99Ms": 0.025,
+          "maxMs": 0.025
+        },
+        "payroll.accrual": {
+          "count": 1,
+          "meanMs": 9.5697,
+          "p50Ms": 9.5697,
+          "p95Ms": 9.5697,
+          "p99Ms": 9.5697,
+          "maxMs": 9.5697
+        },
+        "payroll.period": {
+          "count": 1,
+          "meanMs": 0.5061,
+          "p50Ms": 0.5061,
+          "p95Ms": 0.5061,
+          "p99Ms": 0.5061,
+          "maxMs": 0.5061
+        },
+        "clock.productionRecovery": {
+          "count": 1,
+          "meanMs": 0.9099,
+          "p50Ms": 0.9099,
+          "p95Ms": 0.9099,
+          "p99Ms": 0.9099,
+          "maxMs": 0.9099
+        },
+        "sql.read": {
+          "count": 400,
+          "meanMs": 0.059870305,
+          "p50Ms": 0.034499,
+          "p95Ms": 0.133101,
+          "p99Ms": 0.633201,
+          "maxMs": 1.9585
+        },
+        "checkpoint.restore": {
+          "count": 1,
+          "meanMs": 70.6806,
+          "p50Ms": 70.6806,
+          "p95Ms": 70.6806,
+          "p99Ms": 70.6806,
+          "maxMs": 70.6806
+        },
+        "sql.dml": {
+          "count": 79,
+          "meanMs": 0.06237974683544304,
+          "p50Ms": 0.0335,
+          "p95Ms": 0.285,
+          "p99Ms": 0.4158,
+          "maxMs": 0.4158
+        },
+        "sqlite.begin": {
+          "count": 14,
+          "meanMs": 0.05376435714285714,
+          "p50Ms": 0.019199,
+          "p95Ms": 0.477901,
+          "p99Ms": 0.477901,
+          "maxMs": 0.477901
+        }
+      },
+      "counts": {
+        "tx.write.withoutDml": 2,
+        "tx.write.withDml": 1,
+        "sql.read": 400,
+        "tx.withoutDml": 12,
+        "tx.withDml": 2,
+        "sql.dml": 79,
+        "tx.physical": 14,
+        "sql.other": 44
+      }
+    }
+  },
+  "sources": {
+    "minecraft": "1.21.1 / NeoForge 21.1.248",
+    "sourceArchiveSha256": "B32A34CC927FA7CB32C183813C68ECEDD4A3BC0DA0B5F5E7BC10186DCC0B733F",
+    "files": [
+      {
+        "path": "net/minecraft/server/MinecraftServer.java",
+        "sha256": "AE4061B6DF850528E80A55D24D396CA2E2643D69B18A0D64571193E7257426DD"
+      },
+      {
+        "path": "net/minecraft/server/commands/SaveAllCommand.java",
+        "sha256": "31F93AD4AA3A6CADB9DD3EB6E9CB2F4C537B4B8FE51FAC6C328FF96A1092E117"
+      },
+      {
+        "path": "net/minecraft/server/commands/SaveOffCommand.java",
+        "sha256": "63B4339AEDA8A307CADCFF4EAFD5BFFCB0642A8DE4011E2A3DA5FECA0A4394D6"
+      },
+      {
+        "path": "net/minecraft/server/level/ServerLevel.java",
+        "sha256": "AD692045B8DBCAD4A6950A909E5BF97021A595E7C49F00A8B6063ADEEA9090C9"
+      },
+      {
+        "path": "net/minecraft/server/level/ChunkMap.java",
+        "sha256": "2948EB35FB4C7566D63D132DC59E44C6E87091532BC820901D89148A231CBADC"
+      },
+      {
+        "path": "net/minecraft/world/level/chunk/storage/IOWorker.java",
+        "sha256": "9781F98C8DBB4E3E50F710B56F134D7B4E24EFAB5B27DECEAFE415EC93A622E7"
+      },
+      {
+        "path": "net/minecraft/world/level/entity/PersistentEntitySectionManager.java",
+        "sha256": "17518FD5D31376D7127C3FE7248881D6F6C51686A253B5D97C40C64F0FCD3AD7"
+      },
+      {
+        "path": "net/minecraft/world/level/chunk/storage/ChunkSerializer.java",
+        "sha256": "94238FBA7C7A348B48A31AB7AE11C89FA8E8ED560E8C0A33F2A2349CED95C050"
+      },
+      {
+        "path": "net/minecraft/world/level/storage/PlayerDataStorage.java",
+        "sha256": "6C8AAE5A80AA244AE13616230170903FF299272D521C19BDF220F36145B451FD"
+      },
+      {
+        "path": "net/minecraft/world/level/storage/DimensionDataStorage.java",
+        "sha256": "7461875697F259C29DAFB17EB9693B0861AF022EE30EF2CA1A1B827C7451935E"
+      },
+      {
+        "path": "net/minecraft/world/level/storage/LevelStorageSource.java",
+        "sha256": "8FE23553204AF4935F0DED565EFFF3395EB35F889D0207E9E0DB7484A546B459"
+      },
+      {
+        "path": "net/minecraft/world/level/saveddata/SavedData.java",
+        "sha256": "378E1147106A1293AE72088B3A1DE360F75CC422E828D4B7B56B1B89E2638E78"
+      },
+      {
+        "path": "net/neoforged/neoforge/event/level/LevelEvent.java",
+        "sha256": "03E3CE8F132BB0679D08B4E979287E93D6F5F1E5B5FAC2236ABC44FD824591C7"
+      },
+      {
+        "path": "net/neoforged/neoforge/common/IOUtilities.java",
+        "sha256": "43603BADE96A9362F758439A4CA01D64D172C3E48E3AF8C64B9743715875C6D1"
+      }
+    ],
+    "nsuk": {
+      "Commit": "00276ed14f2bbf2493b0f5ae14f5b69a620b2775",
+      "Tree": "c8243cc3f5435c98cfb8b6039a0097319e88d7a6",
+      "Date": "2026-10-20T10:31:57Z",
+      "Url": "https://github.com/MeteorPointer/New-Simukraft-1.21.1/commit/00276ed14f2bbf2493b0f5ae14f5b69a620b2775"
+    },
+    "nsukFiles": [
+      {
+        "path": "docs/新版重写当前进度与后续计划.md",
+        "blob": "de37386e759e154e499493066dfeb6b475d520ab"
+      },
+      {
+        "path": "src/main/java/common/cn/nsimu/simukraft/commercial/CommercialWorkService.java",
+        "blob": "56ef4422b417414d506a7453942f6f35455433f1"
+      },
+      {
+        "path": "src/main/java/common/cn/nsimu/simukraft/path/CitizenNavigationService.java",
+        "blob": "6a6ae861443e73d3f165dc04146a5db42e97e53c"
+      },
+      {
+        "path": "src/main/java/common/cn/nsimu/simukraft/storage/StorageWriteQueue.java",
+        "blob": "1b6e6092ba2dff8a4f9c7f6017981ceaed1becf0"
+      },
+      {
+        "path": "src/main/java/common/cn/nsimu/simukraft/storage/core/SqliteConnectionPool.java",
+        "blob": "18ddf6b3fc4401398e5fd863b6610978a6e8b4db"
+      },
+      {
+        "path": "src/main/java/common/cn/nsimu/simukraft/storage/core/StorageMetrics.java",
+        "blob": "273a6a5611078f805e1b2377db079e9555f2bd36"
+      },
+      {
+        "path": "src/main/java/common/cn/nsimu/simukraft/storage/core/TransactionRunner.java",
+        "blob": "a115646ddf1a96756f2c4d3d9ecc671690d54387"
+      }
+    ]
+  }
+}

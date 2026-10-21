@@ -1,5 +1,7 @@
 package com.bbmurloc.victoriaeconomics.server.production.application;
 
+import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
+
 import com.bbmurloc.victoriaeconomics.server.production.domain.*;
 import com.bbmurloc.victoriaeconomics.server.production.port.*;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.CommitOutcomeUnknownException;
@@ -59,10 +61,11 @@ public final class ProductionService {
         if(!e.hasUnfinishedBatch()&&!coordinator.lifecycleHeld(id))coordinator.reconfigure(id);
     }
     /** One durable advance per building/accepted Tick. A failure leaves that Tick pending and stops global allocation. */
-    public void onEconomicTick(){synchronized(lock){
+    public void onEconomicTick(){
+        try (var diagnosticScope = EconomyDiagnostics.scope("production.tick")) {synchronized(lock){
         long tick=coordinator.acceptedTick();recoverStarts();var failures=new ArrayList<RuntimeException>();
-        for(UUID id:coordinator.buildingIds())try{
-            if(!coordinator.advance(id,tick))continue;
+        for(UUID id:coordinator.buildingIds())try(var buildingMeasurement=EconomyDiagnostics.scope("production.building")){
+            if(coordinator.processTick(id,tick)!=ProductionBoundaryCoordinator.TickResult.NEEDS_FOLLOW_UP)continue;
             settleAndHandleBoundary(id);var e=coordinator.execution(id);
             if(e.batch()==null&&e.automatic()&&!coordinator.lifecycleHeld(id))try{startBatch(id,true);}catch(ProductionStartBlocked denied){block(id,denied);}
             if(e.boundary()!=ProductionExecution.Boundary.NONE&&coordinator.lifecycleHeld(id))throw new IllegalStateException("Lifecycle resource handoff remains incomplete; recover its OperationId");
@@ -70,9 +73,14 @@ public final class ProductionService {
         }catch(RuntimeException failure){block(id,failure);failures.add(failure);}
         if(!failures.isEmpty()){var failure=new IllegalStateException("Production Tick remains incomplete: "+tick);failures.forEach(failure::addSuppressed);throw failure;}
         coordinator.confirmWholeTick(tick);
-    }}
+    }
+        }
+    }
     /** Restart uses the existing accepted Tick and checkpoints; it neither allocates nor guesses missed Ticks. */
-    public void recoverAcceptedTick(){synchronized(lock){if(!coordinator.needsRecovery())return;recoverStarts();recoverBoundaries();onEconomicTick();}}
+    public void recoverAcceptedTick(){
+        try (var diagnosticScope = EconomyDiagnostics.scope("production.recovery")) {synchronized(lock){if(!coordinator.needsRecovery())return;recoverStarts();recoverBoundaries();onEconomicTick();}
+        }
+    }
     public void recoverBoundaries(){synchronized(lock){
         for(UUID id:coordinator.buildingIds()){
             var e=coordinator.execution(id);

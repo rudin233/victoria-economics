@@ -1,5 +1,7 @@
 package com.bbmurloc.victoriaeconomics.server.storage.sqlite;
 
+import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
+
 import org.sqlite.SQLiteConnection;
 import org.sqlite.SQLiteConnectionConfig;
 import java.lang.ref.WeakReference;
@@ -117,6 +119,7 @@ public final class SqliteConnectionGuard {
         private final Object delegate;
         private final State state;
         private Connection owner;
+        private String sql;
 
         private Guard(Object delegate, State state, Connection owner) {
             this.delegate = delegate;
@@ -148,7 +151,12 @@ public final class SqliteConnectionGuard {
 
             Object result;
             try {
+                boolean measured = delegate instanceof Statement && name.startsWith("execute") && EconomyDiagnostics.enabled();
+                long started = measured ? System.nanoTime() : 0;
                 result = method.invoke(delegate, arguments);
+                if (measured) EconomyDiagnostics.sql(
+                        arguments != null && arguments.length > 0 && arguments[0] instanceof String text ? text : sql,
+                        name, result, System.nanoTime() - started);
             } catch (InvocationTargetException failure) {
                 throw failure.getCause();
             }
@@ -164,8 +172,9 @@ public final class SqliteConnectionGuard {
                     : result instanceof ResultSet ? ResultSet.class
                     : result instanceof DatabaseMetaData ? DatabaseMetaData.class : null;
             if (contract == null) return result;
-            return Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract},
-                    new Guard(result, state, owner));
+            var child = new Guard(result, state, owner);
+            child.sql = name.startsWith("prepare") && arguments != null && arguments.length > 0 && arguments[0] instanceof String text ? text : sql;
+            return Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[]{contract}, child);
         }
     }
 }

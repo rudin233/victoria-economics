@@ -1,5 +1,7 @@
 package com.bbmurloc.victoriaeconomics.server.payroll.application;
 
+import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
+
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.CommitOutcomeUnknownException;
 import com.bbmurloc.victoriaeconomics.server.payroll.domain.PayrollPaymentUnavailable;
 import com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository;
@@ -11,9 +13,11 @@ public final class PayrollPeriodService {
     private static final System.Logger LOG=System.getLogger(PayrollPeriodService.class.getName());
     private final Object lock;private final CompanyPayrollService payments;private final SqliteEconomicTimeRepository time;
     public PayrollPeriodService(Connection c,Object lock){this.lock=lock;payments=new CompanyPayrollService(c,lock);time=new SqliteEconomicTimeRepository(c,lock);}
-    public void recoverAcceptedTime(){synchronized(lock){
+    public void recoverAcceptedTime(){
+        try (var diagnosticScope = EconomyDiagnostics.scope("payroll.period")) {synchronized(lock){
         var accepted=time.load();long done=payments.processedPeriod();
         while(done<accepted.periodId()){
+            EconomyDiagnostics.count("payroll.cycle");
             long period=Math.incrementExact(done);payments.preparePeriod(period);var failures=new ArrayList<RuntimeException>();
             for(var command:payments.commands(period))try{payments.pay(command);}
             catch(CommitOutcomeUnknownException unknown){throw unknown;}
@@ -24,5 +28,7 @@ public final class PayrollPeriodService {
             }
             payments.finishPeriod(period);done=period;
         }
-    }}
+    }
+        }
+    }
 }

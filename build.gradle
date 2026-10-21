@@ -154,6 +154,7 @@ dependencies {
 
 tasks.withType(Test).configureEach {
     useJUnitPlatform()
+    systemProperty 've.test.runtimeClasspath', sourceSets.test.runtimeClasspath.asPath
     testLogging { events 'failed', 'skipped'; exceptionFormat = 'full' }
 }
 
@@ -234,9 +235,13 @@ neoForge {
                 'task-e-gametest-' + name
             }.orElse('task-e-gametest'))
             def acceptanceMode = providers.gradleProperty('veGameTestMode').orElse('full').get()
-            if (!(acceptanceMode in ['full','restart'])) throw new GradleException('veGameTestMode must be full or restart')
+            if (!(acceptanceMode in ['full','restart','perf','checkpoint','checkpointFailure','crash','crashRestart'])) throw new GradleException('Unknown isolated GameTest mode')
             systemProperty 've.acceptanceMode', acceptanceMode
-            systemProperty 'neoforge.enabledGameTestNamespaces', acceptanceMode == 'restart' ? 'victoria_economics_restarttests' : 'victoria_economics_gametests'
+            systemProperty 've.perfScenario', providers.gradleProperty('vePerfScenario').orElse('active4').get()
+            systemProperty 've.perfLabel', providers.gradleProperty('vePerfLabel').orElse('unspecified').get()
+            systemProperty 've.perfDetails', providers.gradleProperty('vePerfDetails').orElse('true').get()
+            systemProperty 've.perfSaveInterval', providers.gradleProperty('vePerfSaveInterval').orElse('0').get()
+            systemProperty 'neoforge.enabledGameTestNamespaces', acceptanceMode == 'restart' ? 'victoria_economics_restarttests' : acceptanceMode == 'perf' ? 'victoria_economics_perftests' : acceptanceMode in ['checkpoint','checkpointFailure','crash','crashRestart'] ? 'victoria_economics_checkpointtests' : 'victoria_economics_gametests'
         }
     }
 }
@@ -253,4 +258,17 @@ tasks.named('runGameTestServer') {
         if (acceptanceMarker.getText('UTF-8') != 'PASSED ' + requiredAcceptanceMode)
             throw new GradleException('The isolated GameTest assertions did not complete; a zero process exit is insufficient')
     }
+}
+
+// Read-only startup-cost probe, restricted by the Java entry point to an existing isolated build world.
+tasks.register('profileEconomyPreflight', JavaExec) {
+    dependsOn tasks.named('gameTestClasses')
+    classpath = sourceSets.gameTest.runtimeClasspath
+    mainClass = 'com.bbmurloc.victoriaeconomics.gametest.SchemaPreflightMeasurements'
+    def name = providers.gradleProperty('vePreflightRun').orElse('unspecified').get()
+    if (!(name ==~ /[a-zA-Z0-9_-]{1,48}/)) throw new GradleException('vePreflightRun must identify an isolated run')
+    def isolatedProbeDirectory = layout.buildDirectory.dir('task-p-preflight').get().asFile
+    workingDir isolatedProbeDirectory
+    doFirst { isolatedProbeDirectory.mkdirs() }
+    args = [layout.buildDirectory.dir('task-e-gametest-' + name).get().asFile.absolutePath, layout.buildDirectory.get().asFile.absolutePath]
 }

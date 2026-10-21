@@ -1,17 +1,20 @@
 package com.bbmurloc.victoriaeconomics.server.storage.sqlite;
 
+import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
+
 import java.sql.*;
 import java.util.*;
 
 /** Fresh world schema. Existing incompatible worlds are rejected, never converted or cleared. */
 public final class EconomySchema {
-    public static final int VERSION = 9;
+    public static final int VERSION = 10;
     private EconomySchema() {}
 
-    // v9 adds durable lifecycle quiescence and explicit unfinished-policy gates.
+    // v10 adds whole-economy checkpoint identity; business JSON remains explicitly format 9.
     // Creation and compatibility use the same DDL, with no legacy migration.
     private static final List<String> DDL = List.of(
             "CREATE TABLE economy_schema_migrations(version INTEGER PRIMARY KEY)",
+            "CREATE TABLE economic_checkpoint(id INTEGER PRIMARY KEY CHECK(id=1), world_id TEXT NOT NULL, checkpoint_id TEXT NOT NULL, sequence INTEGER NOT NULL CHECK(typeof(sequence)='integer' AND sequence>0), economic_tick INTEGER NOT NULL CHECK(typeof(economic_tick)='integer' AND economic_tick>=0), content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64))",
             "CREATE TABLE companies(id TEXT PRIMARY KEY NOT NULL)",
             "CREATE TABLE regions(id TEXT PRIMARY KEY NOT NULL)",
             "CREATE TABLE occupation_catalog(id TEXT PRIMARY KEY NOT NULL CHECK(length(trim(id)) > 0))",
@@ -58,6 +61,7 @@ public final class EconomySchema {
 
     /** Pure validation of a single committed snapshot; works on a physically read-only connection. */
     public static void validateExisting(Connection connection) {
+        try (var diagnosticScope = EconomyDiagnostics.scope("schema.validate")) {
         SqliteTransactions.requireCommittedReads(connection);
         EconomyStateCodec.requireCurrentFormat();
         SqliteTransactions.read(connection, snapshot -> {
@@ -133,6 +137,8 @@ public final class EconomySchema {
             }
             return null;
         });
+
+        }
     }
 
     private static Set<String> definitions(Connection connection) throws SQLException {
@@ -142,6 +148,17 @@ public final class EconomySchema {
             while (rows.next()) result.add(normalize(rows.getString(1)));
         }
         return result;
+    }
+
+    /** Exact, versioned checkpoint payload. No arbitrary table discovery or partial domain caches. */
+    static List<String> checkpointTables() {
+        var tables = new ArrayList<String>();
+        for (var group : List.of(DDL, EconomyFinancialSchema.DDL, EconomyPaymentSchema.DDL, EconomyLifecycleSchema.DDL))
+            for (String ddl : group) if (ddl.startsWith("CREATE TABLE ")) {
+                String table = ddl.substring("CREATE TABLE ".length(), ddl.indexOf('('));
+                if (!table.equals("economic_checkpoint")) tables.add(table);
+            }
+        return List.copyOf(tables);
     }
 
     private static String normalize(String ddl) { return ddl == null ? "" : ddl.trim().replaceAll("\\s+", " "); }

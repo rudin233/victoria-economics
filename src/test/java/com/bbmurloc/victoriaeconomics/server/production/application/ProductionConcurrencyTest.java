@@ -74,7 +74,7 @@ class ProductionConcurrencyTest {
         try(var e=new TestEconomy(file(),true)){
             var second=e.createBuilding();e.stock.createLocation(second.getId(),1000);e.stock.deposit(second.getId(),Map.of("wood",100L));e.staffing.requestTarget(second.getId(),"laborer",10);e.staffing.requestTarget(second.getId(),"machinist",4);
             e.production.startBatch(e.id);e.production.startBatch(second.getId());
-            e.sql("CREATE TRIGGER fail_one BEFORE UPDATE ON production_executions WHEN NEW.building_id='"+e.id+"' AND NEW.processing_tick IS NOT NULL BEGIN SELECT RAISE(ABORT,'one building failed'); END");
+            e.sql("CREATE TRIGGER fail_one BEFORE UPDATE ON production_executions WHEN NEW.building_id='"+e.id+"' AND (NEW.processing_tick IS NOT NULL OR NEW.last_completed_tick>OLD.last_completed_tick) BEGIN SELECT RAISE(ABORT,'one building failed'); END");
             assertThrows(IllegalStateException.class,()->e.ticks(1));assertEquals(0,e.execution().batch().getProgressUnits());assertEquals(1,e.repository.load(second.getId()).batch().getProgressUnits());
             assertEquals(0,e.clock.persistentTime().productionCallbackReturnedTick());e.sql("DROP TRIGGER fail_one");e.recover();
             assertEquals(1,e.execution().batch().getProgressUnits());assertEquals(1,e.repository.load(second.getId()).batch().getProgressUnits());assertFalse(e.clock.persistentTime().hasUnconfirmedProductionCallback());

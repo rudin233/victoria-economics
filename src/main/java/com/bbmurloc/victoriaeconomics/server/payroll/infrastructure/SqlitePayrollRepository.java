@@ -111,19 +111,37 @@ public final class SqlitePayrollRepository implements PayrollRepository {
             recordEmployees(result);
             return result;
         }); }
-        public PayrollAccrual accrue(PayrollAccrual prior, long target) throws SQLException { return tx.perform(() -> {
-            if (!read(prior.id()).equals(prior)) throw new IllegalStateException("Stale or untrusted payroll segment snapshot");
+        public PayrollAccrual accrue(PayrollAccrual prior,long target)throws SQLException{return tx.perform(()->
+            accrue(prior,target,SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick(),rates(prior.region(),prior.currency())));
+        }
+        /** Reuse only facts read inside this one IMMEDIATE batch; no cache survives the method/session. */
+        public void accrueAll(List<PayrollAccrual> segments,long target)throws SQLException{tx.perform(()->{
+            long accepted=SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick();
+            record RateKey(RegionId region,CurrencyId currency){}
+            var histories=new HashMap<RateKey,List<RegionalWageRate>>();
+            for(var prior:segments){
+                var key=new RateKey(prior.region(),prior.currency());var history=histories.get(key);
+                if(history==null){history=rates(prior.region(),prior.currency());histories.put(key,history);}
+                accrue(prior,target,accepted,history);
+            }
+            return null;
+        });}
+        private PayrollAccrual accrue(PayrollAccrual prior,long target,long accepted,List<RegionalWageRate> history)throws SQLException{
+            if(!read(prior.id()).equals(prior))throw new IllegalStateException("Stale or untrusted payroll segment snapshot");
             validateEmployees(prior);
-            if (target > SqliteEconomicTimeRepository.inTransaction(connection, tx).acceptedTick()) throw new IllegalArgumentException("Cannot accrue unaccepted time");
-            var result = prior.accrueThrough(target, rates(prior.region(), prior.currency()));
-            if (!result.accrual().equals(prior)) save(result.accrual(), prior.revision());
-            try (var s = connection.prepareStatement("INSERT INTO payroll_liabilities VALUES(?,?,?,0)")) {
-                for (var liability : result.liabilities()) {
-                    s.setString(1, prior.id().toString()); s.setLong(2, liability.periodId()); s.setLong(3, liability.amount()); s.executeUpdate();
+            if(target>accepted)throw new IllegalArgumentException("Cannot accrue unaccepted time");
+            PayrollAccrual.Result result;
+            try(var ignored=com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics.scope("payroll.domain.accrue")){
+                result=prior.accrueThrough(target,history);
+            }
+            if(!result.accrual().equals(prior))save(result.accrual(),prior.revision());
+            if(!result.liabilities().isEmpty())try(var s=connection.prepareStatement("INSERT INTO payroll_liabilities VALUES(?,?,?,0)")){
+                for(var liability:result.liabilities()){
+                    s.setString(1,prior.id().toString());s.setLong(2,liability.periodId());s.setLong(3,liability.amount());s.executeUpdate();
                 }
             }
             return result.accrual();
-        }); }
+        }
         /** Future UoW: accrue old base, save Staffing, then acknowledge its new base in this same session. */
         public PayrollAccrual changeEmployees(UUID id, long count, long tick) throws SQLException { return tx.perform(() -> {
             requireStaffingAuthority();

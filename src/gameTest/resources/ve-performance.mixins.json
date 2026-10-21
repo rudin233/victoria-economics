@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.bbmurloc.victoriaeconomics.gametest.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "PerformanceServerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

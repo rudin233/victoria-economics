@@ -1,6 +1,32 @@
 # 隔离整服性能采样方法
 
-日期：2026-10-21。测量实际 NeoForge ServerTickEvent.Pre → Post 耗时，不使用墙钟推进经济状态。真实结果见[任务 E 报告](../design/VE-Task-E-M5.1-M5.2-M5.3-建筑生命周期与整体验收.md)。
+工作包 P 按用户变更采用统一内存事务运行时与完整经济检查点，见 [P 设计](../design/VE-Task-P-一致性检查点架构.md)和 [P 验收报告](VE-Task-P-经济Tick性能诊断与优化验收.md)。已保留完整 `tickServer`、Context/子系统/事务阶段及旧架构六场景双轮数据。下文 Task E 的 Pre→Post 数据与逐 Tick 落盘说明均为历史口径；原生 `tickTimesNanos` 在 Post 前结束，不能单独拿来判断 50ms 总预算。
+
+当前推荐在没有并行构建/其他压力任务时执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/Measure-Economy.ps1 -Label local01 -Repetitions 2 -SaveInterval 200
+node tools/Summarize-Economy.mjs build build/local01-results.json local01
+```
+
+每次选择新 Label，不重用或删除旧隔离世界。六场景均 150 Tick 预热、1300 对齐样本，正常 Payroll/Production 不跳过。内存业务事务与磁盘检查点须分别统计；磁盘仍 DELETE/FULL。`SaveInterval=200` 仅为压力测试原版保存入口的参数，正式默认跟随原版自动保存；传 0 不额外触发。GameTest 吞吐没有普通服务器 20 TPS 上限，不能冒充玩家服 TPS。
+
+在 PowerShell 内可以只运行部分场景并关闭细分观察器：
+
+```powershell
+& ./tools/Measure-Economy.ps1 -Label minimal01 -Repetitions 2 -Scenarios @('active4','active16') -NoDetails
+node tools/Summarize-Economy.mjs build build/minimal01-results.json minimal01
+```
+
+此时只保留测试源集的完整 Tick 计时；Context/SQL/事务细分为不可用，不能把缺失计数解释为没有数据库业务。所有业务检查照常执行。非 Tick 格式/历史成本可在服务器退出后执行 `./gradlew.bat profileEconomyPreflight -PvePreflightRun=p_local01_history4_1 --console=plain`，只接受已有 build 隔离目录，保留前后主文件/WAL 哈希。
+
+实际原版自动保存及手动 flush 验证：新运行名执行 `./gradlew.bat runGameTestServer -PveGameTestRun=native01 -PveGameTestMode=checkpoint --console=plain`，采样 6200 Tick，不能把单维度 Save 事件当作全局提交完成。
+
+崩溃验证使用新运行名先运行 `veGameTestMode=crash`（明确预期 JVM halt 73、Gradle 失败、`crash-reached.txt` 存在），再在同目录运行 `crashRestart`，核验最近完整快照的整个摘要。普通 `full` 后接同目录 `restart` 则验证正常停服；二者不得混称。不要把故意非零退出当作测试意外通过，也不要跳过重启断言。
+
+若要复现优化前行为，在单独、干净的 `d408087` 源码副本应用 [measurement-only.patch](task-p/measurement-only.patch)，再运行 baseline 标签；不要在当前优化工作区反向套用或重置。该补丁保留最初的库存 read/mutate 粗粒度探针；最终版本额外细分库存操作，前后总耗时比较使用共同口径。
+
+以下为 Task E 历史采样方法（逐 Tick 磁盘实现，现已被替代）。日期：2026-10-21。其 Pre→Post 统计、事务预算与旧版本只用于复核历史，不代表当前架构。原结果见[任务 E 报告](../design/VE-Task-E-M5.1-M5.2-M5.3-建筑生命周期与整体验收.md)。
 
 1. 完成 `test build`，结束其他构建、游戏或压力任务。记录 JDK、操作系统、CPU、磁盘、是否有后台负载。
 2. 为每次采样选一个尚不存在的简单运行名，例如 `bench_01`。确认 `build/task-e-gametest-bench_01` 不存在；存在时换名，不删除已有世界。

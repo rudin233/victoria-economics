@@ -22,7 +22,7 @@ public final class RestartAcceptanceGameTests {
         if(!enabled())return;
         var file=server.getWorldPath(LevelResource.ROOT).resolve("victoria_economics/economy.sqlite");
         if(!file.toAbsolutePath().normalize().toString().contains("task-e-gametest")||!Files.isRegularFile(file))throw new IllegalStateException("Restart check requires an existing isolated acceptance world");
-        try(var c=SqliteEconomyDatabase.open(file)){
+        try(var c=SqliteEconomyDatabase.openReadOnly(file)){
             baseline=businessSnapshot(c);try(var s=c.createStatement();var r=s.executeQuery("SELECT accepted_tick FROM economic_time")){r.next();baselineTick=r.getLong(1);}
             if(baselineTick<2400)throw new IllegalStateException("No prior complete two-period acceptance run");
         }catch(SQLException failure){throw new IllegalStateException(failure);}
@@ -32,7 +32,7 @@ public final class RestartAcceptanceGameTests {
         if(baseline==null)throw new IllegalStateException("Startup baseline hook did not run before the formal Context");
         var context=ServerEconomyRuntime.get(server);
         if(context.getEconomicTime().acceptedTick()!=baselineTick)throw new IllegalStateException("Process restart invented offline economic time");
-        try(var c=SqliteEconomyDatabase.open(server.getWorldPath(LevelResource.ROOT).resolve("victoria_economics/economy.sqlite"))){
+        try(var c=context.openRuntimeVerificationConnection()){
             if(!businessSnapshot(c).equals(baseline))throw new IllegalStateException("Clean process restart replayed production or wages/finance before a logical Tick");
             verified=true;System.out.println("VE process restart verified at accepted Tick "+baselineTick+" with identical production, liabilities and cash");
         }catch(SQLException failure){throw new IllegalStateException(failure);}

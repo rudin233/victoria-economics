@@ -41,6 +41,9 @@ public final class SqliteEconomicTimeRepository implements EconomicTimeRepositor
         });
     } }
     @Override public void acknowledgeProductionCallback(long tick) { synchronized (lock) {
+        // Linearize an already completed receipt at this committed read. It needs no write permission.
+        var confirmed=load();
+        if(tick==confirmed.acceptedTick()&&tick==confirmed.productionCallbackReturnedTick())return;
         SqliteTransactions.write(connection, tx -> {
             var before = read(connection);
             if(tick==before.acceptedTick()&&tick==before.productionCallbackReturnedTick())return null;
