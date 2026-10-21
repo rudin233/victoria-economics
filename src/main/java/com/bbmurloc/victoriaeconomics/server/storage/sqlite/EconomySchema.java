@@ -5,10 +5,10 @@ import java.util.*;
 
 /** Fresh world schema. Existing incompatible worlds are rejected, never converted or cleared. */
 public final class EconomySchema {
-    public static final int VERSION = 7;
+    public static final int VERSION = 8;
     private EconomySchema() {}
 
-    // v7 makes integer Staffing authoritative, replaces legacy boundaries and records each building's Tick.
+    // v8 adds verifiable company-period payments and household purpose allowances.
     // Creation and compatibility use the same DDL, with no legacy migration.
     private static final List<String> DDL = List.of(
             "CREATE TABLE economy_schema_migrations(version INTEGER PRIMARY KEY)",
@@ -40,9 +40,11 @@ public final class EconomySchema {
             else SqliteTransactions.run(connection, () -> {
                 for (String ddl : DDL) statement.executeUpdate(ddl);
                 for (String ddl : EconomyFinancialSchema.DDL) statement.executeUpdate(ddl);
+                for (String ddl : EconomyPaymentSchema.DDL) statement.executeUpdate(ddl);
                 statement.executeUpdate("INSERT INTO economy_schema_migrations(version) VALUES (" + VERSION + ")");
                 statement.executeUpdate("INSERT INTO economic_time VALUES(1,0,0,NULL,0)");
                 statement.executeUpdate("INSERT INTO payroll_runtime VALUES(1,'BUILDING_STAFFING',0,0)");
+                statement.executeUpdate("INSERT INTO payroll_payment_runtime VALUES(1,0,0)");
                 return null;
             });
             // Connection-local options only, after the existing database has passed its read gate.
@@ -61,6 +63,7 @@ public final class EconomySchema {
             Set<String> expected = new HashSet<>();
             DDL.forEach(ddl -> expected.add(normalize(ddl)));
             EconomyFinancialSchema.DDL.forEach(ddl -> expected.add(normalize(ddl)));
+            EconomyPaymentSchema.DDL.forEach(ddl -> expected.add(normalize(ddl)));
             if (!definitions(connection).equals(expected)) throw incompatible();
             try (var statement = connection.createStatement()) {
                 try (var rows = statement.executeQuery("SELECT version, typeof(version) AS kind FROM economy_schema_migrations")) {
@@ -76,7 +79,7 @@ public final class EconomySchema {
                 try (var rows = statement.executeQuery("PRAGMA foreign_key_check")) {
                     if (rows.next()) throw incompatible();
                 }
-                EconomyFinancialValidation.validate(connection, snapshot);
+                EconomyPaymentValidation.validate(connection, snapshot);
                 for (String table : List.of("companies", "regions")) {
                     try (var rows = statement.executeQuery("SELECT id FROM " + table)) {
                         while (rows.next()) storedId(rows.getString(1));

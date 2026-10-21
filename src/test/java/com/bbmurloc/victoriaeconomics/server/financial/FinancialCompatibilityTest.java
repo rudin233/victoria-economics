@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class FinancialCompatibilityTest {
     @TempDir Path dir;
-    @Test void completeV6FinanceAndPayrollGraphPassesReadOnlyGateWithoutByteChanges() throws Exception {
+    @Test void completeV8FinanceAndPayrollGraphPassesReadOnlyGateWithoutByteChanges() throws Exception {
         Path file=dir.resolve("valid.sqlite");
         try(var w=new FinancialTestWorld(file)) {
             UUID a=w.companyAccount(),b=w.regionAccount();w.fundingFixture(a,100);
@@ -42,11 +42,11 @@ class FinancialCompatibilityTest {
                 case "fakePaid"->{w.sql("UPDATE payroll_accruals SET paid=1");w.sql("UPDATE payroll_liabilities SET paid=1");}
                 case "badRemainder"->w.sql("UPDATE payroll_accruals SET remainder=1200");
                 case "fractionalWage"->w.sql("UPDATE regional_wage_rates SET amount=1.5");
-                case "legacyInventoryTag"->{var stock=new com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore(w.c,w.world.lock);stock.createLocation(building,100);w.sql("UPDATE inventory_locations SET state_json=replace(state_json,'\"formatVersion\":7','\"formatVersion\":6')");}
+                case "legacyInventoryTag"->{var stock=new com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore(w.c,w.world.lock);stock.createLocation(building,100);w.sql("UPDATE inventory_locations SET state_json=replace(state_json,'\"formatVersion\":8','\"formatVersion\":7')");}
                 default->{
                     var recipe=new com.bbmurloc.victoriaeconomics.server.production.domain.ResolvedProductionRecipe(Map.of("a",1L),Map.of("b",1L),Map.of("laborer",1));
                     var snapshot=new com.bbmurloc.victoriaeconomics.server.production.domain.ProductionBatchConfiguration(Map.of("base","test"),recipe,new com.bbmurloc.victoriaeconomics.server.production.domain.WorkforcePlan(Map.of("laborer",1),1,1));
-                    try(var s=w.c.prepareStatement("INSERT INTO production_batches VALUES(?,?,?,0,'ACTIVE')")) {s.setString(1,UUID.randomUUID().toString());s.setString(2,building.toString());s.setString(3,EconomyStateCodec.encodeBatchConfiguration(snapshot).replace("\"formatVersion\":7","\"formatVersion\":6"));s.executeUpdate();}
+                    try(var s=w.c.prepareStatement("INSERT INTO production_batches VALUES(?,?,?,0,'ACTIVE')")) {s.setString(1,UUID.randomUUID().toString());s.setString(2,building.toString());s.setString(3,EconomyStateCodec.encodeBatchConfiguration(snapshot).replace("\"formatVersion\":8","\"formatVersion\":7"));s.executeUpdate();}
                 }
             }
         }

@@ -27,6 +27,9 @@ import com.bbmurloc.victoriaeconomics.server.production.application.ProductionBu
 import net.minecraft.server.MinecraftServer;
 import com.bbmurloc.victoriaeconomics.server.finance.application.FinanceService;
 import com.bbmurloc.victoriaeconomics.server.payroll.application.PayrollAccrualService;
+import com.bbmurloc.victoriaeconomics.server.payroll.application.CompanyPayrollService;
+import com.bbmurloc.victoriaeconomics.server.payroll.application.PayrollPeriodService;
+import com.bbmurloc.victoriaeconomics.server.household.application.RegionalHouseholdService;
 import com.bbmurloc.victoriaeconomics.server.payroll.infrastructure.SqliteBuildingPayrollQuery;
 import com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository;
 import com.bbmurloc.victoriaeconomics.server.time.domain.EconomicTime;
@@ -52,6 +55,9 @@ public final class ServerEconomyContext implements AutoCloseable {
     private final FinanceService finance;
     private final PayrollAccrualService payrollAccrual;
     private final SqliteBuildingPayrollQuery payroll;
+    private final CompanyPayrollService payrollPayments;
+    private final PayrollPeriodService payrollPeriods;
+    private final RegionalHouseholdService households;
 
     public ServerEconomyContext(MinecraftServer server) {
         DefaultDefinitions.registerIndustries(industries);
@@ -83,8 +89,11 @@ public final class ServerEconomyContext implements AutoCloseable {
             finance = new FinanceService(connection, economyLock);
             payrollAccrual = new PayrollAccrualService(connection, economyLock);
             payroll = new SqliteBuildingPayrollQuery(connection, economyLock);
+            payrollPayments=new CompanyPayrollService(connection,economyLock);
+            payrollPeriods=new PayrollPeriodService(connection,economyLock);
+            households=new RegionalHouseholdService(connection,economyLock);
             clock = new EconomicClock(new SqliteEconomicTimeRepository(connection, economyLock),
-                    payrollAccrual::recoverAcceptedTime, production::onEconomicTick,production::recoverAcceptedTick);
+                    payrollAccrual::recoverAcceptedTime, production::onEconomicTick,production::recoverAcceptedTick,payrollPeriods::recoverAcceptedTime);
         } catch (RuntimeException failure) {
             database.close();
             throw failure;
@@ -134,6 +143,9 @@ public final class ServerEconomyContext implements AutoCloseable {
     public FinanceService getFinanceService() { return finance; }
     public PayrollAccrualService getPayrollAccrualService() { return payrollAccrual; }
     public BuildingPayrollPort getPayrollQuery() { return payroll; }
+    public CompanyPayrollService getPayrollPayments(){return payrollPayments;}
+    public PayrollPeriodService getPayrollPeriods(){return payrollPeriods;}
+    public RegionalHouseholdService getHouseholds(){return households;}
 
     @Override
     public void close() {

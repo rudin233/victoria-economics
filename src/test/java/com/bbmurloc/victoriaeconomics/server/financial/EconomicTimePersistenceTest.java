@@ -21,14 +21,14 @@ class EconomicTimePersistenceTest {
     @Test void real1200CallbacksMakeOneMinuteAndRestartHasNoOfflineCatchup() throws Exception {
         var calls=new AtomicInteger();long nanos=System.nanoTime();
         try(var w=new FinancialTestWorld(file())) {
-            var clock=new EconomicClock(w.time,w.accrual::recoverAcceptedTime,calls::incrementAndGet);
+            var clock=new EconomicClock(w.time,w.accrual::recoverAcceptedTime,calls::incrementAndGet,()->{},new com.bbmurloc.victoriaeconomics.server.payroll.application.PayrollPeriodService(w.c,w.world.lock)::recoverAcceptedTime);
             for(int i=0;i<1200;i++)clock.onServerTick();
             var t=clock.persistentTime();assertEquals(1200,t.acceptedTick());assertEquals(1,t.periodId());assertEquals(1200,t.lastPeriodBoundary());
             assertTrue(t.payrollCaughtUp());assertFalse(t.hasUnconfirmedProductionCallback());assertEquals(1200,calls.get());
         }
         System.out.println("Persisted 1200 callbacks (accept + payroll + production acknowledgement): "+((System.nanoTime()-nanos)/1_000_000)+" ms");
         try(var w=new FinancialTestWorld(file())) {
-            var clock=new EconomicClock(w.time,w.accrual::recoverAcceptedTime,calls::incrementAndGet);
+            var clock=new EconomicClock(w.time,w.accrual::recoverAcceptedTime,calls::incrementAndGet,()->{},new com.bbmurloc.victoriaeconomics.server.payroll.application.PayrollPeriodService(w.c,w.world.lock)::recoverAcceptedTime);
             assertEquals(1200,clock.elapsedTicks());assertEquals(1200,calls.get());
             clock.onServerTick();assertEquals(1201,clock.elapsedTicks());assertEquals(1,clock.persistentTime().periodId());
         }

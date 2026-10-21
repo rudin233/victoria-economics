@@ -21,6 +21,12 @@ public record PayrollAccrual(UUID id, UUID buildingId, CompanyId company, Region
         return new PayrollAccrual(id, building, company, region, currency, tick, tick, null, employees, 0, 0, 0, 0, 0, 0);
     }
     public long unpaid() { return Math.subtractExact(matured, paid); }
+    /** Only a payment transaction with matching persisted lines may publish this change. */
+    public PayrollAccrual withPayment(long amount) {
+        if(amount<=0||amount>unpaid())throw new IllegalArgumentException("Payment exceeds matured unpaid wages");
+        return new PayrollAccrual(id,buildingId,company,region,currency,startTick,lastAccruedTick,closedTick,employees,
+                accrued,unmatured,matured,Math.addExact(paid,amount),remainder,Math.incrementExact(revision));
+    }
     public record Result(PayrollAccrual accrual, List<PayrollLiability> liabilities) { public Result { liabilities = List.copyOf(liabilities); } }
     /** Caller supplies immutable rate history from the same authoritative transaction. [from,to) intervals. */
     public Result accrueThrough(long target, List<RegionalWageRate> history) {

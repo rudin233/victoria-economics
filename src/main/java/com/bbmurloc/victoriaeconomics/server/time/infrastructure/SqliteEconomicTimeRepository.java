@@ -27,6 +27,9 @@ public final class SqliteEconomicTimeRepository implements EconomicTimeRepositor
             if (before.acceptedTick() != expected) throw new IllegalStateException("Economic tick CAS conflict; verify accepted time before retry");
             long next = Math.incrementExact(expected), revision = Math.incrementExact(before.revision());
             if(!before.payrollCaughtUp())throw new IllegalStateException("Previous accepted Tick payroll is not complete");
+            try(var s=connection.createStatement();var r=s.executeQuery("SELECT processed_period FROM payroll_payment_runtime WHERE id=1")){
+                if(!r.next()||r.getLong(1)<before.periodId())throw new IllegalStateException("Previous accepted payroll payment cycle remains pending");
+            }
             try(var s=connection.prepareStatement("SELECT 1 FROM production_executions e LEFT JOIN production_batches b ON b.batch_id=e.current_batch_id WHERE e.last_completed_tick<? OR e.processing_tick IS NOT NULL OR e.boundary<>'NONE' OR b.status IN ('SETTLING_COMPLETED','SETTLING_ABORTED') UNION ALL SELECT 1 FROM production_start_intents")){
                 s.setLong(1,expected);try(var r=s.executeQuery()){if(r.next())throw new IllegalStateException("Previous accepted Tick has unfinished production facts");}
             }

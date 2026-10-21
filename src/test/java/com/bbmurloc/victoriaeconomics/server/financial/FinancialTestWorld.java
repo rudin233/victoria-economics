@@ -40,10 +40,15 @@ public final class FinancialTestWorld implements AutoCloseable {
     public UUID companyAccount() { return account(FinanceAccount.OwnerKind.COMPANY, TestIdentities.COMPANY.value()); }
     public UUID regionAccount() { return account(FinanceAccount.OwnerKind.REGION, TestIdentities.REGION.value()); }
     public void fundingFixture(UUID account, long amount) {
+        fundingFixture(account,amount,CURRENCY);
+    }
+    public void fundingFixture(UUID account,long amount,CurrencyId currency) {
+        if(amount<=0)throw new IllegalArgumentException("Positive explicitly sourced test funding required");
         SqliteTransactions.write(c, tx -> {
-            String event = "isolated-test-issuance:" + UUID.randomUUID(); long next = Math.addExact(accounts.inTransaction(tx).load(account).balance(), amount);
+            var prior=accounts.inTransaction(tx).load(account);if(!prior.currency().equals(currency))throw new IllegalArgumentException("Test funding currency mismatch");
+            String event = "isolated-test-issuance:" + UUID.randomUUID(); long next = Math.addExact(prior.balance(), amount);
             try (var s = c.prepareStatement("INSERT INTO finance_events VALUES(?,'EXTERNAL_CREDIT',NULL,?,?,?,'JUnit isolated issuance with explicit provenance; no server issuance API')")) {
-                s.setString(1, event); s.setString(2, account.toString()); s.setString(3, CURRENCY.toString()); s.setLong(4, amount); s.executeUpdate();
+                s.setString(1, event); s.setString(2, account.toString()); s.setString(3, currency.toString()); s.setLong(4, amount); s.executeUpdate();
             }
             try (var s = c.prepareStatement("INSERT INTO finance_ledger(event_id,line,account_id,delta,balance_after) VALUES(?,0,?,?,?)")) {
                 s.setString(1, event); s.setString(2, account.toString()); s.setLong(3, amount); s.setLong(4, next); s.executeUpdate();

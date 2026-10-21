@@ -54,10 +54,19 @@ public final class SqliteFinanceAccountRepository implements FinanceAccountRepos
         }
     }
     public Session inTransaction(SqliteTransactions.WriteSession tx) { tx.requireConnection(connection); return new Session(tx); }
+    public FinanceAccount inSnapshot(SqliteTransactions.ReadSession tx,UUID id)throws SQLException {tx.requireConnection(connection);return read(id);}
     public final class Session {
         private final SqliteTransactions.WriteSession tx;
         private Session(SqliteTransactions.WriteSession tx) { this.tx = tx; }
         public FinanceAccount load(UUID id) throws SQLException { return tx.perform(() -> read(id)); }
+        public Optional<FinanceAccount> find(FinanceAccount.OwnerKind kind,UUID owner,CurrencyId currency)throws SQLException {return tx.perform(()->{
+            Objects.requireNonNull(kind);Objects.requireNonNull(owner);Objects.requireNonNull(currency);
+            String column=kind==FinanceAccount.OwnerKind.COMPANY?"company_id":"region_id";
+            try(var s=connection.prepareStatement("SELECT id FROM finance_accounts WHERE "+column+"=? AND currency_id=?")){
+                s.setString(1,owner.toString());s.setString(2,currency.toString());
+                try(var r=s.executeQuery()){return r.next()?Optional.of(read(UUID.fromString(r.getString(1)))):Optional.empty();}
+            }
+        });}
         public void registerCurrency(CurrencyId id, String name) throws SQLException { tx.perform(() -> {
             if (name == null || name.isBlank()) throw new IllegalArgumentException("Explicit currency name required");
             try (var s = connection.prepareStatement("INSERT INTO currencies(id,name) VALUES(?,?)")) { s.setString(1, id.toString()); s.setString(2, name); s.executeUpdate(); }
@@ -87,6 +96,7 @@ public final class SqliteFinanceAccountRepository implements FinanceAccountRepos
             if (!source.currency().equals(command.currency()) || !destination.currency().equals(command.currency())) throw new IllegalArgumentException("Currency mismatch; no FX supported");
             if (source.available() < command.amount()) throw new IllegalStateException("Insufficient unreserved cash");
             long debit = Math.subtractExact(source.balance(), command.amount()), credit = Math.addExact(destination.balance(), command.amount());
+            requireBudgetCoverage(source.id(),Math.subtractExact(debit,source.reserved()));
             update(source, debit); update(destination, credit);
             String eventId = "transfer:" + command.id();
             event(eventId, "TRANSFER", source.id(), destination.id(), command.currency(), command.amount(), "account transfer");
@@ -104,6 +114,7 @@ public final class SqliteFinanceAccountRepository implements FinanceAccountRepos
             }
             var account = read(command.accountId());
             if (account.available() < command.amount()) throw new IllegalStateException("Insufficient unreserved cash");
+            requireBudgetCoverage(account.id(),Math.subtractExact(account.available(),command.amount()));
             update(account, account.balance());
             try (var s = connection.prepareStatement("INSERT INTO cash_reservations VALUES(?,?,?,?,1)")) {
                 s.setString(1, command.id().toString()); s.setString(2, command.accountId().toString()); s.setLong(3, command.amount()); s.setString(4, command.purpose()); s.executeUpdate();
@@ -124,6 +135,14 @@ public final class SqliteFinanceAccountRepository implements FinanceAccountRepos
             try (var s = connection.prepareStatement("UPDATE finance_accounts SET balance=?,revision=? WHERE id=? AND revision=?")) {
                 s.setLong(1, balance); s.setLong(2, Math.incrementExact(prior.revision())); s.setString(3, prior.id().toString()); s.setLong(4, prior.revision());
                 if (s.executeUpdate() != 1) throw new IllegalStateException("Account CAS conflict");
+            }
+        }
+    }
+    /** Purpose allowances cannot be seized by a generic transfer/reservation. Explicitly free them first. */
+    private void requireBudgetCoverage(UUID account,long available)throws SQLException {
+        try(var s=connection.prepareStatement("SELECT b.consumption,b.savings FROM regional_household_budgets b JOIN regional_household_sectors h USING(region_id,currency_id) WHERE h.account_id=?")){
+            s.setString(1,account.toString());try(var r=s.executeQuery()){
+                if(r.next()&&Math.addExact(r.getLong(1),r.getLong(2))>available)throw new IllegalStateException("Explicit household budget adjustment required before locking or transferring allocated cash");
             }
         }
     }

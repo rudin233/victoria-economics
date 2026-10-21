@@ -12,7 +12,7 @@ import java.math.BigDecimal;
 import java.util.*;
 import java.util.function.Function;
 
-/** Schema v7 integer goods and integer participation snapshots. */
+/** Schema v8 integer goods and participation; normalized payments share this version contract. */
 public final class EconomyStateCodec {
     private static final Gson GSON = new Gson();
     private static final int FULL_SPEED_TICKS = 200;
@@ -20,8 +20,8 @@ public final class EconomyStateCodec {
 
     /** A future semantic change must replace the schema/codec together, never reinterpret old snapshots in place. */
     public static void requireCurrentFormat() {
-        if (EconomySchema.VERSION != 7 || ProductionBatch.FULL_SPEED_TICKS != FULL_SPEED_TICKS)
-            throw new IllegalStateException("Schema v7 codec requires integer goods and participation; change schema and codec together");
+        if (EconomySchema.VERSION != 8 || ProductionBatch.FULL_SPEED_TICKS != FULL_SPEED_TICKS)
+            throw new IllegalStateException("Schema v8 codec requires integer goods and participation; change schema and codec together");
     }
 
     public static ProductionBatchConfiguration decodeBatchConfiguration(String json) {
@@ -111,13 +111,13 @@ public final class EconomyStateCodec {
 
     private static JsonObject envelope(JsonElement snapshot) {
         var result = new JsonObject();
-        result.addProperty("formatVersion", 7);
+        result.addProperty("formatVersion", 8);
         result.add("snapshot", snapshot);
         return result;
     }
 
     private static void requireVersion(JsonObject envelope) {
-        if (integer(envelope.get("formatVersion")) != 7) throw invalid("Unknown snapshot format version");
+        if (integer(envelope.get("formatVersion")) != 8) throw invalid("Unknown snapshot format version");
     }
 
     public static String encodePauseReasons(Set<ProductionExecution.PauseReason> reasons) {
@@ -219,6 +219,6 @@ public final class EconomyStateCodec {
 
     private static IllegalArgumentException invalid(String message) { return new IllegalArgumentException(message); }
     private static IllegalStateException incompatible(String kind, RuntimeException failure) {
-        return new IllegalStateException("Invalid or incompatible Schema v7 " + kind + "; no conversion was attempted", failure);
+        return new IllegalStateException("Invalid or incompatible Schema v8 " + kind + "; no conversion was attempted", failure);
     }
 }

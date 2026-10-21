@@ -58,8 +58,7 @@ final class EconomyFinancialValidation {
             var p = SqlitePayrollRepository.decode(r); canonical(r.getString("id")); canonical(r.getString("building_id"));
             require(p.lastAccruedTick() <= time.acceptedTick() && p.lastAccruedTick() >= time.payrollTick());
             verifyAccrualHistory(c, p);
-            // Task B cannot create paid wages; a later payment contract must introduce verifiable payment linkage.
-            require(p.paid() == 0);
+            // Every paid unit is separately traced to a completed payment line and finance event by v8 validation.
             long matured = 0, paid = 0; long lastPeriod = p.startTick() / 1200;
             try (var q = c.prepareStatement("SELECT * FROM payroll_liabilities WHERE segment_id=? ORDER BY period_id")) {
                 q.setString(1, p.id().toString()); try (var lines = q.executeQuery()) { while (lines.next()) {
@@ -126,5 +125,5 @@ final class EconomyFinancialValidation {
         }
     }
     private static void canonical(String value) { require(UUID.fromString(value).toString().equals(value)); }
-    private static void require(boolean valid) { if (!valid) throw new IllegalStateException("Inconsistent v7 economic time, finance ledger or payroll contract; no repair attempted"); }
+    private static void require(boolean valid) { if (!valid) throw new IllegalStateException("Inconsistent v8 economic time, finance ledger or payroll contract; no repair attempted"); }
 }

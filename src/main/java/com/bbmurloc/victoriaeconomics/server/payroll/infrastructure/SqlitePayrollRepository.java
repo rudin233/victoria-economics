@@ -10,7 +10,7 @@ import com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicT
 import java.sql.*;
 import java.util.*;
 
-/** Normalized v7 wage segments; explicit sessions participate in payroll-aware production transactions. */
+/** Normalized v8 wage segments, with verifiable payment lines and explicit shared write sessions. */
 public final class SqlitePayrollRepository implements PayrollRepository {
     private final Connection connection;
     private final Object lock;
@@ -92,7 +92,7 @@ public final class SqlitePayrollRepository implements PayrollRepository {
             }
             return null;
         }); }
-        /** Explicit enrollment at the accepted instant. Formal server exposes no enrollment entry point yet. */
+        /** Used by atomic Building creation and isolated history fixtures at the accepted instant. */
         public PayrollAccrual enroll(UUID segmentId, UUID building, CurrencyId currency) throws SQLException { return tx.perform(() -> {
             requireStaffingAuthority(); long tick = SqliteEconomicTimeRepository.inTransaction(connection, tx).acceptedTick();
             String company, region;
@@ -138,6 +138,28 @@ public final class SqlitePayrollRepository implements PayrollRepository {
             if (tick != SqliteEconomicTimeRepository.inTransaction(connection, tx).acceptedTick()) throw new IllegalArgumentException("Close at accepted tick only");
             var prior = accrue(read(id), tick); var closed = prior.closeAtCursor(tick); save(closed, prior.revision()); return closed;
         }); }
+        /** A line, its transfer and this reduction must all belong to the same physical payment transaction. */
+        public void recordPayment(PayrollPaymentRun.Command run,PayrollPaymentLine line)throws SQLException {tx.perform(()->{
+            var prior=read(line.segment());
+            if(!prior.company().equals(run.company())||!prior.buildingId().equals(line.building())||!prior.region().equals(line.region())||!prior.currency().equals(line.currency())||line.liabilityPeriod()>run.periodId())
+                throw new IllegalArgumentException("Payment source ownership mismatch");
+            try(var s=connection.prepareStatement("SELECT x.amount,x.debt_before,x.recipient_account,x.transfer_event,r.status,p.source_account,f.source_account AS debit,f.target_account,f.currency_id,f.amount AS transferred,f.kind,a.company_id AS debit_company,a.currency_id AS debit_currency,b.region_id AS credit_region,b.currency_id AS credit_currency,h.account_id AS household_account FROM payroll_payment_lines x JOIN payroll_payment_runs r ON r.id=x.run_id JOIN payroll_payment_partitions p ON p.run_id=x.run_id AND p.currency_id=x.currency_id JOIN finance_events f ON f.id=x.transfer_event JOIN finance_accounts a ON a.id=p.source_account JOIN finance_accounts b ON b.id=x.recipient_account JOIN regional_household_sectors h ON h.region_id=x.region_id AND h.currency_id=x.currency_id WHERE x.run_id=? AND x.segment_id=? AND x.liability_period=?")){
+                s.setString(1,run.id().toString());s.setString(2,line.segment().toString());s.setLong(3,line.liabilityPeriod());
+                try(var r=s.executeQuery()){
+                    if(!r.next()||!r.getString("status").equals("PENDING")||r.getLong("amount")!=line.amount()||r.getLong("debt_before")!=line.debtBefore()
+                            ||!r.getString("recipient_account").equals(line.recipientAccount().toString())||!r.getString("transfer_event").equals("transfer:"+PayrollPaymentRun.transferId(run.id(),line.segment(),line.liabilityPeriod()))
+                            ||!r.getString("source_account").equals(r.getString("debit"))||!r.getString("target_account").equals(line.recipientAccount().toString())||!r.getString("currency_id").equals(line.currency().toString())||r.getLong("transferred")!=line.amount()
+                            ||!r.getString("kind").equals("TRANSFER")||!run.company().toString().equals(r.getString("debit_company"))||!line.currency().toString().equals(r.getString("debit_currency"))
+                            ||!line.region().toString().equals(r.getString("credit_region"))||!line.currency().toString().equals(r.getString("credit_currency"))||!line.recipientAccount().toString().equals(r.getString("household_account")))
+                        throw new IllegalStateException("Verifiable pending payment line and transfer required");
+                }
+            }
+            try(var s=connection.prepareStatement("UPDATE payroll_liabilities SET paid=paid+? WHERE segment_id=? AND period_id=? AND amount-paid=? AND paid<=amount-?")){
+                s.setLong(1,line.amount());s.setString(2,line.segment().toString());s.setLong(3,line.liabilityPeriod());s.setLong(4,line.debtBefore());s.setLong(5,line.amount());
+                if(s.executeUpdate()!=1)throw new IllegalStateException("Payroll liability changed or would be overpaid");
+            }
+            save(prior.withPayment(line.amount()),prior.revision());return null;
+        });}
         public void requireStaffingAuthority() throws SQLException {
             tx.requireConnection(connection);
             try (var s = connection.createStatement(); var r = s.executeQuery("SELECT authority FROM payroll_runtime WHERE id=1")) {

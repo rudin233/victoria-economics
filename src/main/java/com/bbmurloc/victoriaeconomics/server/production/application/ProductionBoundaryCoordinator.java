@@ -158,6 +158,9 @@ public final class ProductionBoundaryCoordinator {
     public void manualPause(UUID id,boolean pause){write(tx->{var e=executions.inTransaction(tx).load(id);if(pause)e.pause();else e.resume();executions.inTransaction(tx).save(e,e.executionRevision());return null;});}
     public void confirmWholeTick(long tick){write(tx->{
         var time=SqliteEconomicTimeRepository.inTransaction(connection,tx);if(time.acceptedTick()!=tick||!time.payrollCaughtUp())throw new IllegalStateException("Time/payroll not ready");
+        try(var s=connection.createStatement();var r=s.executeQuery("SELECT processed_period FROM payroll_payment_runtime WHERE id=1")){
+            if(!r.next()||r.getLong(1)<time.periodId())throw new IllegalStateException("Payment cycle not confirmed");
+        }
         try(var s=connection.createStatement();var r=s.executeQuery("SELECT 1 FROM production_executions e LEFT JOIN production_batches b ON b.batch_id=e.current_batch_id WHERE e.last_completed_tick<>"+tick+" OR e.processing_tick IS NOT NULL OR e.boundary<>'NONE' OR b.status IN ('SETTLING_COMPLETED','SETTLING_ABORTED')")){if(r.next())throw new IllegalStateException("Unfinished per-building production Tick");}
         try(var s=connection.createStatement();var r=s.executeQuery("SELECT 1 FROM production_start_intents")){if(r.next())throw new IllegalStateException("Unresolved StartIntent");}
         if(time.firstUncertainProductionTick()!=null||time.productionCallbackReturnedTick()!=tick)

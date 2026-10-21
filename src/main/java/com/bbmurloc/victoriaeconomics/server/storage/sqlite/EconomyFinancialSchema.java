@@ -2,7 +2,7 @@ package com.bbmurloc.victoriaeconomics.server.storage.sqlite;
 
 import java.util.List;
 
-/** v7 normalized time/finance/payroll contract. EXTERNAL_CREDIT has no production write API. */
+/** v8 time/finance/accrual foundation; payment linkage is defined alongside it. No production issuance API. */
 final class EconomyFinancialSchema {
     private EconomyFinancialSchema() {}
     static final List<String> DDL = List.of(
