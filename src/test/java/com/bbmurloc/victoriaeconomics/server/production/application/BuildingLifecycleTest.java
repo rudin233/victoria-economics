@@ -134,9 +134,10 @@ class BuildingLifecycleTest {
         UUID operation,building;
         try(var e=new TestEconomy(file(),true)){
             building=e.id;e.production.startBatch(e.id);e.ticks(13);e.production.selectProductionMethod(e.id,"tooling_workshop_base","reduced_tools");
-            var cmd=command(e,Kind.SALE);operation=cmd.id();e.inventory.failSettlement=true;
+            var cmd=command(e,Kind.SALE);operation=cmd.id();e.failInventorySettlement(true);
             assertThrows(IllegalStateException.class,()->e.lifecycle.request(cmd));assertEquals(Status.QUIESCING,e.lifecycle.find(operation).orElseThrow().status());
             assertEquals(ProductionBatch.Status.SETTLING_ABORTED,e.execution().batch().getStatus());assertEquals(10,e.staffingRepository.load(e.id).occupiedByOccupation().get("laborer"));
+            e.failInventorySettlement(false);
         }
         try(var e=new TestEconomy(file(),false)){
             assertEquals(building,e.id);assertEquals(13,e.clock.elapsedTicks());assertEquals(Status.BLOCKED,e.lifecycle.find(operation).orElseThrow().status());assertNull(e.execution().batch());

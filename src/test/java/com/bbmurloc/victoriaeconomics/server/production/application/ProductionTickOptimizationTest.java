@@ -61,8 +61,8 @@ class ProductionTickOptimizationTest {
             assertEquals(NEEDS_FOLLOW_UP,e.coordinator.processTick(e.id,200));
             assertEquals(ProductionBatch.Status.SETTLING_COMPLETED,e.execution().batch().getStatus());
             assertEquals(200L,e.execution().processingTick());assertEquals(199,e.execution().lastCompletedTick());assertTrue(e.stockState().settlements().isEmpty());
-            e.inventory.failSettlement=true;assertThrows(IllegalStateException.class,e.production::onServerTick);assertEquals(200L,e.execution().processingTick());
-            e.inventory.failSettlement=false;e.production.onServerTick();assertEquals(batch.getId(),e.execution().lastBatch().getId());
+            e.failInventorySettlement(true);assertThrows(IllegalStateException.class,e.production::onServerTick);assertEquals(200L,e.execution().processingTick());
+            e.failInventorySettlement(false);e.production.onServerTick();assertEquals(batch.getId(),e.execution().lastBatch().getId());
             assertNull(e.execution().batch());assertEquals(1,e.stockState().settlements().size());assertEquals(200,e.execution().lastCompletedTick());
         }
     }

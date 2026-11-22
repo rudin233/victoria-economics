@@ -23,7 +23,7 @@ Schema v12 使用业务 JSON format 10。当前存档合同见 [P 检查点设�
 | 完整经济存档 | `EconomyCheckpoint`、`SqliteCheckpointStore`、`EconomicCheckpointWriter` |
 | 原版保存协调 | `mixin/EconomySaveMixin`；服务器级 `saveAllChunks`，不是每维度 Save 事件 |
 
-每分钟 1200 个实际服务器逻辑 Tick；200 Tick 满速、3/5 速度第 334 Tick 完成。不按墙钟追补。每建筑的运行时 Tick 标记保护推进，库存结算和重配置保留各自的原子事务及幂等恢复。**运行中提交不等于落盘**；重启恢复整个最近成功经济检查点，丢弃未保存后缀，不宣称逐 Tick 崩溃 exactly-once。
+每分钟 1200 个实际服务器逻辑 Tick；200 Tick 满速、3/5 速度第 334 Tick 完成。不按墙钟追补。每建筑的运行时 Tick 标记保护推进，已接受 Tick 的恢复复用同一推进和结算路径。**运行中提交不等于落盘**。重启恢复整个最近成功经济检查点，并丢弃未保存后缀。
 
 工作包 P 保留 `ProductionBoundaryCoordinator.processTick`：无外部待办的 ACTIVE/PAUSED、无自动开工的空闲建筑，以及完成资源交接的 BLOCKED 生命周期，在同一个 IMMEDIATE **内存业务事务**保存本 Tick 决定和完成标记。已有 processing、SETTLING、RECONFIGURING 和自动开工仍由后续处理阶段协调。工资率只在同次事务内复用，不缓存跨 Tick 权威。
 
@@ -37,7 +37,7 @@ Minecraft 原生文件和 VE SQLite 没有共同物理事务。正式虚拟库�
 
 每批开工按生效配方的满编需求从区域获取可用人员，每个必需职业至少一人。所有招到的人参与生产和计薪，速度取各职业人数比例的最小值。配方及人数在本批冻结，只为生产方法保留 Pending。无批次时计薪人数为零，已发生债务和余数保留。
 
-一个开工物理事务同时写 Batch、原料预留、用工占用与工资基数。明确失败整体回滚，提交结果不明时隔离原连接并在同一运行时的新连接上核验。库存完成或中止回执可信后，另一物理事务保存终态和结束 Tick，释放对应 batchId 的占用，并将计薪人数归零。暂停和待结算期间仍保留本批人员。工资按区间 [开工 Tick，结束 Tick) 累计。
+开工的物理事务同时写 Batch、原料预留、用工占用与工资基数。结算的物理事务同时写库存变化与回执、工资截止、用工释放、人数归零和批次终态。两条路径明确失败时均整体回滚，提交结果不明时均隔离原连接，再从同一内存数据库的新连接核验。结算前的 `SETTLING_COMPLETED` 保留已推进到满进度的决定，`SETTLING_ABORTED` 保留生命周期作出的不可逆决定。暂停和待结算仍保留本批人员，工资按区间 [开工 Tick，结束 Tick) 累计。
 
 每个 accepted Tick 先推进并结算各建筑，再以 Tick 对区域内完整 UUID 列表的长度取余并轮转开工。本 Tick 刚终结的建筑最早在下一 Tick 招聘，其他符合条件的建筑可使用已释放的供给。
 
@@ -47,7 +47,7 @@ Minecraft 原生文件和 VE SQLite 没有共同物理事务。正式虚拟库�
 
 详见 [ADR-LIFECYCLE-01 的 E0 矩阵](../../architecture/adr/ADR-LIFECYCLE-01.md)。本轮正式开放受控准备、持久阻塞、重试和可信核验；**最终出售及拆除未开放**。
 
-`无操作 → QUIESCING → BLOCKED`。开始事务保存独立意图、关 automatic、中止决定；库存结算确认后原子接替 RECONFIGURING 屏障。进入 BLOCKED 前已经释放批次用工，原有所有权与公司工资债务继续保留；不应用卖方 Pending。已决定 COMPLETED 的批次保持原结算。
+`无操作 → QUIESCING → BLOCKED`。开始事务保存独立意图、关闭 automatic 并锁定本批结果。统一结算提交后，独立交接事务复核资源与回执，并用生命周期意图接替 `RECONFIGURING` 屏障。交接保留原所有权、公司工资债务和卖方 Pending。已经决定完工的批次按原决定产出。
 
 没有 approve、强制完成、清理操作记录或移除 Registry 的后门。方块消失只是锚点消失，经济身份不会随之删除。墓碑格式的独立验证不是正式拆除验收。
 

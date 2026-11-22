@@ -55,7 +55,7 @@ class WorkforceContractTest {
             var next = e.execution().batch();
             var staffing = e.staffingRepository.load(e.id);
             long wageRevision = e.scalar("SELECT revision FROM payroll_accruals");
-            e.coordinator.confirmSettlement(e.id, oldest);
+            e.coordinator.settle(e.id, oldest);
             assertEquals(next.getId(), e.execution().batch().getId());
             assertEquals(staffing, e.staffingRepository.load(e.id));
             assertEquals(wageRevision, e.scalar("SELECT revision FROM payroll_accruals"));

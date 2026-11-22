@@ -4,6 +4,7 @@ import java.util.*;
 
 /** Execution authority: immutable Batch, a reconfiguration barrier and per-building Tick evidence. */
 public final class ProductionExecution {
+    /** After atomic settlement, guards the separate Pending application or lifecycle handoff. */
     public enum Boundary {NONE,RECONFIGURING}
     public enum PauseReason {PAYROLL_ARREARS,PAYROLL_RECOVERY,PAYROLL_UNAVAILABLE,MANUAL}
     private final UUID buildingId;

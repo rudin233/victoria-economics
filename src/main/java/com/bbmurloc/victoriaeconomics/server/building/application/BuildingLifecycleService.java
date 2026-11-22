@@ -118,17 +118,17 @@ public final class BuildingLifecycleService {
                 throw new IllegalStateException("Lifecycle cannot hand off unreleased batch labor");
             var repo=executions.inTransaction(tx);var e=repo.load(id);
             if(e.automatic()||e.hasUnfinishedBatch())throw new IllegalStateException("Lifecycle resource settlement remains unresolved");
+            var stock = inventory.inspectIfConfigured(tx, id).orElse(null);
             if(current.batchId()!=null) {
                 var batch=e.batch()!=null?e.batch():e.lastBatch();
                 if(batch==null||!batch.getId().equals(current.batchId())||!batch.isEnded())throw new IllegalStateException("Lifecycle Batch result cannot be confirmed");
-                var expected=new ProductionSettlement(batch.getId(),current.settlement(),batch.getConfiguration().resolvedRecipe().inputs(),batch.getConfiguration().resolvedRecipe().outputs());
-                var state=inventory.inspect(tx,id);
-                if(!Objects.equals(state.settlements().get(batch.getId()),new com.bbmurloc.victoriaeconomics.server.inventory.domain.GoodsInventory.Settlement(expected)))
+                var expected = ProductionSettlement.forBatch(batch);
+                var receipt = stock == null ? null : stock.settlements().get(batch.getId());
+                if (expected.outcome() != current.settlement() || receipt == null || !receipt.command().equals(expected))
                     throw new IllegalStateException("Matching durable inventory settlement required");
             }
-            boolean configured=inventory.configured(tx,id);
-            boolean hasGoods=configured&&inventory.inspect(tx,id).quantities().values().stream().anyMatch(n->n>0);
-            var reasons=BuildingLifecycleOperation.unresolvedPolicies(current.command().kind(),methods.inTransaction(tx).load(id).pending().isPresent(),configured,hasGoods);
+            boolean hasGoods=stock!=null&&stock.quantities().values().stream().anyMatch(n->n>0);
+            var reasons=BuildingLifecycleOperation.unresolvedPolicies(current.command().kind(),methods.inTransaction(tx).load(id).pending().isPresent(),stock!=null,hasGoods);
             // The lifecycle intent replaces the production boundary, without applying any seller Pending.
             // Both the ended-Batch handoff and the retained BLOCKED fact share the physical commit.
             if(e.boundary()==ProductionExecution.Boundary.RECONFIGURING) {e.reconfigurationCompleted();repo.save(e,e.executionRevision());}

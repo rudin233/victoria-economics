@@ -86,7 +86,9 @@ public final class FinancialTestWorld implements AutoCloseable {
         var prior = payroll.load(segment);
         var repo = new com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionExecutionRepository(c, world.lock);
         var execution = repo.load(prior.buildingId());
-        execution.terminate();
+        // Financial fixtures supply synthetic elapsed time and progress. A completed fixture
+        // batch lets the real settlement exercise the wage cutoff without a lifecycle operation.
+        execution.tick(execution.batch().getMaximumProgressUnits());
         repo.save(execution, execution.executionRevision());
         world.production.retry(prior.buildingId());
         if (count > 0) {

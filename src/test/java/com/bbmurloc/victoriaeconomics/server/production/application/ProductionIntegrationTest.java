@@ -1,6 +1,8 @@
 package com.bbmurloc.victoriaeconomics.server.production.application;
 
+import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore;
 import com.bbmurloc.victoriaeconomics.server.production.domain.*;
+import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionExecutionRepository;
 import com.bbmurloc.victoriaeconomics.server.production.port.BuildingPayrollPort.State;
 import com.bbmurloc.victoriaeconomics.server.storage.EconomyDatabase;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.*;
@@ -262,8 +264,17 @@ class ProductionIntegrationTest {
     @Test void missingWageConfigurationNeverAllowsStart()throws Exception{
         try(var e=new TestEconomy(file(),true)){e.sql("DELETE FROM regional_wage_rates");assertEquals(State.UNAVAILABLE,e.payroll.state(e.id));assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));assertNull(e.execution().batch());}
     }
-    @Test void restartAfterInventoryReceiptLossCannotDuplicateProductsOrAdvanceTwice()throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.production.startBatch(e.id);e.ticks(199);e.inventory.loseSettlementAcknowledgement=true;assertThrows(IllegalStateException.class,()->e.ticks(1));assertEquals(30,e.quantity("tools"));assertTrue(e.execution().batch().needsSettlement());assertEquals(200L,e.execution().processingTick());}
+    @Test void restartAfterSettlementCommitAcknowledgementLossCannotDuplicateProductsOrAdvanceTwice()throws Exception{
+        try(var e=new TestEconomy(file(),true)){
+            e.production.startBatch(e.id);e.ticks(199);e.loseSettlementCommit();
+            var failure=assertThrows(IllegalStateException.class,()->e.ticks(1));
+            assertTrue(failure.getSuppressed()[0].getMessage().contains("Settlement verified committed"));
+            try(var verified=SqliteEconomyDatabase.open(file())){
+                var execution=new SqliteProductionExecutionRepository(verified,new Object()).load(e.id);
+                var stock=new SqliteInventoryStore(verified,new Object()).inspect(e.id);
+                assertEquals(30L,stock.quantities().get("tools"));assertTrue(execution.batch().isCompleted());assertEquals(200L,execution.processingTick());
+            }
+        }
         try(var e=new TestEconomy(file(),false)){assertEquals(30,e.quantity("tools"));assertEquals(200,e.execution().lastCompletedTick());assertNull(e.execution().batch());e.production.onServerTick();assertNull(e.execution().batch());e.ticks(1);assertEquals(0,e.execution().batch().getProgressUnits());}
     }
     @Test void restartPreservesProgressRecipeAndReservation()throws Exception{

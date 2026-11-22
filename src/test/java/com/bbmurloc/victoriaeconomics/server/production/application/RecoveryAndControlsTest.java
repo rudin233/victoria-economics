@@ -1,5 +1,6 @@
 package com.bbmurloc.victoriaeconomics.server.production.application;
 
+import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore;
 import com.bbmurloc.victoriaeconomics.server.production.domain.*;
 import com.bbmurloc.victoriaeconomics.server.production.port.BuildingPayrollPort.State;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.*;
@@ -14,21 +15,27 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class RecoveryAndControlsTest {
     @TempDir Path dir;Path file(){return dir.resolve("control.sqlite");}
-    @Test void stopDuringLostCompletionReceiptDoesNotDuplicateGoodsOnRecovery() throws Exception {
+    @Test void stopAfterVerifiedSettlementCommitDoesNotDuplicateGoodsOnRecovery() throws Exception {
         UUID batch;
         try (var e = new TestEconomy(file(), true)) {
             batch = e.production.startBatch(e.id).getId();
             e.ticks(199);
-            e.inventory.loseSettlementAcknowledgement = true;
-            assertThrows(IllegalStateException.class, () -> e.ticks(1));
-            assertEquals(ProductionBatch.Status.SETTLING_COMPLETED, e.execution().batch().getStatus());
-            var settledStock = e.stockState();
-            assertEquals(1, settledStock.settlements().size());
+            e.loseSettlementCommit();
+            var failure = assertThrows(IllegalStateException.class, () -> e.ticks(1));
+            assertTrue(failure.getSuppressed()[0].getMessage().contains("Settlement verified committed"));
+            try (var verified = SqliteEconomyDatabase.open(file())) {
+                var coordinator = new ProductionBoundaryCoordinator(verified, e.resolver, e.occupations, e.lock,
+                        () -> SqliteEconomyDatabase.open(file()));
+                var stock = new SqliteInventoryStore(verified, e.lock);
+                var settledStock = stock.inspect(e.id);
+                assertEquals(1, settledStock.settlements().size());
+                assertTrue(coordinator.execution(e.id).batch().isCompleted());
 
-            e.production.stopAfterCurrentBatch(e.id);
-            assertFalse(e.execution().automatic());
-            assertEquals(ProductionBatch.Status.SETTLING_COMPLETED, e.execution().batch().getStatus());
-            assertEquals(settledStock, e.stockState());
+                new ProductionService(coordinator, e.lock).stopAfterCurrentBatch(e.id);
+                assertFalse(coordinator.execution(e.id).automatic());
+                assertTrue(coordinator.execution(e.id).batch().isCompleted());
+                assertEquals(settledStock, stock.inspect(e.id));
+            }
         }
         try (var e = new TestEconomy(file(), false)) {
             e.ticks(1);
@@ -49,9 +56,9 @@ class RecoveryAndControlsTest {
         }
     }
     @Test void lifecycleAbortsDuringArrearsAndPreservesDebt()throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.production.startBatch(e.id);e.production.setManualPause(e.id,true);e.ticks(1200);e.inventory.failSettlement=true;
+        try(var e=new TestEconomy(file(),true)){e.production.startBatch(e.id);e.production.setManualPause(e.id,true);e.ticks(1200);e.failInventorySettlement(true);
             assertThrows(IllegalStateException.class,e::beginDemolition);assertEquals(ProductionBatch.Status.SETTLING_ABORTED,e.execution().batch().getStatus());assertFalse(e.execution().automatic());assertEquals(10,e.staffingRepository.load(e.id).occupiedByOccupation().get("laborer"));assertEquals(1,e.stockState().reservations().size());
-            e.inventory.failSettlement=false;e.lifecycle.recoverUnfinished();assertNull(e.execution().batch());assertTrue(e.execution().lastBatch().isAborted());assertFalse(e.staffingRepository.load(e.id).occupiedByOccupation().containsKey("laborer"));assertEquals(0,e.scalar("SELECT employees FROM payroll_accruals"));assertEquals(14,e.scalar("SELECT matured-paid FROM payroll_accruals"));assertEquals(100,e.quantity("wood"));assertEquals(0,e.quantity("tools"));
+            e.failInventorySettlement(false);e.lifecycle.recoverUnfinished();assertNull(e.execution().batch());assertTrue(e.execution().lastBatch().isAborted());assertFalse(e.staffingRepository.load(e.id).occupiedByOccupation().containsKey("laborer"));assertEquals(0,e.scalar("SELECT employees FROM payroll_accruals"));assertEquals(14,e.scalar("SELECT matured-paid FROM payroll_accruals"));assertEquals(100,e.quantity("wood"));assertEquals(0,e.quantity("tools"));
         }
     }
     @Test void isolatedPauseReasonsCannotClearManualPauseWhenPayrollReasonDisappears()throws Exception{

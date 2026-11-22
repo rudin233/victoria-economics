@@ -86,7 +86,7 @@ public final class ServerEconomyContext implements AutoCloseable {
             buildingService = new BuildingService(buildings, repository, types, initializer, economyLock);
             staffing = new StaffingCalculator(new SqliteStaffingQuery(connection, recipes, occupations, economyLock));
             var coordinator=new ProductionBoundaryCoordinator(connection,recipes,occupations,economyLock,database::openVerificationConnection);
-            production = new ProductionService(coordinator,inventory,economyLock);
+            production = new ProductionService(coordinator,economyLock);
             finance = new FinanceService(connection, economyLock);
             payrollAccrual = new PayrollAccrualService(connection, economyLock);
             payroll = new SqliteBuildingPayrollQuery(connection, economyLock);

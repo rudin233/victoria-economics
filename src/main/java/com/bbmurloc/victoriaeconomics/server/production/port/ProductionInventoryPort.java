@@ -4,8 +4,8 @@ import java.util.*;
 import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionSettlement;
 
 /**
- * Production's requests to the inventory authority. Query results and acknowledgements
- * expose no inventory aggregate state and are never persisted as inventory balances.
+ * Standalone inventory operations. Batch workflows use the inventory store inside their shared write session.
+ * Acknowledgements expose no inventory aggregate state and are never persisted as inventory balances.
  */
 public interface ProductionInventoryPort {
     record StorageStatus(boolean overCapacity) {}

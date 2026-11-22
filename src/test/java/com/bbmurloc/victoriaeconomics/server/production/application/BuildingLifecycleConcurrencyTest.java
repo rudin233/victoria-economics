@@ -50,11 +50,11 @@ class BuildingLifecycleConcurrencyTest {
     }
     @Test void otherConnectionCannotEnableProductionWhileLifecycleRetainsLaborUntilConfirmation()throws Exception{
         try(var a=new TestEconomy(file(),true);var b=new TestEconomy(file(),false)){
-            a.production.startBatch(a.id);var cmd=BuildingLifecycleTest.command(a,Kind.DEMOLITION);a.inventory.failSettlement=true;
+            a.production.startBatch(a.id);var cmd=BuildingLifecycleTest.command(a,Kind.DEMOLITION);a.failInventorySettlement(true);
             assertThrows(IllegalStateException.class,()->a.lifecycle.request(cmd));
             assertThrows(IllegalStateException.class,()->b.production.setAutomatic(a.id,true));
             assertEquals(2,b.scalar("SELECT COUNT(*) FROM building_staffing_roles"));assertEquals(14,b.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));
-            a.inventory.failSettlement=false;assertEquals(Status.BLOCKED,a.lifecycle.recover(cmd.id()).status());assertEquals(0,b.supply.occupied(com.bbmurloc.victoriaeconomics.server.TestIdentities.REGION,"laborer"));
+            a.failInventorySettlement(false);assertEquals(Status.BLOCKED,a.lifecycle.recover(cmd.id()).status());assertEquals(0,b.supply.occupied(com.bbmurloc.victoriaeconomics.server.TestIdentities.REGION,"laborer"));
         }
     }
     private static void await(CountDownLatch start){try{start.await();}catch(InterruptedException failure){Thread.currentThread().interrupt();throw new RuntimeException(failure);}}

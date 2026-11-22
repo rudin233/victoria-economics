@@ -3,17 +3,15 @@ package com.bbmurloc.victoriaeconomics.server.production.application;
 import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
 
 import com.bbmurloc.victoriaeconomics.server.production.domain.*;
-import com.bbmurloc.victoriaeconomics.server.production.port.*;
 import java.util.*;
 
 /** 协调生产开工、推进及结算恢复。 */
 public final class ProductionService {
     private static final System.Logger LOG=System.getLogger(ProductionService.class.getName());
     private final ProductionBoundaryCoordinator coordinator;
-    private final ProductionInventoryPort inventory;
     private final Object lock;
     private final Map<UUID,String> blocked=new HashMap<>();
-    public ProductionService(ProductionBoundaryCoordinator coordinator,ProductionInventoryPort inventory,Object lock){this.coordinator=coordinator;this.inventory=inventory;this.lock=lock;}
+    public ProductionService(ProductionBoundaryCoordinator coordinator,Object lock){this.coordinator=coordinator;this.lock=lock;}
     public ProductionMethodConfiguration methods(UUID id){return coordinator.methods(id);}
     public ProductionExecution execution(UUID id){return coordinator.execution(id);}
     public String blockedReason(UUID id){synchronized(lock){return blocked.get(id);}}
@@ -25,10 +23,11 @@ public final class ProductionService {
         try (var measurement = EconomyDiagnostics.stage("production.start")) {
             synchronized (lock) {
                 if (!automatic) {
-                    var batch = coordinator.execution(id).batch();
+                    var execution = coordinator.execution(id);
+                    var batch = execution.batch();
                     if ((batch != null && (batch.needsSettlement() || batch.isEnded()))
                             || (batch == null && coordinator.methods(id).pending().isPresent()))
-                        settleAndHandleBoundary(id);
+                        finishBoundary(id, execution);
                 }
                 var started = coordinator.startBatch(id, automatic);
                 blocked.remove(id);
@@ -43,25 +42,23 @@ public final class ProductionService {
     }
     public void setAutomatic(UUID id,boolean enabled){coordinator.automatic(id,enabled);}
     public void setManualPause(UUID id,boolean pause){coordinator.manualPause(id,pause);}
-    public void retry(UUID id){synchronized(lock){settleAndHandleBoundary(id);blocked.remove(id);}}
+    public void retry(UUID id){synchronized(lock){finishBoundary(id, coordinator.execution(id));blocked.remove(id);}}
     /** 建筑生命周期沿用库存结算协议，不应用卖方的待生效生产方法。 */
     public void settleForLifecycle(UUID id){synchronized(lock){
         if(!coordinator.lifecycleHeld(id))throw new IllegalStateException("Durable lifecycle intent required");
-        settleAndHandleBoundary(id);
+        settleDecidedBatch(id, coordinator.execution(id).batch());
     }}
-    private void settleAndHandleBoundary(UUID id){
-        try(var measurement=EconomyDiagnostics.stage("production.followup")){
-        var e=coordinator.execution(id);var batch=e.batch();
-        if(batch!=null&&batch.needsSettlement()){
-            var command = ProductionSettlement.forBatch(batch);
-            ProductionInventoryPort.SettlementReceipt receipt;
-            try(var settlementMeasurement=EconomyDiagnostics.stage("production.settlement")){receipt=inventory.settle(id,command);}
-            if(!receipt.command().equals(command))throw new IllegalStateException("Settlement receipt does not match frozen command");
-            coordinator.confirmSettlement(id,receipt.command());
+    private void finishBoundary(UUID id, ProductionExecution execution) {
+        try (var measurement = EconomyDiagnostics.stage("production.followup")) {
+            boolean settled = settleDecidedBatch(id, execution.batch());
+            if ((settled || !execution.hasUnfinishedBatch()) && !coordinator.lifecycleHeld(id))
+                coordinator.reconfigure(id);
         }
-        e=coordinator.execution(id);
-        if(!e.hasUnfinishedBatch()&&!coordinator.lifecycleHeld(id))coordinator.reconfigure(id);
-        }
+    }
+    private boolean settleDecidedBatch(UUID id, ProductionBatch batch) {
+        if (batch == null || !batch.needsSettlement()) return false;
+        coordinator.settle(id, ProductionSettlement.forBatch(batch));
+        return true;
     }
     /** 先完成全部建筑的推进与结算，再在各区域内轮转开工。 */
     public void onServerTick() {
@@ -76,7 +73,7 @@ public final class ProductionService {
                     try (var buildingMeasurement = EconomyDiagnostics.scope("production.building")) {
                         if (coordinator.processTick(id, tick) != ProductionBoundaryCoordinator.TickResult.NEEDS_FOLLOW_UP)
                             continue;
-                        settleAndHandleBoundary(id);
+                        finishBoundary(id, coordinator.execution(id));
                         var execution = coordinator.execution(id);
                         if (execution.boundary() != ProductionExecution.Boundary.NONE && coordinator.lifecycleHeld(id))
                             throw new IllegalStateException("Lifecycle resource handoff remains incomplete; recover its OperationId");
@@ -121,15 +118,12 @@ public final class ProductionService {
     }
 
     /** Restart uses the existing accepted Tick and checkpoints; it neither allocates nor guesses missed Ticks. */
-    public void recoverAcceptedTick(){
-        try (var diagnosticScope = EconomyDiagnostics.scope("production.recovery")) {synchronized(lock){if(!coordinator.needsRecovery())return;recoverBoundaries();onServerTick();}
+    public void recoverAcceptedTick() {
+        try (var diagnosticScope = EconomyDiagnostics.scope("production.recovery")) {
+            synchronized (lock) {
+                if (coordinator.needsRecovery()) onServerTick();
+            }
         }
     }
-    public void recoverBoundaries(){synchronized(lock){
-        for(UUID id:coordinator.buildingIds()){
-            var e=coordinator.execution(id);
-            if(!e.hasUnfinishedBatch()||(e.batch()!=null&&e.batch().needsSettlement()))settleAndHandleBoundary(id);
-        }
-    }}
     private void block(UUID id,RuntimeException failure){String message=failure.getMessage();if(!Objects.equals(blocked.put(id,message),message))LOG.log(System.Logger.Level.WARNING,"Production blocked at "+id+": "+message,failure);}
 }

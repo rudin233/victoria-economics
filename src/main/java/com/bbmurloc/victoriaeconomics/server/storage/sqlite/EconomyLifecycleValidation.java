@@ -7,7 +7,7 @@ import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqlitePro
 import java.sql.*;
 import java.util.*;
 
-/** Read-only v9 graph validation. A blocked operation is never proof of an ownership transfer. */
+/** Read-only lifecycle graph validation after production has matched every terminal batch to its inventory receipt. */
 final class EconomyLifecycleValidation {
     private EconomyLifecycleValidation() {}
     static void validate(Connection c,SqliteTransactions.ReadSession snapshot) throws SQLException {
@@ -31,16 +31,7 @@ final class EconomyLifecycleValidation {
                     require(batch!=null&&batch.getId().equals(op.batchId()));
                     boolean completed=op.settlement()==ProductionSettlement.Outcome.COMPLETED;
                     require(completed?(batch.getStatus()==ProductionBatch.Status.SETTLING_COMPLETED||batch.getStatus()==ProductionBatch.Status.COMPLETED):(batch.getStatus()==ProductionBatch.Status.SETTLING_ABORTED||batch.getStatus()==ProductionBatch.Status.ABORTED));
-                    if(op.status()==Status.BLOCKED) {
-                        require(batch.isEnded());
-                        try(var q=c.prepareStatement("SELECT state_json FROM inventory_locations WHERE location_id=?")) {
-                            q.setString(1,cmd.buildingId().toString());try(var r=q.executeQuery()) {
-                                require(r.next());var state=EconomyStateCodec.decodeInventory(cmd.buildingId(),r.getString(1)).state();
-                                var receipt=state.settlements().get(batch.getId());
-                                require(receipt!=null&&receipt.command().equals(new ProductionSettlement(batch.getId(),op.settlement(),batch.getConfiguration().resolvedRecipe().inputs(),batch.getConfiguration().resolvedRecipe().outputs())));
-                            }
-                        }
-                    }
+                    if(op.status()==Status.BLOCKED)require(batch.isEnded());
                 }
                 if(op.status()==Status.BLOCKED) {
                     require(e.batch()==null&&e.boundary()==ProductionExecution.Boundary.NONE&&op.blockers().contains(Blocker.WAGE_REMAINDER_POLICY_UNDECIDED));

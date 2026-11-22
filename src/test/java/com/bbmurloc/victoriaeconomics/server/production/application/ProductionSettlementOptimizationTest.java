@@ -18,22 +18,23 @@ class ProductionSettlementOptimizationTest {
     @TempDir Path directory;
     Path file() { return directory.resolve("economy.sqlite"); }
 
-    @Test void terminalWageCutoffAtPeriodBoundaryMaturesAndPaysExactlyOnce() throws Exception {
+    @ParameterizedTest @ValueSource(ints = {1200, 2400})
+    void terminalWageCutoffAtPeriodBoundaryMaturesAndPaysExactlyOnce(int tick) throws Exception {
         try (var e = new TestEconomy(file(), true)) {
             try (var funding = new com.bbmurloc.victoriaeconomics.server.financial.FinancialTestWorld(file())) {
                 funding.fundingFixture(e.companyCash, 10_000);
             }
-            e.ticks(1000);
+            e.ticks(tick - 200);
             var batch = e.production.startBatch(e.id);
             e.ticks(199);
             assertEquals(199, e.execution().batch().getProgressUnits());
             e.ticks(1);
             assertEquals(batch.getId(), e.execution().lastBatch().getId());
-            assertEquals(1200L, e.execution().lastBatch().endedTick());
+            assertEquals((long) tick, e.execution().lastBatch().endedTick());
             assertNull(e.execution().batch());
             assertEquals(0, e.scalar("SELECT employees FROM payroll_accruals"));
             assertEquals(400, e.scalar("SELECT remainder FROM payroll_accruals"));
-            assertEquals(1200, e.execution().lastCompletedTick());
+            assertEquals(tick, e.execution().lastCompletedTick());
             assertEquals(1, e.stockState().settlements().size());
             assertEquals(30, e.quantity("tools"));
             assertEquals(2, e.scalar("SELECT SUM(paid) FROM payroll_accruals"));
@@ -172,13 +173,14 @@ class ProductionSettlementOptimizationTest {
         }
     }
 
-    @Test void failedSettlementConfirmationCannotStartAnotherBatchAndRecoveryDoesNotProduceAgain() throws Exception {
+    @Test void failedTerminalSaveRollsBackInventoryAndRecoveryProducesOnce() throws Exception {
         try (var e = new TestEconomy(file(), true)) {
             var old = e.production.startBatch(e.id); e.ticks(199);
             e.sql("CREATE TRIGGER fail_confirmation BEFORE UPDATE ON production_executions WHEN NEW.boundary='RECONFIGURING' BEGIN SELECT RAISE(ABORT,'confirmation failed'); END");
             assertThrows(IllegalStateException.class, () -> e.ticks(1));
             assertEquals(old.getId(), e.execution().batch().getId()); assertEquals(ProductionBatch.Status.SETTLING_COMPLETED, e.execution().batch().getStatus());
-            assertEquals(30, e.quantity("tools")); assertEquals(1, e.stockState().settlements().size());
+            assertEquals(0, e.quantity("tools")); assertTrue(e.stockState().settlements().isEmpty());
+            assertEquals(old.getConfiguration().resolvedRecipe().inputs(), e.stockState().reservations().get(old.getId()));
             assertEquals(1, e.scalar("SELECT COUNT(*) FROM production_batches")); assertEquals(199, e.execution().lastCompletedTick());
             e.sql("DROP TRIGGER fail_confirmation"); e.recover();
             assertEquals(30, e.quantity("tools")); assertEquals(1, e.stockState().settlements().size());
@@ -212,7 +214,7 @@ class ProductionSettlementOptimizationTest {
         }
     }
 
-    /** Test-only pre-optimization orchestration; all reads/writes still use the real repositories and journals. */
+    /** Test-only explicit Tick orchestration using the same domain transactions. */
     private static void referenceTick(TestEconomy e) {
         long tick = e.coordinator.acceptedTick();
         for (UUID id : e.coordinator.buildingIds()) {
@@ -231,7 +233,7 @@ class ProductionSettlementOptimizationTest {
             var recipe = batch.getConfiguration().resolvedRecipe();
             var outcome = batch.getStatus() == ProductionBatch.Status.SETTLING_COMPLETED ? ProductionSettlement.Outcome.COMPLETED : ProductionSettlement.Outcome.ABORTED;
             var command = new ProductionSettlement(batch.getId(), outcome, recipe.inputs(), recipe.outputs());
-            assertEquals(command, e.inventory.settle(id, command).command()); e.coordinator.confirmSettlement(id, command);
+            e.coordinator.settle(id, command);
         }
         current = e.coordinator.execution(id);
         if (!current.hasUnfinishedBatch() && !e.coordinator.lifecycleHeld(id)) e.coordinator.reconfigure(id);

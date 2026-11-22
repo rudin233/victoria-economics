@@ -35,7 +35,9 @@ class BoundaryRecoveryTest {
             assertEquals("crude_tools",e.methods().effective().methods().get("tooling_workshop_base"));assertTrue(e.methods().pending().isPresent());
             assertEquals(terminal ? Map.of("laborer",10,"machinist",4) : Map.of(),e.staffingRepository.load(e.id).occupiedByOccupation());
             assertEquals(terminal ? 14 : 0,e.scalar("SELECT employees FROM payroll_accruals"));assertEquals(200,e.scalar("SELECT last_accrued_tick FROM payroll_accruals"));
-            assertEquals(1,e.stockState().settlements().size());assertEquals(30,e.quantity("tools"));assertTrue(e.stockState().reservations().isEmpty());
+            assertEquals(terminal ? 0 : 1,e.stockState().settlements().size());
+            assertEquals(terminal ? 0 : 30,e.quantity("tools"));
+            assertEquals(terminal ? 1 : 0,e.stockState().reservations().size());
             assertThrows(RuntimeException.class,()->e.production.startBatch(e.id));e.sql("DROP TRIGGER failure");
         }
         try(var e=new TestEconomy(file(),false)){
@@ -74,7 +76,7 @@ class BoundaryRecoveryTest {
             assertEquals(Set.of(ProductionExecution.PauseReason.MANUAL), e.execution().pauseReasons());
             e.production.setManualPause(e.id, false);
             e.ticks(199);
-            e.inventory.failSettlement = true;
+            e.failInventorySettlement(true);
             assertThrows(IllegalStateException.class, () -> e.ticks(1));
             assertThrows(IllegalStateException.class, () -> e.coordinator.reconfigure(e.id));
             assertEquals(ProductionBatch.Status.SETTLING_COMPLETED, e.execution().batch().getStatus());
@@ -94,7 +96,7 @@ class BoundaryRecoveryTest {
             e.production.startBatch(e.id);
             e.ticks(199);
             e.production.stopAfterCurrentBatch(e.id);
-            e.inventory.failSettlement = true;
+            e.failInventorySettlement(true);
             assertThrows(IllegalStateException.class, () -> e.ticks(1));
             assertEquals(199, e.execution().lastCompletedTick());
             assertEquals(200L, e.execution().processingTick());
@@ -102,7 +104,7 @@ class BoundaryRecoveryTest {
             assertThrows(IllegalStateException.class, () -> e.coordinator.confirmWholeTick(200));
             assertEquals(1, e.stockState().reservations().size());
 
-            e.inventory.failSettlement = false;
+            e.failInventorySettlement(false);
             e.production.recoverAcceptedTick();
             assertFalse(e.coordinator.needsRecovery());
             assertTrue(e.stockState().reservations().isEmpty());

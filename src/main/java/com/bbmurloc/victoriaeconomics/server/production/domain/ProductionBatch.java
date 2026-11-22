@@ -7,6 +7,7 @@ import java.util.UUID;
  * Immutable entity snapshot. Only ProductionExecution performs lifecycle transitions.
  */
 public final class ProductionBatch {
+    /** SETTLING records a decision awaiting the atomic resource transaction; COMPLETED and ABORTED are history. */
     public enum Status {ACTIVE, PAUSED, SETTLING_COMPLETED, SETTLING_ABORTED, COMPLETED, ABORTED}
 
     public static final int FULL_SPEED_TICKS = 200;

@@ -64,7 +64,7 @@ public final class LaborTestWorld implements AutoCloseable {
         buildings = new BuildingService(registry, identities, types, initializer, lock);
         coordinator = new ProductionBoundaryCoordinator(connection, recipes, occupations, lock, () -> SqliteEconomyDatabase.open(file));
         stock = new com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore(connection, lock);
-        production = new ProductionService(coordinator, stock, lock);
+        production = new ProductionService(coordinator, lock);
     }
     public EconomicBuilding create() { return buildings.createBuilding("tooling_workshop", TestIdentities.COMPANY, TestIdentities.REGION); }
     public void setSupply(long amount) { setSupply(TestIdentities.REGION, "laborer", amount); }

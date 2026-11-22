@@ -69,11 +69,13 @@ class BuildingLifecycleRecoveryTest {
         }
         try(var e=new TestEconomy(file(),false)){assertEquals(Status.BLOCKED,e.lifecycle.find(command.id()).orElseThrow().status());assertEquals(100,e.quantity("wood"));assertEquals(0,e.quantity("tools"));assertTrue(e.stockState().reservations().isEmpty());}
     }
-    @Test void inventoryReceiptLossRetainsIntentAndVerifiesDurableRefundBeforeRetry()throws Exception{
+    @Test void settlementCommitAcknowledgementLossRetainsIntentAndVerifiesDurableRefundBeforeRetry()throws Exception{
         Command command;
         try(var e=new TestEconomy(file(),true)){
-            e.production.startBatch(e.id);command=BuildingLifecycleTest.command(e,Kind.DEMOLITION);e.inventory.loseSettlementAcknowledgement=true;
-            assertThrows(CommitOutcomeUnknownException.class,()->e.lifecycle.request(command));assertThrows(CommitOutcomeUnknownException.class,()->e.execution());
+            e.production.startBatch(e.id);command=BuildingLifecycleTest.command(e,Kind.DEMOLITION);e.loseSettlementCommit();
+            var unknown = assertThrows(CommitOutcomeUnknownException.class,()->e.lifecycle.request(command));
+            assertTrue(unknown.getCause().getMessage().contains("Settlement verified committed"));
+            assertThrows(CommitOutcomeUnknownException.class,()->e.execution());
             assertEquals(Status.QUIESCING,e.lifecycle.verify(command).orElseThrow().status());
         }
         try(var e=new TestEconomy(file(),false)){assertEquals(Status.BLOCKED,e.lifecycle.find(command.id()).orElseThrow().status());assertEquals(100,e.quantity("wood"));assertEquals(1,e.stockState().settlements().size());assertEquals(0,e.quantity("tools"));}

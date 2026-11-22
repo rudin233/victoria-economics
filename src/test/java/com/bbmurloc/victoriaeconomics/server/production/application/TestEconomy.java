@@ -7,7 +7,6 @@ import com.bbmurloc.victoriaeconomics.common.definition.production.*;
 import com.bbmurloc.victoriaeconomics.server.TestIdentities;
 import com.bbmurloc.victoriaeconomics.server.building.*;
 import com.bbmurloc.victoriaeconomics.server.production.domain.*;
-import com.bbmurloc.victoriaeconomics.server.production.port.*;
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.*;
 import com.bbmurloc.victoriaeconomics.server.storage.EconomyDatabase;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.*;
@@ -42,7 +41,6 @@ final class TestEconomy implements AutoCloseable {
     final SqliteBuildingStaffingRepository staffingRepository;
     final SqliteRegionalLaborSupplyRepository supply;
     final SqliteInventoryStore stock;
-    final FaultInventory inventory;
     boolean denyStartVerification;
     final BuildingService buildingService;
     final ProductionBoundaryCoordinator coordinator;
@@ -84,11 +82,11 @@ final class TestEconomy implements AutoCloseable {
         buildingRepository.loadAll().forEach(buildings::add);
         var initializer=new ProductionBuildingInitializer(connection,lock,buildingRepository,configurations,repository,resolver,staffingRepository,verificationConnection);
         buildingService=new BuildingService(buildings,buildingRepository,types,initializer,lock);
-        stock=new SqliteInventoryStore(connection,lock);inventory=new FaultInventory(stock);
+        stock=new SqliteInventoryStore(connection,lock);
         coordinator=new ProductionBoundaryCoordinator(connection,resolver,occupations,lock, () -> {
             if (denyStartVerification) throw new IllegalStateException("Injected unavailable verification");
             return verificationConnection.get();
-        });production=new ProductionService(coordinator,inventory,lock);
+        });production=new ProductionService(coordinator,lock);
         accrual=new PayrollAccrualService(connection,lock);payroll=new SqliteBuildingPayrollQuery(connection,lock);payrollRepository=new SqlitePayrollRepository(connection,lock);
         finance=new com.bbmurloc.victoriaeconomics.server.finance.application.FinanceService(connection,lock);
         accounts=new com.bbmurloc.victoriaeconomics.server.finance.infrastructure.SqliteFinanceAccountRepository(connection,lock);
@@ -129,14 +127,13 @@ final class TestEconomy implements AutoCloseable {
     void sql(String sql)throws SQLException{try(var s=connection.createStatement()){s.execute(sql);}}
     long scalar(String sql)throws SQLException{try(var s=connection.createStatement();var r=s.executeQuery(sql)){r.next();return r.getLong(1);}}
     @Override public void close()throws SQLException{if(ownsConnection)physical.close();}
-    static final class FaultInventory implements ProductionInventoryPort {
-        final SqliteInventoryStore delegate;
-        boolean failSettlement,loseSettlementAcknowledgement;
-        FaultInventory(SqliteInventoryStore delegate){this.delegate=delegate;}
-        public StorageStatus storageStatus(UUID id){return delegate.storageStatus(id);}
-        public void reserve(UUID id,UUID batch,Map<String,Long> inputs){delegate.reserve(id,batch,inputs);}
-        public boolean isReserved(UUID id,UUID batch,Map<String,Long> inputs){return delegate.isReserved(id,batch,inputs);}
-        public void release(UUID id,UUID batch){delegate.release(id,batch);}
-        public SettlementReceipt settle(UUID id,ProductionSettlement command){if(failSettlement)throw new IllegalStateException("Injected settlement failure");var receipt=delegate.settle(id,command);if(loseSettlementAcknowledgement){loseSettlementAcknowledgement=false;throw new CommitOutcomeUnknownException("Injected lost settlement receipt",null);}return receipt;}
+    void failInventorySettlement(boolean fail) throws SQLException {
+        sql(fail ? "CREATE TRIGGER fail_inventory_settlement BEFORE UPDATE ON inventory_locations BEGIN SELECT RAISE(ABORT,'settlement write failed'); END"
+                : "DROP TRIGGER fail_inventory_settlement");
+    }
+    void loseSettlementCommit() {
+        faults.beforeSql = sql -> {
+            if (sql.startsWith("UPDATE inventory_locations SET state_json")) faults.afterCommit = true;
+        };
     }
 }

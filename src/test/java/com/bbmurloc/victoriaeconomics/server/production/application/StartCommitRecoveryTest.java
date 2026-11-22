@@ -103,12 +103,11 @@ class StartCommitRecoveryTest {
             e.ticks(99);
             e.production.stopAfterCurrentBatch(e.id);
             e.ticks(100);
-            e.inventory.loseSettlementAcknowledgement = true;
+            e.loseSettlementCommit();
             var failure = assertThrows(IllegalStateException.class, () -> e.ticks(1));
             assertInstanceOf(CommitOutcomeUnknownException.class, failure.getSuppressed()[0]);
-            assertEquals(ProductionBatch.Status.SETTLING_COMPLETED, e.execution().batch().getStatus());
-            assertFalse(e.execution().automatic());
-            assertEquals(1, e.stockState().settlements().size());
+            assertTrue(failure.getSuppressed()[0].getMessage().contains("Settlement verified committed"));
+            assertThrows(CommitOutcomeUnknownException.class, e::execution);
         }
         try (var e = new TestEconomy(file(), false)) {
             assertNull(e.execution().batch());

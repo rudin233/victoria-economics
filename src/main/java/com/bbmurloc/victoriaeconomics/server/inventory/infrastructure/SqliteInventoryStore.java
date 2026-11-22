@@ -59,7 +59,7 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
         }
     }
 
-    /** Inventory diagnostics; the production port exposes only storageStatus. */
+    /** Committed inventory diagnostics. */
     public GoodsInventory.State inspect(UUID location) {
         synchronized (lock) {
             return load(location).state();
@@ -69,6 +69,11 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
     /** Explicit lifecycle verification under the caller's write lock; never a second inventory authority. */
     public GoodsInventory.State inspect(SqliteTransactions.WriteSession tx,UUID location) throws SQLException {
         return tx.perform(()->{tx.requireConnection(connection);return read(location).inventory().state();});
+    }
+
+    public GoodsInventory.State inSnapshot(SqliteTransactions.ReadSession tx, UUID location) {
+        tx.requireConnection(connection);
+        return read(location).inventory().state();
     }
 
     @Override
@@ -101,6 +106,19 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
         return new SettlementReceipt(settlement.command());
     }
 
+    /** The caller owns commit. These balances are only expectations for independent outcome verification. */
+    public record SettlementBalances(boolean replayed, Map<String, Long> before, Map<String, Long> after) {}
+
+    public SettlementBalances settle(SqliteTransactions.WriteSession tx, UUID location, ProductionSettlement command) throws SQLException {
+        EconomyDiagnostics.count("inventory.settlement");
+        return mutate(tx, location, "inventory.settle", inventory -> {
+            boolean replayed = inventory.settlement(command.batchId()) != null;
+            var before = inventory.state().quantities();
+            inventory.settle(command);
+            return new SettlementBalances(replayed, before, inventory.state().quantities());
+        });
+    }
+
     private GoodsInventory load(UUID location) {
         SqliteTransactions.requireCommittedReads(connection);
         return read(location).inventory();
@@ -129,11 +147,9 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
         });
     }
 
-    public boolean configured(SqliteTransactions.WriteSession tx,UUID location){
+    public Optional<GoodsInventory.State> inspectIfConfigured(SqliteTransactions.WriteSession tx, UUID location) throws SQLException {
         tx.requireConnection(connection);
-        try(var s=connection.prepareStatement("SELECT 1 FROM inventory_locations WHERE location_id=?")){
-            s.setString(1,location.toString());try(var r=s.executeQuery()){return r.next();}
-        }catch(SQLException failure){throw failure(location,failure);}
+        return tx.perform(() -> Optional.ofNullable(find(location)).map(loaded -> loaded.inventory().state()));
     }
 
     private Loaded read(UUID location) {

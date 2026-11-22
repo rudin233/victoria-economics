@@ -40,6 +40,10 @@ public final class SqlitePayrollRepository implements PayrollRepository {
             s.setString(1, id.toString()); try (var r = s.executeQuery()) { if (!r.next()) throw new IllegalStateException("Payroll segment missing"); return decode(r); }
         }
     }
+    public PayrollAccrual inSnapshot(SqliteTransactions.ReadSession tx, UUID id) throws SQLException {
+        tx.requireConnection(connection);
+        return read(id);
+    }
     public Session inTransaction(SqliteTransactions.WriteSession tx) { tx.requireConnection(connection); return new Session(tx); }
     public final class Session {
         private final SqliteTransactions.WriteSession tx;

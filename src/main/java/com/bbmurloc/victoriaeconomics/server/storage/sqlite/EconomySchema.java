@@ -98,7 +98,6 @@ public final class EconomySchema {
                 if (rows.next()) throw incompatible();
             }
             EconomyPaymentValidation.validate(connection, snapshot);
-            EconomyLifecycleValidation.validate(connection, snapshot);
             for (String table : List.of("companies", "regions")) {
                 try (var rows = statement.executeQuery("SELECT id FROM " + table)) {
                     while (rows.next()) storedId(rows.getString(1));
@@ -115,6 +114,7 @@ public final class EconomySchema {
             }
             long accepted=com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository.inSnapshot(connection,snapshot).acceptedTick();
             validateProduction(connection, snapshot, accepted);
+            EconomyLifecycleValidation.validate(connection, snapshot);
             // SUM remains derived. Integer overflow is an error, never a rounded REAL fallback.
             try (var rows = statement.executeQuery("SELECT b.region_id,r.occupation_id,SUM(r.occupied_count) AS occupied,MAX(l.total_supply) AS total FROM building_staffing_roles r JOIN economic_buildings b ON b.id=r.building_id LEFT JOIN regional_labor_supply l ON l.region_id=b.region_id AND l.occupation_id=r.occupation_id GROUP BY b.region_id,r.occupation_id")) {
                 while (rows.next()) {
@@ -150,10 +150,10 @@ public final class EconomySchema {
                     if (inventory == null) throw incompatible();
                     var reservation = inventory.reservations().get(batch.getId());
                     var receipt = inventory.settlements().get(batch.getId());
-                    if (receipt != null) {
-                        if ((!batch.needsSettlement() && !batch.isEnded()) || !receipt.command().equals(ProductionSettlement.forBatch(batch))
-                                || reservation != null) throw incompatible();
-                    } else if (batch.isEnded() || !batch.getConfiguration().resolvedRecipe().inputs().equals(reservation)) {
+                    if (batch.isEnded()) {
+                        if (receipt == null || !receipt.command().equals(ProductionSettlement.forBatch(batch)) || reservation != null)
+                            throw incompatible();
+                    } else if (receipt != null || !batch.getConfiguration().resolvedRecipe().inputs().equals(reservation)) {
                         throw incompatible();
                     }
                 }
