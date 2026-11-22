@@ -67,7 +67,7 @@ class SchemaCompatibilityTest {
              "workforcePlan":{"employees":{"worker":["%s"]},"speedNumerator":1,"speedDenominator":1},"effectiveRevision":0}}
             """.formatted(EMPLOYEE);
 
-    @Test void validV11LoadsIntegerGoodsAndIntegerParticipation() throws Exception {
+    @Test void validV12LoadsIntegerGoodsAndIntegerParticipation() throws Exception {
         Path file = fixture("v9.sqlite");
         seedBatch(file, BATCH_JSON, "ACTIVE", 100);
         byte[] before = Files.readAllBytes(file);
@@ -84,9 +84,9 @@ class SchemaCompatibilityTest {
             assertEquals(10L, stock.reservations().get(BATCH).get("ore"));
             assertTrue(stock.settlements().isEmpty());
             assertNull(batch.endedTick());
-            assertEquals(11, scalar(connection, "SELECT version FROM economy_schema_migrations"));
+            assertEquals(12, scalar(connection, "SELECT version FROM economy_schema_migrations"));
         }
-        assertArrayEquals(before, Files.readAllBytes(file), "Read-only startup must not rewrite valid v11 data");
+        assertArrayEquals(before, Files.readAllBytes(file), "Read-only startup must not rewrite valid v12 data");
     }
 
     @ParameterizedTest @ValueSource(strings = {"ACTIVE", "PAUSED", "SETTLING_COMPLETED", "SETTLING_ABORTED"})
@@ -102,7 +102,7 @@ class SchemaCompatibilityTest {
     }
 
     @ParameterizedTest @ValueSource(strings = {"ACTIVE", "PAUSED", "SETTLING_COMPLETED", "SETTLING_ABORTED"})
-    void currentV11BatchStatesUseThe200TickBasis(String status) throws Exception {
+    void currentV12BatchStatesUseThe200TickBasis(String status) throws Exception {
         Path file = fixture("current-batch.sqlite");
         long progress = status.equals("SETTLING_COMPLETED") ? 200 : 199;
         seedBatch(file, BATCH_JSON, status, progress);
@@ -162,7 +162,8 @@ class SchemaCompatibilityTest {
     @Test void foreignKeyInconsistencyIsRejectedWithoutDeletingOrphans() throws Exception {
         Path file = fixture("orphan.sqlite");
         try (var connection = connect(file)) {
-            sql(connection, "INSERT INTO production_start_intents VALUES('" + BATCH + "','" + UUID.randomUUID() + "')");
+            sql(connection, "INSERT INTO occupation_catalog VALUES('worker')");
+            sql(connection, "INSERT INTO regional_labor_supply VALUES('" + UUID.randomUUID() + "','worker',1,0)");
         }
         assertRejectedUnchanged(file);
     }
@@ -471,11 +472,11 @@ class SchemaCompatibilityTest {
         assertRejectedUnchanged(file);
     }
 
-    @Test void absentDatabaseCreatesV11AndExplicitSnapshotEnvelopes() throws Exception {
+    @Test void absentDatabaseCreatesV12AndExplicitSnapshotEnvelopes() throws Exception {
         Path file = directory.resolve("new.sqlite");
         assertFalse(Files.exists(file));
         try (var connection = SqliteEconomyDatabase.open(file)) {
-            assertEquals(11, scalar(connection, "SELECT version FROM economy_schema_migrations"));
+            assertEquals(12, scalar(connection, "SELECT version FROM economy_schema_migrations"));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM sqlite_master WHERE name='equipment_holdings'"));
             var store = new SqliteInventoryStore(connection, new Object());
             store.createLocation(BUILDING, 100);
@@ -540,7 +541,7 @@ class SchemaCompatibilityTest {
     private Path fixture(String name) throws Exception { return fixture(name, UnaryOperator.identity()); }
 
     private Path fixture(String name, UnaryOperator<String> change) throws Exception {
-        return fixture(name, change, 11);
+        return fixture(name, change, 12);
     }
 
     @ParameterizedTest @ValueSource(strings={"ACTIVE","PAUSED","SETTLING_COMPLETED","SETTLING_ABORTED","COMPLETED","ABORTED"})
@@ -598,7 +599,7 @@ class SchemaCompatibilityTest {
             sql(connection, "INSERT INTO production_executions VALUES('" + BUILDING + "',NULL,NULL,'NONE',0,0,0" + (version >= 11 ? ",NULL,'[]',0" : version >= 7 ? ",NULL,'[]'" : "") + ")");
             try (var insert = connection.prepareStatement(version == 2 ? "INSERT INTO inventory_locations VALUES(?,?)" : "INSERT INTO inventory_locations VALUES(?,?,0)")) {
                 insert.setString(1, BUILDING.toString());
-                insert.setString(2, version == 2 ? LEGACY_INVENTORY_JSON : version == 11 ? """
+                insert.setString(2, version == 2 ? LEGACY_INVENTORY_JSON : version >= 11 ? """
                         {"formatVersion":10,"snapshot":{"location":"%s","capacity":100,"quantities":{"ore":12,"metal":1},"reservations":{},"settlements":{}}}
                         """.formatted(BUILDING) : INVENTORY_JSON.replace("\"formatVersion\":10", "\"formatVersion\":" + version));
                 insert.executeUpdate();
@@ -653,6 +654,16 @@ class SchemaCompatibilityTest {
         Path file = fixture("historical-v10.sqlite", UnaryOperator.identity(), 10);
         seedBatch(file, BATCH_JSON.replace("\"formatVersion\":10", "\"formatVersion\":9"), "ACTIVE", 100);
         assertRejectedUnchanged(file);
+    }
+
+    @Test void oldV11WithOrWithoutOpenStartIsRejectedWithoutChanges() throws Exception {
+        Path empty = fixture("historical-v11-empty.sqlite", UnaryOperator.identity(), 11);
+        Path staged = fixture("historical-v11-staged.sqlite", UnaryOperator.identity(), 11);
+        try (var connection = connect(staged)) {
+            sql(connection, "INSERT INTO production_start_intents VALUES('" + BATCH + "','" + BUILDING + "')");
+        }
+        assertRejectedUnchanged(empty);
+        assertRejectedUnchanged(staged);
     }
 
     private void assertRejectedUnchanged(Path file) throws Exception {

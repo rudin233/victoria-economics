@@ -1,8 +1,8 @@
 # 当前经济运行链与代码阅读地图
 
-Schema v11 使用业务 JSON format 10。当前存档合同见 [P 检查点设计](../../design/VE-Task-P-一致性检查点架构.md)及 [P 验收报告](../../testing/VE-Task-P-经济Tick性能诊断与优化验收.md)。[任务 E 报告](../../design/VE-Task-E-M5.1-M5.2-M5.3-建筑生命周期与整体验收.md)记录此前 v9 阶段；其中逐 Tick 落盘要求已被用户本轮决定替代。[生产概览](overview.md)与[代码阅读地图](code-reading-map.md)描述现行行为。搬包审查和 ADR-PO-02 的实施记录保留历史。
+Schema v12 使用业务 JSON format 10。当前存档合同见 [P 检查点设计](../../design/VE-Task-P-一致性检查点架构.md)及 [P 验收报告](../../testing/VE-Task-P-经济Tick性能诊断与优化验收.md)。[任务 E 报告](../../design/VE-Task-E-M5.1-M5.2-M5.3-建筑生命周期与整体验收.md)记录此前 v9 阶段；其中逐 Tick 落盘要求已被用户本轮决定替代。[生产概览](overview.md)与[代码阅读地图](code-reading-map.md)描述现行行为。搬包审查和 ADR-PO-02 的实施记录保留历史。
 
-工作包 P 恢复阶段只局部减少同步结算重复工作：同一显式 WriteSession 的 Execution Session 复用已严格解码的不可变配置，每次保存仍重新读取行并比对原 JSON；不跨事务缓存经济状态。prepare/commitStart 各自重新校验库存、Staffing、工资及 CAS。自动重开不再重复已经完成的重配置，资产阶段、Journal 和未知提交恢复边界保持。具体安全论证、688 项回归及未通过的性能项目见 P 报告第 12 节；不能把查询数量下降等同于 20 TPS 验收通过。
+工作包 P 恢复阶段只局部减少同步结算重复工作：同一显式 WriteSession 的 Execution Session 复用已严格解码的不可变配置，每次保存仍重新读取行并比对原 JSON；不跨事务缓存经济状态。开工事务内校验当前库存、用工、工资及版本。自动重开不重复已经完成的重配置。库存结算阶段和未知提交保护继续沿用。具体安全论证、688 项回归及未通过的性能项目见 P 报告第 12 节；不能把查询数量下降等同于 20 TPS 验收通过。
 
 ## 权威与入口
 
@@ -13,7 +13,7 @@ Schema v11 使用业务 JSON format 10。当前存档合同见 [P 检查点设�
 | 建筑身份与创建 | `server/building/EconomicBuilding`、`BuildingService`、`server/production/application/ProductionBuildingInitializer` |
 | 双生产根 | `server/production/domain/ProductionMethodConfiguration` 与 `ProductionExecution`，各自 Repository / CAS |
 | 批次临时用工 / 区域供给 | `server/workforce/domain/BuildingStaffing`、`RegionalLaborSupply`。区域占用从各批次的人数派生 |
-| 重配置 / 开工 / 恢复 | `server/production/application/ProductionBoundaryCoordinator`、`ProductionService`；StartIntent / Journal 保留 |
+| 重配置 / 开工 / 恢复 | `server/production/application/ProductionBoundaryCoordinator`、`ProductionService`，开工共享一个写事务 |
 | 整数商品 | `server/inventory/domain/GoodsInventory`、`server/inventory/infrastructure/SqliteInventoryStore` |
 | 历史工资 / 付款 | `server/payroll/domain/PayrollAccrual`、`PayrollPaymentRun`；`PayrollAccrualService`、`PayrollPeriodService`、`CompanyPayrollService` |
 | 现金 / 用途额度 | `server/finance` 是真实现金唯一权威；`server/household` 只管理消费、储蓄额度 |
@@ -23,13 +23,13 @@ Schema v11 使用业务 JSON format 10。当前存档合同见 [P 检查点设�
 | 完整经济存档 | `EconomyCheckpoint`、`SqliteCheckpointStore`、`EconomicCheckpointWriter` |
 | 原版保存协调 | `mixin/EconomySaveMixin`；服务器级 `saveAllChunks`，不是每维度 Save 事件 |
 
-每分钟 1200 个实际服务器逻辑 Tick；200 Tick 满速、3/5 速度第 334 Tick 完成。不按墙钟追补。每建筑的运行时 Tick 标记保护推进，库存结算、开工日志、重配置保留原子事务及幂等恢复。**运行中提交不等于落盘**；重启恢复整个最近成功经济检查点，丢弃未保存后缀，不宣称逐 Tick 崩溃 exactly-once。
+每分钟 1200 个实际服务器逻辑 Tick；200 Tick 满速、3/5 速度第 334 Tick 完成。不按墙钟追补。每建筑的运行时 Tick 标记保护推进，库存结算和重配置保留各自的原子事务及幂等恢复。**运行中提交不等于落盘**；重启恢复整个最近成功经济检查点，丢弃未保存后缀，不宣称逐 Tick 崩溃 exactly-once。
 
-工作包 P 保留 `ProductionBoundaryCoordinator.processTick`：无外部待办的 ACTIVE/PAUSED、无自动开工的空闲建筑，以及完成资源交接的 BLOCKED 生命周期，在同一个 IMMEDIATE **内存业务事务**保存本 Tick 决定和完成标记。已有 processing、SETTLING、RECONFIGURING、StartIntent 和自动开工仍走原协议。工资率只在同次事务内复用，不缓存跨 Tick 权威。
+工作包 P 保留 `ProductionBoundaryCoordinator.processTick`：无外部待办的 ACTIVE/PAUSED、无自动开工的空闲建筑，以及完成资源交接的 BLOCKED 生命周期，在同一个 IMMEDIATE **内存业务事务**保存本 Tick 决定和完成标记。已有 processing、SETTLING、RECONFIGURING 和自动开工仍由后续处理阶段协调。工资率只在同次事务内复用，不缓存跨 Tick 权威。
 
 ## 保存与恢复
 
-SQLite RAM 存储是运行时唯一权威，磁盘 `economy.sqlite` 只保存完整检查点。后台线程只写主线程已冻结的不可变表格，不触及世界或活跃聚合。一次物理写事务包含时间、全部聚合、账本、付款行、历史回执及检查点 ID/摘要；最多一份执行中、一份待执行新快照。旧文件 v1～v10 拒绝、不迁移，主文件及 WAL 受保护；不用 SavedData。
+SQLite RAM 存储是运行时唯一权威，磁盘 `economy.sqlite` 只保存完整检查点。后台线程只写主线程已冻结的不可变表格，不触及世界或活跃聚合。一次物理写事务包含时间、全部聚合、账本、付款行、历史回执及检查点 ID/摘要；最多一份执行中、一份待执行新快照。旧文件 v1～v11 拒绝、不迁移，主文件及 WAL 受保护；不用 SavedData。
 
 默认跟随 Minecraft 原生自动保存（普通 20 TPS 为约 6000 Tick），不另写死 200 Tick。普通 `/save-all` 请求后台存档，不代表 VE 已提交；`/save-all flush` 等待 VE 确认，否则报错。正常停服先停止经济推进、恢复可解决待办并等待最后存档，再释放 Context。异常或超时明确保留上一检查点。可用 `/ve checkpoint status` 查看最近提交与失败，用 `/ve checkpoint flush` 显式等待。
 
@@ -37,7 +37,7 @@ Minecraft 原生文件和 VE SQLite 没有共同物理事务。正式虚拟库�
 
 每批开工按生效配方的满编需求从区域获取可用人员，每个必需职业至少一人。所有招到的人参与生产和计薪，速度取各职业人数比例的最小值。配方及人数在本批冻结，只为生产方法保留 Pending。无批次时计薪人数为零，已发生债务和余数保留。
 
-开工物理事务确认 Batch、原料预留、用工占用与工资基数。库存完成或中止回执可信后，另一物理事务保存终态和结束 Tick，释放对应 batchId 的占用，并将计薪人数归零。暂停和待结算期间仍保留本批人员。工资按区间 [开工 Tick，结束 Tick) 累计。
+一个开工物理事务同时写 Batch、原料预留、用工占用与工资基数。明确失败整体回滚，提交结果不明时隔离原连接并在同一运行时的新连接上核验。库存完成或中止回执可信后，另一物理事务保存终态和结束 Tick，释放对应 batchId 的占用，并将计薪人数归零。暂停和待结算期间仍保留本批人员。工资按区间 [开工 Tick，结束 Tick) 累计。
 
 每个 accepted Tick 先推进并结算各建筑，再以 Tick 对区域内完整 UUID 列表的长度取余并轮转开工。本 Tick 刚终结的建筑最早在下一 Tick 招聘，其他符合条件的建筑可使用已释放的供给。
 

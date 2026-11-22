@@ -38,7 +38,6 @@ class WorkforceContractTest {
         try (var e = new TestEconomy(file(), true)) {
             e.setSupply("machinist", 0);
             assertThrows(ProductionStartBlocked.class, () -> e.production.startBatch(e.id));
-            assertTrue(e.journal.pendingStarts().isEmpty());
             assertTrue(e.stockState().reservations().isEmpty());
             assertNull(e.staffingRepository.load(e.id).batchId());
             assertEquals(0, e.scalar("SELECT employees FROM payroll_accruals"));

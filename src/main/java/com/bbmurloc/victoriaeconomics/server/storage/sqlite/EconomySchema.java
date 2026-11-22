@@ -12,10 +12,10 @@ import java.util.*;
 
 /** Fresh world schema. Existing incompatible worlds are rejected, never converted or cleared. */
 public final class EconomySchema {
-    public static final int VERSION = 11;
+    public static final int VERSION = 12;
     private EconomySchema() {}
 
-    // v11 保存批次临时用工和时间字段，业务 JSON 格式为 10。
+    // v12 移除开工意图表，业务 JSON 仍使用格式 10。
     // Creation and compatibility use the same DDL, with no legacy migration.
     private static final List<String> DDL = List.of(
             "CREATE TABLE economy_schema_migrations(version INTEGER PRIMARY KEY)",
@@ -31,7 +31,6 @@ public final class EconomySchema {
             "CREATE TABLE production_batches(batch_id TEXT PRIMARY KEY, building_id TEXT NOT NULL REFERENCES economic_buildings(id), configuration_json TEXT NOT NULL, progress_units INTEGER NOT NULL CHECK(progress_units >= 0), status TEXT NOT NULL CHECK(status IN ('ACTIVE','PAUSED','SETTLING_COMPLETED','SETTLING_ABORTED','COMPLETED','ABORTED')), started_tick INTEGER NOT NULL CHECK(typeof(started_tick)='integer' AND started_tick>=0), ended_tick INTEGER, CHECK((status IN ('COMPLETED','ABORTED')) = (ended_tick IS NOT NULL)), CHECK(ended_tick IS NULL OR (typeof(ended_tick)='integer' AND ended_tick>=started_tick)), UNIQUE(batch_id, building_id))",
             "CREATE UNIQUE INDEX one_unfinished_batch_per_building ON production_batches(building_id) WHERE status IN ('ACTIVE','PAUSED','SETTLING_COMPLETED','SETTLING_ABORTED')",
             "CREATE TABLE production_executions(building_id TEXT PRIMARY KEY REFERENCES economic_buildings(id), current_batch_id TEXT, last_batch_id TEXT, boundary TEXT NOT NULL CHECK(boundary IN ('NONE','RECONFIGURING')), automatic INTEGER NOT NULL CHECK(automatic IN (0,1)), execution_revision INTEGER NOT NULL CHECK(execution_revision >= 0), last_completed_tick INTEGER NOT NULL CHECK(typeof(last_completed_tick)='integer' AND last_completed_tick>=0), processing_tick INTEGER CHECK(processing_tick IS NULL OR (typeof(processing_tick)='integer' AND processing_tick>last_completed_tick AND processing_tick-last_completed_tick=1)), pause_reasons_json TEXT NOT NULL, next_start_not_before_tick INTEGER NOT NULL CHECK(typeof(next_start_not_before_tick)='integer' AND next_start_not_before_tick>=0), CHECK(current_batch_id IS NULL OR last_batch_id IS NULL OR current_batch_id <> last_batch_id), FOREIGN KEY(current_batch_id, building_id) REFERENCES production_batches(batch_id, building_id) DEFERRABLE INITIALLY DEFERRED, FOREIGN KEY(last_batch_id, building_id) REFERENCES production_batches(batch_id, building_id) DEFERRABLE INITIALLY DEFERRED)",
-            "CREATE TABLE production_start_intents(batch_id TEXT PRIMARY KEY, building_id TEXT NOT NULL UNIQUE REFERENCES economic_buildings(id))",
             "CREATE TABLE inventory_locations(location_id TEXT PRIMARY KEY, state_json TEXT NOT NULL, revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision >= 0))");
 
 
@@ -67,65 +66,68 @@ public final class EconomySchema {
     /** Pure validation of a single committed snapshot; works on a physically read-only connection. */
     public static void validateExisting(Connection connection) {
         try (var diagnosticScope = EconomyDiagnostics.scope("schema.validate")) {
-        SqliteTransactions.requireCommittedReads(connection);
+            SqliteTransactions.read(connection, snapshot -> {
+                validateExisting(connection, snapshot);
+                return null;
+            });
+        }
+    }
+
+    /** 在调用方的可信只读快照中核验完整业务图。 */
+    public static void validateExisting(Connection connection, SqliteTransactions.ReadSession snapshot) throws SQLException {
+        snapshot.requireConnection(connection);
         EconomyStateCodec.requireCurrentFormat();
-        SqliteTransactions.read(connection, snapshot -> {
-            Set<String> expected = new HashSet<>();
-            DDL.forEach(ddl -> expected.add(normalize(ddl)));
-            EconomyFinancialSchema.DDL.forEach(ddl -> expected.add(normalize(ddl)));
-            EconomyPaymentSchema.DDL.forEach(ddl -> expected.add(normalize(ddl)));
-            EconomyLifecycleSchema.DDL.forEach(ddl -> expected.add(normalize(ddl)));
-            if (!definitions(connection).equals(expected)) throw incompatible();
-            try (var statement = connection.createStatement()) {
-                try (var rows = statement.executeQuery("SELECT version, typeof(version) AS kind FROM economy_schema_migrations")) {
-                    if (!rows.next() || !rows.getString("kind").equals("integer")) throw incompatible();
-                    long actual = rows.getLong("version");
-                    if (rows.next()) throw incompatible();
-                    if (actual != VERSION)
-                        throw new IllegalStateException("Unsupported Victoria Economics Schema v" + actual + "; expected v" + VERSION + ". Use a new world; existing data was not changed and no migration was attempted.");
-                }
-                try (var rows = statement.executeQuery("PRAGMA quick_check")) {
-                    if (!rows.next() || !rows.getString(1).equals("ok") || rows.next()) throw incompatible();
-                }
-                try (var rows = statement.executeQuery("PRAGMA foreign_key_check")) {
-                    if (rows.next()) throw incompatible();
-                }
-                EconomyPaymentValidation.validate(connection, snapshot);
-                EconomyLifecycleValidation.validate(connection, snapshot);
-                for (String table : List.of("companies", "regions")) {
-                    try (var rows = statement.executeQuery("SELECT id FROM " + table)) {
-                        while (rows.next()) storedId(rows.getString(1));
-                    }
-                }
-                try (var rows = statement.executeQuery("SELECT * FROM economic_buildings")) {
-                    while (rows.next()) SqliteBuildingRepository.decode(rows);
-                }
-                try (var rows = statement.executeQuery("SELECT b.id FROM economic_buildings b LEFT JOIN production_method_configurations m ON m.building_id=b.id LEFT JOIN production_executions e ON e.building_id=b.id LEFT JOIN building_staffing s ON s.building_id=b.id WHERE m.building_id IS NULL OR e.building_id IS NULL OR s.building_id IS NULL")) {
-                    if (rows.next()) throw incompatible();
-                }
-                try(var rows=statement.executeQuery("SELECT b.id FROM economic_buildings b LEFT JOIN payroll_accruals p ON p.building_id=b.id AND p.closed_tick IS NULL WHERE b.lifecycle='EXISTING' AND p.id IS NULL")){
-                    if(rows.next())throw incompatible();
-                }
-                long accepted=com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository.inSnapshot(connection,snapshot).acceptedTick();
-                validateProduction(connection, snapshot, accepted);
-                // SUM remains derived. Integer overflow is an error, never a rounded REAL fallback.
-                try (var rows = statement.executeQuery("SELECT b.region_id,r.occupation_id,SUM(r.occupied_count) AS occupied,MAX(l.total_supply) AS total FROM building_staffing_roles r JOIN economic_buildings b ON b.id=r.building_id LEFT JOIN regional_labor_supply l ON l.region_id=b.region_id AND l.occupation_id=r.occupation_id GROUP BY b.region_id,r.occupation_id")) {
-                    while (rows.next()) {
-                        long occupied = rows.getLong("occupied");
-                        long total = rows.getLong("total");
-                        if (occupied < 0 || (rows.wasNull() ? occupied != 0 : occupied > total)) throw incompatible();
-                    }
+        Set<String> expected = new HashSet<>();
+        DDL.forEach(ddl -> expected.add(normalize(ddl)));
+        EconomyFinancialSchema.DDL.forEach(ddl -> expected.add(normalize(ddl)));
+        EconomyPaymentSchema.DDL.forEach(ddl -> expected.add(normalize(ddl)));
+        EconomyLifecycleSchema.DDL.forEach(ddl -> expected.add(normalize(ddl)));
+        if (!definitions(connection).equals(expected)) throw incompatible();
+        try (var statement = connection.createStatement()) {
+            try (var rows = statement.executeQuery("SELECT version, typeof(version) AS kind FROM economy_schema_migrations")) {
+                if (!rows.next() || !rows.getString("kind").equals("integer")) throw incompatible();
+                long actual = rows.getLong("version");
+                if (rows.next()) throw incompatible();
+                if (actual != VERSION)
+                    throw new IllegalStateException("Unsupported Victoria Economics Schema v" + actual + "; expected v" + VERSION + ". Use a new world; existing data was not changed and no migration was attempted.");
+            }
+            try (var rows = statement.executeQuery("PRAGMA quick_check")) {
+                if (!rows.next() || !rows.getString(1).equals("ok") || rows.next()) throw incompatible();
+            }
+            try (var rows = statement.executeQuery("PRAGMA foreign_key_check")) {
+                if (rows.next()) throw incompatible();
+            }
+            EconomyPaymentValidation.validate(connection, snapshot);
+            EconomyLifecycleValidation.validate(connection, snapshot);
+            for (String table : List.of("companies", "regions")) {
+                try (var rows = statement.executeQuery("SELECT id FROM " + table)) {
+                    while (rows.next()) storedId(rows.getString(1));
                 }
             }
-            return null;
-        });
-
+            try (var rows = statement.executeQuery("SELECT * FROM economic_buildings")) {
+                while (rows.next()) SqliteBuildingRepository.decode(rows);
+            }
+            try (var rows = statement.executeQuery("SELECT b.id FROM economic_buildings b LEFT JOIN production_method_configurations m ON m.building_id=b.id LEFT JOIN production_executions e ON e.building_id=b.id LEFT JOIN building_staffing s ON s.building_id=b.id WHERE m.building_id IS NULL OR e.building_id IS NULL OR s.building_id IS NULL")) {
+                if (rows.next()) throw incompatible();
+            }
+            try(var rows=statement.executeQuery("SELECT b.id FROM economic_buildings b LEFT JOIN payroll_accruals p ON p.building_id=b.id AND p.closed_tick IS NULL WHERE b.lifecycle='EXISTING' AND p.id IS NULL")){
+                if(rows.next())throw incompatible();
+            }
+            long accepted=com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository.inSnapshot(connection,snapshot).acceptedTick();
+            validateProduction(connection, snapshot, accepted);
+            // SUM remains derived. Integer overflow is an error, never a rounded REAL fallback.
+            try (var rows = statement.executeQuery("SELECT b.region_id,r.occupation_id,SUM(r.occupied_count) AS occupied,MAX(l.total_supply) AS total FROM building_staffing_roles r JOIN economic_buildings b ON b.id=r.building_id LEFT JOIN regional_labor_supply l ON l.region_id=b.region_id AND l.occupation_id=r.occupation_id GROUP BY b.region_id,r.occupation_id")) {
+                while (rows.next()) {
+                    long occupied = rows.getLong("occupied");
+                    long total = rows.getLong("total");
+                    if (occupied < 0 || (rows.wasNull() ? occupied != 0 : occupied > total)) throw incompatible();
+                }
+            }
         }
     }
 
     private static void validateProduction(Connection connection, SqliteTransactions.ReadSession snapshot, long accepted) throws SQLException {
         var stock = new HashMap<UUID, GoodsInventory.State>();
-        var intents = new HashMap<UUID, UUID>();
         var batches = new HashMap<UUID, ProductionBatch>();
         try (var statement = connection.createStatement()) {
             try (var rows = statement.executeQuery("SELECT location_id,state_json FROM inventory_locations")) {
@@ -133,9 +135,6 @@ public final class EconomySchema {
                     UUID id = storedId(rows.getString(1));
                     stock.put(id, EconomyStateCodec.decodeInventory(id, rows.getString(2)).state());
                 }
-            }
-            try (var rows = statement.executeQuery("SELECT batch_id,building_id FROM production_start_intents")) {
-                while (rows.next()) intents.put(storedId(rows.getString(1)), storedId(rows.getString(2)));
             }
             try (var rows = statement.executeQuery("SELECT *,typeof(progress_units) AS progress_type FROM production_batches")) {
                 while (rows.next()) {
@@ -158,11 +157,6 @@ public final class EconomySchema {
                         throw incompatible();
                     }
                 }
-            }
-            for (var intent : intents.entrySet()) {
-                var batch = batches.get(intent.getKey());
-                if (batch != null && (!intent.getValue().equals(batch.getBuildingId()) || batch.isEnded()
-                        || !stock.get(batch.getBuildingId()).reservations().containsKey(batch.getId()))) throw incompatible();
             }
             var executionReader = new SqliteProductionExecutionRepository(connection, new Object());
             var staffingReader = new SqliteBuildingStaffingRepository(connection, new Object());
@@ -193,7 +187,7 @@ public final class EconomySchema {
                 if (inventory == null) continue;
                 for (UUID batchId : inventory.reservations().keySet()) {
                     var batch = batches.get(batchId);
-                    if (batch == null ? !id.equals(intents.get(batchId)) : !id.equals(batch.getBuildingId())) throw incompatible();
+                    if (batch == null || !id.equals(batch.getBuildingId())) throw incompatible();
                 }
                 for (UUID batchId : inventory.settlements().keySet()) {
                     var batch = batches.get(batchId);

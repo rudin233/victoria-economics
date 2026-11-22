@@ -10,12 +10,6 @@ import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionSettlem
 public interface ProductionInventoryPort {
     record StorageStatus(boolean overCapacity) {}
 
-    /** Explicit transaction-local reads for a final start check; never a resource mutation API. */
-    interface ReadSession {
-        StorageStatus storageStatus(UUID location);
-        boolean isReserved(UUID location,UUID batch,Map<String,Long> inputs);
-    }
-
     /** Confirms that inventory has durably settled this batch, including on a matching retry. */
     record SettlementReceipt(ProductionSettlement command) {
         public SettlementReceipt {
@@ -27,7 +21,7 @@ public interface ProductionInventoryPort {
     /** Current capacity fact, not a permit to start; reservation checks the authority again. */
     StorageStatus storageStatus(UUID location);
 
-    /** Reserves the whole recipe exclusively at this location; uncertain failures remain compensatable. */
+    /** Reserves the whole recipe exclusively at this location. */
     void reserve(UUID location, UUID batch, Map<String, Long> inputs);
 
     boolean isReserved(UUID location, UUID batch, Map<String, Long> inputs);

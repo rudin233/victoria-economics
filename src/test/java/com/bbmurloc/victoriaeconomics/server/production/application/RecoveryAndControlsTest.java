@@ -55,7 +55,7 @@ class RecoveryAndControlsTest {
         }
     }
     @Test void isolatedPauseReasonsCannotClearManualPauseWhenPayrollReasonDisappears()throws Exception{
-        try(var e=new TestEconomy(file(),true)){var root=e.execution();root.start(UUID.randomUUID(),e.coordinator.prepare(e.id).configuration());root.pause(ProductionExecution.PauseReason.MANUAL);root.pause(ProductionExecution.PauseReason.PAYROLL_ARREARS);root.resume(ProductionExecution.PauseReason.PAYROLL_ARREARS);assertEquals(ProductionBatch.Status.PAUSED,root.batch().getStatus());assertEquals(Set.of(ProductionExecution.PauseReason.MANUAL),root.pauseReasons());root.requestAutomatic(false);root.resume(ProductionExecution.PauseReason.MANUAL);assertTrue(root.batch().isActive());assertFalse(root.automatic());}
+        try(var e=new TestEconomy(file(),true)){e.production.startBatch(e.id);var root=e.execution();root.pause(ProductionExecution.PauseReason.MANUAL);root.pause(ProductionExecution.PauseReason.PAYROLL_ARREARS);root.resume(ProductionExecution.PauseReason.PAYROLL_ARREARS);assertEquals(ProductionBatch.Status.PAUSED,root.batch().getStatus());assertEquals(Set.of(ProductionExecution.PauseReason.MANUAL),root.pauseReasons());root.requestAutomatic(false);root.resume(ProductionExecution.PauseReason.MANUAL);assertTrue(root.batch().isActive());assertFalse(root.automatic());}
     }
     @Test void recoveredPersistentPayrollCursorClearsOnlyItsReasonAndAutomaticOffDoesNotPreventResume()throws Exception{
         try(var e=new TestEconomy(file(),true)){
@@ -82,11 +82,11 @@ class RecoveryAndControlsTest {
             assertEquals(30, e.quantity("tools"));
         }
     }
-    @Test void journalCleanupFailureNeverCompensatesCommittedBatch()throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.journal.failCleanup=true;var batch=e.production.startBatch(e.id);assertEquals(1,e.journal.pendingStarts().size());assertEquals(1,e.stockState().reservations().size());e.journal.failCleanup=false;e.production.recoverStarts();assertEquals(batch.getId(),e.execution().batch().getId());assertEquals(1,e.stockState().reservations().size());}
+    @Test void recoveryNeverReleasesResourcesOfCommittedBatch()throws Exception{
+        try(var e=new TestEconomy(file(),true)){var batch=e.production.startBatch(e.id);assertEquals(1,e.stockState().reservations().size());e.production.recoverAcceptedTick();e.production.retry(e.id);assertEquals(batch.getId(),e.execution().batch().getId());assertEquals(1,e.stockState().reservations().size());}
     }
-    @Test void unavailableJournalBlocksMutationAndPreservesCommitments()throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.journal.failReads=true;assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));assertTrue(e.stockState().reservations().isEmpty());assertNull(e.execution().batch());}
+    @Test void unavailableInventoryAuthorityBlocksStartBeforeAnyWrite()throws Exception{
+        try(var e=new TestEconomy(file(),true)){e.faults.beforeSql=sql->{if(sql.startsWith("SELECT state_json, revision"))throw new IllegalStateException("injected unavailable inventory");};assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));e.faults.beforeSql=sql->{};assertTrue(e.stockState().reservations().isEmpty());assertNull(e.execution().batch());}
     }
     @Test void concurrentStopRetryAndCompletionFollowCommitOrder() throws Exception {
         try (var e = new TestEconomy(file(), true); var pool = Executors.newFixedThreadPool(3)) {
@@ -130,9 +130,19 @@ class RecoveryAndControlsTest {
             assertNull(e.execution().batch());
         }
     }
-    @Test void abandonedIntentUsesItsOwnBuildingForCompensation()throws Exception{
-        try(var e=new TestEconomy(file(),true)){var other=e.createBuilding();e.stock.createLocation(other.getId(),100);e.stock.deposit(other.getId(),Map.of("wood",20L));UUID batch=UUID.randomUUID();e.journal.recordStart(new com.bbmurloc.victoriaeconomics.server.production.port.ProductionJournal.StartIntent(batch,other.getId()));e.stock.reserve(other.getId(),batch,Map.of("wood",10L));e.production.recoverStarts();assertTrue(e.stock.inspect(other.getId()).reservations().isEmpty());assertEquals(20,e.stock.inspect(other.getId()).quantities().get("wood"));assertEquals(100,e.quantity("wood"));}
+    @Test void failedStartDoesNotModifyOtherBuildingReservation() throws Exception {
+        try (var e = new TestEconomy(file(), true)) {
+            var other = e.createStockedBuilding().getId();
+            var batch = e.production.startBatch(other);
+            var before = e.stock.inspect(other);
+            e.sql("CREATE TRIGGER reject_start BEFORE INSERT ON production_batches BEGIN SELECT RAISE(ABORT,'injected'); END");
+            assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
+            assertEquals(before, e.stock.inspect(other));
+            assertTrue(e.stockState().reservations().isEmpty());
+            assertEquals(batch.getId(), e.staffingRepository.load(other).batchId());
+        }
     }
+
     @Test void legacySchemaRejectionPreservesOriginalFile()throws Exception{
         Path legacy=dir.resolve("legacy.sqlite");try(var c=DriverManager.getConnection("jdbc:sqlite:"+legacy);var s=c.createStatement()){s.execute("CREATE TABLE economy_schema_migrations(version INTEGER PRIMARY KEY)");s.execute("INSERT INTO economy_schema_migrations VALUES(6)");s.execute("CREATE TABLE employment_state(state_json TEXT)");s.execute("INSERT INTO employment_state VALUES('legacy UUID snapshot')");}
         byte[] before=Files.readAllBytes(legacy);assertThrows(IllegalStateException.class,()->SqliteEconomyDatabase.open(legacy));assertArrayEquals(before,Files.readAllBytes(legacy));

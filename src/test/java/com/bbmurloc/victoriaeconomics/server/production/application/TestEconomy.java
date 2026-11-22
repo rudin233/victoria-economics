@@ -43,7 +43,7 @@ final class TestEconomy implements AutoCloseable {
     final SqliteRegionalLaborSupplyRepository supply;
     final SqliteInventoryStore stock;
     final FaultInventory inventory;
-    final FaultJournal journal;
+    boolean denyStartVerification;
     final BuildingService buildingService;
     final ProductionBoundaryCoordinator coordinator;
     final ProductionService production;
@@ -84,8 +84,11 @@ final class TestEconomy implements AutoCloseable {
         buildingRepository.loadAll().forEach(buildings::add);
         var initializer=new ProductionBuildingInitializer(connection,lock,buildingRepository,configurations,repository,resolver,staffingRepository,verificationConnection);
         buildingService=new BuildingService(buildings,buildingRepository,types,initializer,lock);
-        stock=new SqliteInventoryStore(connection,lock);inventory=new FaultInventory(stock);journal=new FaultJournal(new SqliteProductionJournal(connection));
-        coordinator=new ProductionBoundaryCoordinator(connection,resolver,occupations,lock);production=new ProductionService(coordinator,inventory,journal,lock);
+        stock=new SqliteInventoryStore(connection,lock);inventory=new FaultInventory(stock);
+        coordinator=new ProductionBoundaryCoordinator(connection,resolver,occupations,lock, () -> {
+            if (denyStartVerification) throw new IllegalStateException("Injected unavailable verification");
+            return verificationConnection.get();
+        });production=new ProductionService(coordinator,inventory,lock);
         accrual=new PayrollAccrualService(connection,lock);payroll=new SqliteBuildingPayrollQuery(connection,lock);payrollRepository=new SqlitePayrollRepository(connection,lock);
         finance=new com.bbmurloc.victoriaeconomics.server.finance.application.FinanceService(connection,lock);
         accounts=new com.bbmurloc.victoriaeconomics.server.finance.infrastructure.SqliteFinanceAccountRepository(connection,lock);
@@ -126,26 +129,14 @@ final class TestEconomy implements AutoCloseable {
     void sql(String sql)throws SQLException{try(var s=connection.createStatement()){s.execute(sql);}}
     long scalar(String sql)throws SQLException{try(var s=connection.createStatement();var r=s.executeQuery(sql)){r.next();return r.getLong(1);}}
     @Override public void close()throws SQLException{if(ownsConnection)physical.close();}
-    static final class FaultJournal implements ProductionJournal {
-        final ProductionJournal delegate;boolean failContains,failReads,failCleanup;
-        FaultJournal(ProductionJournal delegate){this.delegate=delegate;}
-        public void recordStart(StartIntent i){delegate.recordStart(i);}
-        public void finishStart(UUID id){if(failCleanup)throw new IllegalStateException("Injected journal cleanup failure");delegate.finishStart(id);}
-        public List<StartIntent> pendingStarts(){if(failReads)throw new IllegalStateException("Injected unknown start intents");return delegate.pendingStarts();}
-        public boolean containsBatch(UUID id){if(failContains)throw new IllegalStateException("Injected unknown start evidence");return delegate.containsBatch(id);}
-    }
     static final class FaultInventory implements ProductionInventoryPort {
         final SqliteInventoryStore delegate;
-        boolean failAfterReserve,failRelease,reserveOnlyFirstMaterial,failSettlement,loseSettlementAcknowledgement;
-        Runnable afterReserve=()->{};
+        boolean failSettlement,loseSettlementAcknowledgement;
         FaultInventory(SqliteInventoryStore delegate){this.delegate=delegate;}
         public StorageStatus storageStatus(UUID id){return delegate.storageStatus(id);}
-        public void reserve(UUID id,UUID batch,Map<String,Long> inputs){
-            if(reserveOnlyFirstMaterial){var first=new TreeMap<>(inputs).firstEntry();delegate.reserve(id,batch,Map.of(first.getKey(),first.getValue()));throw new IllegalStateException("Injected partial reservation failure");}
-            delegate.reserve(id,batch,inputs);afterReserve.run();if(failAfterReserve)throw new IllegalStateException("Injected lost reserve acknowledgement");
-        }
+        public void reserve(UUID id,UUID batch,Map<String,Long> inputs){delegate.reserve(id,batch,inputs);}
         public boolean isReserved(UUID id,UUID batch,Map<String,Long> inputs){return delegate.isReserved(id,batch,inputs);}
-        public void release(UUID id,UUID batch){if(failRelease)throw new IllegalStateException("Injected release failure");delegate.release(id,batch);}
+        public void release(UUID id,UUID batch){delegate.release(id,batch);}
         public SettlementReceipt settle(UUID id,ProductionSettlement command){if(failSettlement)throw new IllegalStateException("Injected settlement failure");var receipt=delegate.settle(id,command);if(loseSettlementAcknowledgement){loseSettlementAcknowledgement=false;throw new CommitOutcomeUnknownException("Injected lost settlement receipt",null);}return receipt;}
     }
 }

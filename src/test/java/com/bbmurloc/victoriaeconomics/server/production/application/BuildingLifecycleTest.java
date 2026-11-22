@@ -122,11 +122,11 @@ class BuildingLifecycleTest {
             assertEquals(op,e.lifecycle.find(cmd.id()).orElseThrow());assertEquals(1,e.stockState().settlements().size());
         }
     }
-    @Test void operationDuringStartReservationCompensatesIntentAndRejectsFinalCommit()throws Exception{
+    @Test void committedLifecycleOperationPreventsNewBatchAndReservation()throws Exception{
         try(var e=new TestEconomy(file(),true)){
-            var cmd=command(e,Kind.SALE);e.inventory.afterReserve=()->e.lifecycle.request(cmd);
+            var cmd=command(e,Kind.SALE);e.lifecycle.request(cmd);
             assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));
-            assertNull(e.execution().batch());assertTrue(e.journal.pendingStarts().isEmpty());assertTrue(e.stockState().reservations().isEmpty());assertEquals(100,e.quantity("wood"));
+            assertNull(e.execution().batch());assertEquals(0,e.staffingRepository.load(e.id).totalOccupied());assertTrue(e.stockState().reservations().isEmpty());assertEquals(100,e.quantity("wood"));
             assertEquals(Status.BLOCKED,e.lifecycle.find(cmd.id()).orElseThrow().status());assertEquals(0,e.scalar("SELECT COUNT(*) FROM production_batches"));EconomySchema.validateExisting(e.connection);
         }
     }

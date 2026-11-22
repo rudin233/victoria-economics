@@ -82,7 +82,7 @@ public final class EconomyCheckpoint {
             if (r.getLong(2) != tick || r.getLong(3) != tick || r.getLong(4) != tick / 1200 || r.getObject(5) != null || r.next())
                 throw new IllegalStateException("Checkpoint waits for time, payroll and payment cursors");
         }
-        try (var s = c.prepareStatement("SELECT 1 FROM production_executions e JOIN economic_buildings b ON b.id=e.building_id LEFT JOIN production_batches batch ON batch.batch_id=e.current_batch_id WHERE b.lifecycle='EXISTING' AND (e.last_completed_tick<>? OR e.processing_tick IS NOT NULL OR e.boundary<>'NONE' OR batch.status IN ('SETTLING_COMPLETED','SETTLING_ABORTED')) UNION ALL SELECT 1 FROM production_start_intents")) {
+        try (var s = c.prepareStatement("SELECT 1 FROM production_executions e JOIN economic_buildings b ON b.id=e.building_id LEFT JOIN production_batches batch ON batch.batch_id=e.current_batch_id WHERE b.lifecycle='EXISTING' AND (e.last_completed_tick<>? OR e.processing_tick IS NOT NULL OR e.boundary<>'NONE' OR batch.status IN ('SETTLING_COMPLETED','SETTLING_ABORTED'))")) {
             s.setLong(1, tick);
             try (var r = s.executeQuery()) { if (r.next()) throw new IllegalStateException("Checkpoint waits for completed building business transactions"); }
         }

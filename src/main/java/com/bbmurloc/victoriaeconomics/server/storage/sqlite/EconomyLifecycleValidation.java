@@ -45,14 +45,11 @@ final class EconomyLifecycleValidation {
                 if(op.status()==Status.BLOCKED) {
                     require(e.batch()==null&&e.boundary()==ProductionExecution.Boundary.NONE&&op.blockers().contains(Blocker.WAGE_REMAINDER_POLICY_UNDECIDED));
                     if(cmd.kind()==Kind.SALE)require(op.blockers().containsAll(Set.of(Blocker.SALE_CONSIDERATION_UNDECIDED,Blocker.INVENTORY_DISPOSITION_UNDECIDED)));
-                    try(var q=c.prepareStatement("SELECT 1 FROM production_start_intents WHERE building_id=?")) {
-                        q.setString(1,cmd.buildingId().toString());try(var r=q.executeQuery()){require(!r.next());}
-                    }
                 }
             }
         }
         // Historical identity has no active enrollment or runtime employees. Historical roots and debts remain.
-        try(var s=c.createStatement();var r=s.executeQuery("SELECT b.id FROM economic_buildings b JOIN production_executions e ON e.building_id=b.id WHERE b.lifecycle='DEMOLISHED' AND (e.current_batch_id IS NOT NULL OR e.automatic<>0 OR e.boundary<>'NONE' OR EXISTS(SELECT 1 FROM building_staffing_roles x WHERE x.building_id=b.id AND x.occupied_count>0) OR EXISTS(SELECT 1 FROM payroll_accruals p WHERE p.building_id=b.id AND p.closed_tick IS NULL) OR NOT EXISTS(SELECT 1 FROM payroll_accruals p WHERE p.building_id=b.id) OR EXISTS(SELECT 1 FROM production_start_intents x WHERE x.building_id=b.id))")) {require(!r.next());}
+        try(var s=c.createStatement();var r=s.executeQuery("SELECT b.id FROM economic_buildings b JOIN production_executions e ON e.building_id=b.id WHERE b.lifecycle='DEMOLISHED' AND (e.current_batch_id IS NOT NULL OR e.automatic<>0 OR e.boundary<>'NONE' OR EXISTS(SELECT 1 FROM building_staffing_roles x WHERE x.building_id=b.id AND x.occupied_count>0) OR EXISTS(SELECT 1 FROM payroll_accruals p WHERE p.building_id=b.id AND p.closed_tick IS NULL) OR NOT EXISTS(SELECT 1 FROM payroll_accruals p WHERE p.building_id=b.id))")) {require(!r.next());}
         try(var s=c.createStatement();var r=s.executeQuery("SELECT b.id,i.state_json FROM economic_buildings b JOIN inventory_locations i ON i.location_id=b.id WHERE b.lifecycle='DEMOLISHED'")) {
             while(r.next()) {
                 var state=EconomyStateCodec.decodeInventory(UUID.fromString(r.getString(1)),r.getString(2)).state();

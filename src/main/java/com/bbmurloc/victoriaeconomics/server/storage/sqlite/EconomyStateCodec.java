@@ -13,7 +13,7 @@ import java.math.BigDecimal;
 import java.util.*;
 import java.util.function.Function;
 
-/** Schema v11 使用业务 JSON format 10，批次时间由 SQL 列保存。 */
+/** Schema v12 使用业务 JSON format 10，批次时间由 SQL 列保存。 */
 public final class EconomyStateCodec {
     private static final Gson GSON = new Gson();
     private static final int FULL_SPEED_TICKS = 200;
@@ -21,8 +21,8 @@ public final class EconomyStateCodec {
 
     /** A future semantic change must replace the schema/codec together, never reinterpret old snapshots in place. */
     public static void requireCurrentFormat() {
-        if (EconomySchema.VERSION != 11 || ProductionBatch.FULL_SPEED_TICKS != FULL_SPEED_TICKS)
-            throw new IllegalStateException("Schema v11 requires payload format 10 integer goods/participation and 200 ticks");
+        if (EconomySchema.VERSION != 12 || ProductionBatch.FULL_SPEED_TICKS != FULL_SPEED_TICKS)
+            throw new IllegalStateException("Schema v12 requires payload format 10 integer goods/participation and 200 ticks");
     }
 
     public static ProductionBatchConfiguration decodeBatchConfiguration(String json) {
@@ -247,6 +247,6 @@ public final class EconomyStateCodec {
 
     private static IllegalArgumentException invalid(String message) { return new IllegalArgumentException(message); }
     private static IllegalStateException incompatible(String kind, RuntimeException failure) {
-        return new IllegalStateException("Invalid or incompatible payload format 10 " + kind + " (Schema v11); no conversion was attempted", failure);
+        return new IllegalStateException("Invalid or incompatible payload format 10 " + kind + " (Schema v12); no conversion was attempted", failure);
     }
 }

@@ -21,7 +21,6 @@ import com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteBuil
 import com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteOccupationCatalog;
 import com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteStaffingQuery;
 import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore;
-import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionJournal;
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionMethodConfigurationRepository;
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionExecutionRepository;
 import com.bbmurloc.victoriaeconomics.server.production.application.ProductionBuildingInitializer;
@@ -86,8 +85,8 @@ public final class ServerEconomyContext implements AutoCloseable {
                     staffingRepository, database::openVerificationConnection);
             buildingService = new BuildingService(buildings, repository, types, initializer, economyLock);
             staffing = new StaffingCalculator(new SqliteStaffingQuery(connection, recipes, occupations, economyLock));
-            var coordinator=new ProductionBoundaryCoordinator(connection,recipes,occupations,economyLock);
-            production = new ProductionService(coordinator,inventory,new SqliteProductionJournal(connection),economyLock);
+            var coordinator=new ProductionBoundaryCoordinator(connection,recipes,occupations,economyLock,database::openVerificationConnection);
+            production = new ProductionService(coordinator,inventory,economyLock);
             finance = new FinanceService(connection, economyLock);
             payrollAccrual = new PayrollAccrualService(connection, economyLock);
             payroll = new SqliteBuildingPayrollQuery(connection, economyLock);

@@ -62,9 +62,9 @@ public final class LaborTestWorld implements AutoCloseable {
         var initializer = new ProductionBuildingInitializer(connection, lock, identities, methods, execution, recipes, staffing,
                 () -> SqliteEconomyDatabase.open(file));
         buildings = new BuildingService(registry, identities, types, initializer, lock);
-        coordinator = new ProductionBoundaryCoordinator(connection, recipes, occupations, lock);
+        coordinator = new ProductionBoundaryCoordinator(connection, recipes, occupations, lock, () -> SqliteEconomyDatabase.open(file));
         stock = new com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore(connection, lock);
-        production = new ProductionService(coordinator, stock, new SqliteProductionJournal(connection), lock);
+        production = new ProductionService(coordinator, stock, lock);
     }
     public EconomicBuilding create() { return buildings.createBuilding("tooling_workshop", TestIdentities.COMPANY, TestIdentities.REGION); }
     public void setSupply(long amount) { setSupply(TestIdentities.REGION, "laborer", amount); }
@@ -110,17 +110,12 @@ public final class LaborTestWorld implements AutoCloseable {
         long required = Math.addExact(supply.occupied(region, "laborer"), workers);
         if (required > total) setSupply(region, "laborer", required);
         if (createStock) stock.createLocation(id, 1000);
-        // 使用原料意图保证夹具在各事务之间也符合新存档格式。
         var batchId = UUID.randomUUID();
-        var journal = new SqliteProductionJournal(connection);
-        journal.recordStart(new com.bbmurloc.victoriaeconomics.server.production.port.ProductionJournal.StartIntent(batchId, id));
-        stock.reserve(id, batchId, Map.of());
-        var result = SqliteTransactions.write(connection, tx -> {
+        return SqliteTransactions.write(connection, tx -> {
+            stock.reserve(tx, id, batchId, Map.of());
             long tick = com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick();
             return acquirePayrollFixture(tx, id, batchId, workers, tick);
         });
-        journal.finishStart(batchId);
-        return result;
     }
 
     public long count(String table) throws SQLException {

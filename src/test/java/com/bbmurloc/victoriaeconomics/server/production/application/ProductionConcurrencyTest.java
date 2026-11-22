@@ -31,7 +31,7 @@ class ProductionConcurrencyTest {
         try(var a=new TestEconomy(file(),true);var b=new TestEconomy(file(),false);var pool=Executors.newFixedThreadPool(2)){
             var start=new CountDownLatch(1);var count=new AtomicInteger();
             var f1=pool.submit(()->{await(start);attemptStart(a,count);});var f2=pool.submit(()->{await(start);attemptStart(b,count);});start.countDown();f1.get(20,TimeUnit.SECONDS);f2.get(20,TimeUnit.SECONDS);
-            assertEquals(1,count.get());assertEquals(1,a.scalar("SELECT COUNT(*) FROM production_batches"));assertEquals(1,b.stockState().reservations().size());assertTrue(a.journal.pendingStarts().isEmpty());
+            assertEquals(1,count.get());assertEquals(1,a.scalar("SELECT COUNT(*) FROM production_batches"));assertEquals(1,b.stockState().reservations().size());assertEquals(14,a.scalar("SELECT employees FROM payroll_accruals"));
         }
     }
     @Test void manualStartBetweenTickAcceptanceAndCallbackDoesNotAdvanceInItsBirthTick()throws Exception{
@@ -50,17 +50,13 @@ class ProductionConcurrencyTest {
             a.setSupply("laborer",12);
             UUID first=a.id,second=a.createStockedBuilding().getId();
             try(var b=new TestEconomy(file(),false)){
-                var plan = a.coordinator.prepare(first);
-                UUID rejected = UUID.randomUUID();
-                var intent = new com.bbmurloc.victoriaeconomics.server.production.port.ProductionJournal.StartIntent(rejected,first);
-                a.journal.recordStart(intent);
-                a.stock.reserve(first,rejected,plan.configuration().resolvedRecipe().inputs());
-                b.production.startBatch(second);
-                assertThrows(ProductionStartBlocked.class, () -> a.coordinator.commitStart(first,rejected,plan,false));
-                a.production.recoverStarts();
-                assertTrue(a.stockState().reservations().isEmpty());
-                assertNull(a.staffingRepository.load(first).batchId());
-                a.production.startBatch(first);
+                var gate = new CountDownLatch(1);
+                try (var pool = Executors.newFixedThreadPool(2)) {
+                    var x = pool.submit(() -> { await(gate); return a.production.startBatch(first); });
+                    var y = pool.submit(() -> { await(gate); return b.production.startBatch(second); });
+                    gate.countDown();
+                    assertNotEquals(x.get(20, TimeUnit.SECONDS).getId(), y.get(20, TimeUnit.SECONDS).getId());
+                }
                 int x=a.staffingRepository.load(first).occupiedByOccupation().get("laborer"),y=b.staffingRepository.load(second).occupiedByOccupation().get("laborer");
                 assertEquals(12,Math.addExact(x,y));assertEquals(Set.of(2,10),Set.of(x,y));
                 assertEquals(20,a.scalar("SELECT SUM(employees) FROM payroll_accruals"));assertEquals(12,a.supply.occupied(TestIdentities.REGION,"laborer"));

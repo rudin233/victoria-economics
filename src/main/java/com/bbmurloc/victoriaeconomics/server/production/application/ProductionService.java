@@ -4,18 +4,16 @@ import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
 
 import com.bbmurloc.victoriaeconomics.server.production.domain.*;
 import com.bbmurloc.victoriaeconomics.server.production.port.*;
-import com.bbmurloc.victoriaeconomics.server.storage.sqlite.CommitOutcomeUnknownException;
 import java.util.*;
 
-/** Journaled resources remain independent; each building's Tick advance and reconfiguration have explicit transactions. */
+/** 协调生产开工、推进及结算恢复。 */
 public final class ProductionService {
     private static final System.Logger LOG=System.getLogger(ProductionService.class.getName());
     private final ProductionBoundaryCoordinator coordinator;
     private final ProductionInventoryPort inventory;
-    private final ProductionJournal journal;
     private final Object lock;
     private final Map<UUID,String> blocked=new HashMap<>();
-    public ProductionService(ProductionBoundaryCoordinator coordinator,ProductionInventoryPort inventory,ProductionJournal journal,Object lock){this.coordinator=coordinator;this.inventory=inventory;this.journal=journal;this.lock=lock;}
+    public ProductionService(ProductionBoundaryCoordinator coordinator,ProductionInventoryPort inventory,Object lock){this.coordinator=coordinator;this.inventory=inventory;this.lock=lock;}
     public ProductionMethodConfiguration methods(UUID id){return coordinator.methods(id);}
     public ProductionExecution execution(UUID id){return coordinator.execution(id);}
     public String blockedReason(UUID id){synchronized(lock){return blocked.get(id);}}
@@ -23,42 +21,33 @@ public final class ProductionService {
     public void requestProductionMethods(UUID id,Map<String,String> target){coordinator.changeMethods(id,(m,defer)->m.requestTarget(target,defer));}
     public void cancelPendingProductionMethods(UUID id){coordinator.changeMethods(id,(m,defer)->m.cancelPending());}
     public ProductionBatch startBatch(UUID id){return startBatch(id,false);}
-    private ProductionBatch startBatch(UUID id,boolean automatic){try(var measurement=EconomyDiagnostics.stage("production.start")){synchronized(lock){
-        if(journal.pendingStarts().stream().anyMatch(i->i.buildingId().equals(id)))throw new IllegalStateException("Start compensation still pending");
-        // The only automatic caller has just confirmed settlement/reconfiguration below.
-        // prepare and commitStart still independently re-read every start condition in IMMEDIATE transactions.
-        if(!automatic)settleAndHandleBoundary(id);
-        var plan=coordinator.prepare(id);var config=plan.configuration();UUID batch=UUID.randomUUID();var intent=new ProductionJournal.StartIntent(batch,id);
-        journal.recordStart(intent);
-        ProductionBatch started;
-        try{
-            inventory.reserve(id,batch,config.resolvedRecipe().inputs());
-            started=coordinator.commitStart(id,batch,plan,automatic);
-        }catch(RuntimeException failure){
-            // An unknown result may have created the Batch. Keep both intent and Reservation until fresh verification.
-            if(failure instanceof CommitOutcomeUnknownException)throw failure;
-            try {
-                if (!journal.containsBatch(batch)) compensateStart(intent);
-            } catch (RuntimeException compensationFailure) {
-                compensationFailure.addSuppressed(failure);
-                throw compensationFailure;
+    private ProductionBatch startBatch(UUID id, boolean automatic) {
+        try (var measurement = EconomyDiagnostics.stage("production.start")) {
+            synchronized (lock) {
+                if (!automatic) {
+                    var batch = coordinator.execution(id).batch();
+                    if ((batch != null && (batch.needsSettlement() || batch.isEnded()))
+                            || (batch == null && coordinator.methods(id).pending().isPresent()))
+                        settleAndHandleBoundary(id);
+                }
+                var started = coordinator.startBatch(id, automatic);
+                blocked.remove(id);
+                return started;
             }
-            throw failure;
         }
-        // Only the immutable Batch escapes, and only after commit AND JDBC cleanup returned successfully.
-        finishCommittedStart(batch);blocked.remove(id);return started;
-    }}}
+    }
+
     /** 关闭自动续产，当前批次继续按原状态推进和结算。 */
     public void stopAfterCurrentBatch(UUID id) {
         coordinator.automatic(id, false);
     }
     public void setAutomatic(UUID id,boolean enabled){coordinator.automatic(id,enabled);}
     public void setManualPause(UUID id,boolean pause){coordinator.manualPause(id,pause);}
-    public void retry(UUID id){synchronized(lock){recoverStarts();settleAndHandleBoundary(id);blocked.remove(id);}}
-    /** Lifecycle reuses the exact Journal/settlement protocol without applying seller Pending changes. */
+    public void retry(UUID id){synchronized(lock){settleAndHandleBoundary(id);blocked.remove(id);}}
+    /** 建筑生命周期沿用库存结算协议，不应用卖方的待生效生产方法。 */
     public void settleForLifecycle(UUID id){synchronized(lock){
         if(!coordinator.lifecycleHeld(id))throw new IllegalStateException("Durable lifecycle intent required");
-        recoverStarts();settleAndHandleBoundary(id);
+        settleAndHandleBoundary(id);
     }}
     private void settleAndHandleBoundary(UUID id){
         try(var measurement=EconomyDiagnostics.stage("production.followup")){
@@ -79,7 +68,6 @@ public final class ProductionService {
         try (var diagnosticScope = EconomyDiagnostics.scope("production.tick")) {
             synchronized (lock) {
                 long tick = coordinator.acceptedTick();
-                recoverStarts();
                 var regions = coordinator.buildingsByRegion();
                 var followUp = new HashSet<UUID>();
                 var failures = new ArrayList<RuntimeException>();
@@ -134,7 +122,7 @@ public final class ProductionService {
 
     /** Restart uses the existing accepted Tick and checkpoints; it neither allocates nor guesses missed Ticks. */
     public void recoverAcceptedTick(){
-        try (var diagnosticScope = EconomyDiagnostics.scope("production.recovery")) {synchronized(lock){if(!coordinator.needsRecovery())return;recoverStarts();recoverBoundaries();onServerTick();}
+        try (var diagnosticScope = EconomyDiagnostics.scope("production.recovery")) {synchronized(lock){if(!coordinator.needsRecovery())return;recoverBoundaries();onServerTick();}
         }
     }
     public void recoverBoundaries(){synchronized(lock){
@@ -143,17 +131,5 @@ public final class ProductionService {
             if(!e.hasUnfinishedBatch()||(e.batch()!=null&&e.batch().needsSettlement()))settleAndHandleBoundary(id);
         }
     }}
-    public void recoverStarts(){synchronized(lock){
-        for(var intent:journal.pendingStarts()){
-            if(journal.containsBatch(intent.batchId())){
-                coordinator.verifyCommittedStart(intent);
-                journal.finishStart(intent.batchId());
-            }else compensateStart(intent);
-        }
-    }}
-    private void compensateStart(ProductionJournal.StartIntent intent){
-        inventory.release(intent.buildingId(),intent.batchId());journal.finishStart(intent.batchId());
-    }
-    private void finishCommittedStart(UUID batch){try{journal.finishStart(batch);}catch(CommitOutcomeUnknownException unknown){throw unknown;}catch(RuntimeException failure){LOG.log(System.Logger.Level.WARNING,"Committed start cleanup will retry: "+batch,failure);}}
     private void block(UUID id,RuntimeException failure){String message=failure.getMessage();if(!Objects.equals(blocked.put(id,message),message))LOG.log(System.Logger.Level.WARNING,"Production blocked at "+id+": "+message,failure);}
 }

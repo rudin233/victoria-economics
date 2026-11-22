@@ -16,12 +16,11 @@
 
 ## 2. 开工与配置
 
-手动和自动开工都执行 `ProductionService.startBatch()`。已有未完成批次时禁止新开工。重配置边界或开工意图未清理前也不能提交新批次。手动开工成功后开启自动续产。
+手动和自动开工都经 `ProductionService.startBatch()`。手动开工成功后开启自动续产。
 
-1. `prepare()` 核验建筑运营、工资 CURRENT、有效配方、各职业用工、本地库存容量及原料。准备结果包含配置快照、公司、区域、建筑身份和版本。
-2. 开工 Journal 提交 `StartIntent`，库存按 Batch ID 整批预留原料。
-3. `commitStart()` 重新核验开工条件、完整预留和执行版本。自动开工还须确认 `automatic=true`。在同一 IMMEDIATE 事务提交 Execution 引用、Batch 行、临时占用和工资基数。
-4. 正式开工后清理意图。失败时依据已提交 Batch 核实结果，确认未提交才释放预留。未知结果保留意图和资源，由可信连接恢复。
+1. `ProductionBoundaryCoordinator.startBatch()` 在一个 IMMEDIATE 写事务中检查建筑与生命周期准入、执行屏障、开工 Tick、真实工资状态、有效配方、当前库存和区域用工。
+2. `SqliteInventoryStore.reserve(WriteSession, ...)` 通过库存聚合整批预留原料。生产、用工和工资仓储用同一 WriteSession 创建批次、登记占用和变更工资基数。
+3. 任一写入失败，整次开工回滚。若提交或清理的结果不明，隔离旧连接，并在同一内存库的新连接上核验 Batch ID 和完整关联图。旧连接持续停止服务，核验不触发自动重试。
 
 运行中变更生产方法时保存最新待生效请求，本批的配方与人员冻结。库存结算确认后，终结事务写结束 Tick、释放本批占用、把计薪人数归零并进入 `RECONFIGURING`。该边界应用生产方法 Pending 并归档批次。先推进和结算所有建筑，再按区域 UUID 列表轮转招工，本建筑最早在终结的下一 Tick 重招。
 
@@ -39,7 +38,7 @@
 
 ## 4. 存档与恢复
 
-[EconomySchema](../../../src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/EconomySchema.java) 当前为 v11，业务 JSON 为 format 10。生产方法配置、执行引用和 Batch 各有权威表。执行表保存 `automatic`、边界、暂停原因、每建筑 Tick 标记和最早可开工 Tick，批次表保存配置快照、进度、状态及开工与结束 Tick。`production_start_intents` 确保每建筑最多一个未清理开工意图。库存、用工和工资状态各有自己的存储。
+[EconomySchema](../../../src/main/java/com/bbmurloc/victoriaeconomics/server/storage/sqlite/EconomySchema.java) 当前为 v12，业务 JSON 为 format 10。生产方法配置、执行引用和 Batch 各有权威表。执行表保存 `automatic`、边界、暂停原因、每建筑 Tick 标记和最早可开工 Tick，批次表保存配置快照、进度、状态及开工与结束 Tick。每份生产原料预留都必须归属于已提交的批次。库存、用工和工资状态各有自己的存储。
 
 [ServerEconomyContext](../../../src/main/java/com/bbmurloc/victoriaeconomics/server/ServerEconomyContext.java) 从完整经济检查点恢复内存 SQLite 权威，并装配 Tick、工资、生命周期和生产恢复。继续处理已接受 Tick 时保留执行标记和库存回执，不根据停服时间分配新 Tick。确认保存后，普通停产的 `automatic=false` 会随同批次状态一并恢复。
 

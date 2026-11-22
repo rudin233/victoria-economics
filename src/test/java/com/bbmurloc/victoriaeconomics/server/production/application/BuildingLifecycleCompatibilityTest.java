@@ -64,7 +64,7 @@ class BuildingLifecycleCompatibilityTest {
         }
         try(var e=new TestEconomy(file(),false)){assertEquals(BuildingLifecycle.DEMOLISHED,e.buildingRepository.load(id).lifecycle());assertEquals(3,e.clock.elapsedTicks());e.ticks(1);assertEquals(4,e.clock.elapsedTicks());}
     }
-    @ParameterizedTest @ValueSource(strings={"activePayroll","employees","inventory","automatic","start"})
+    @ParameterizedTest @ValueSource(strings={"activePayroll","employees","inventory","automatic","futureTick"})
     void inconsistentTombstonesFailBeforeAnyBusinessWrite(String problem)throws Exception{
         try(var e=new TestEconomy(file(),true)){
             historicalTombstoneFixture(e);
@@ -73,7 +73,7 @@ class BuildingLifecycleCompatibilityTest {
                 case "employees"->e.sql("INSERT INTO building_staffing_roles VALUES('"+e.id+"','laborer',1)");
                 case "inventory"->e.stock.deposit(e.id,Map.of("tools",1L));
                 case "automatic"->e.sql("UPDATE production_executions SET automatic=1");
-                case "start"->e.sql("INSERT INTO production_start_intents VALUES('"+UUID.randomUUID()+"','"+e.id+"')");
+                case "futureTick"->e.sql("UPDATE production_executions SET processing_tick=last_completed_tick+1");
             }
         }
         byte[] before=Files.readAllBytes(file());assertThrows(IllegalStateException.class,()->SqliteEconomyDatabase.open(file()));assertArrayEquals(before,Files.readAllBytes(file()));

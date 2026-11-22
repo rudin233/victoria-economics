@@ -108,17 +108,24 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
 
     private record Loaded(GoodsInventory inventory, long revision) {}
 
-    public record StartInspection(boolean configured, boolean overCapacity, boolean inputsAvailable, boolean reserved) {}
+    public record StartInspection(boolean configured, boolean overCapacity, boolean inputsAvailable) {}
 
-    /** One authoritative read for the caller's final start checks; the result never outlives that write session. */
-    public StartInspection inspectStart(SqliteTransactions.WriteSession tx, UUID location, Map<String, Long> inputs, UUID batch) throws SQLException {
+    public StartInspection inspectStart(SqliteTransactions.WriteSession tx, UUID location, Map<String, Long> inputs) throws SQLException {
+        tx.requireConnection(connection);
         return tx.perform(() -> {
-            tx.requireConnection(connection);
             var loaded = find(location);
-            if (loaded == null) return new StartInspection(false, false, false, false);
+            if (loaded == null) return new StartInspection(false, false, false);
             var current = loaded.inventory();
             boolean available = inputs.entrySet().stream().allMatch(entry -> current.available(entry.getKey()) >= entry.getValue());
-            return new StartInspection(true, current.overCapacity(), available, batch != null && current.hasReservation(batch, inputs));
+            return new StartInspection(true, current.overCapacity(), available);
+        });
+    }
+
+    /** 在调用方的物理事务中通过库存聚合预留整批原料。 */
+    public void reserve(SqliteTransactions.WriteSession tx, UUID location, UUID batch, Map<String, Long> inputs) throws SQLException {
+        mutate(tx, location, "inventory.reserve", inventory -> {
+            inventory.reserve(batch, inputs);
+            return null;
         });
     }
 
@@ -127,21 +134,6 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
         try(var s=connection.prepareStatement("SELECT 1 FROM inventory_locations WHERE location_id=?")){
             s.setString(1,location.toString());try(var r=s.executeQuery()){return r.next();}
         }catch(SQLException failure){throw failure(location,failure);}
-    }
-
-    public boolean inputsAvailable(SqliteTransactions.WriteSession tx,UUID location,Map<String,Long> inputs){
-        tx.requireConnection(connection);var inventory=read(location).inventory();
-        return inputs.entrySet().stream().allMatch(entry->inventory.available(entry.getKey())>=entry.getValue());
-    }
-
-    /** Explicit read capability for final start checks while the caller owns the SQLite write lock. */
-    public ProductionInventoryPort.ReadSession inTransaction(SqliteTransactions.WriteSession tx) {
-        tx.requireConnection(connection);
-        return new ProductionInventoryPort.ReadSession(){
-            private GoodsInventory current(UUID id){tx.requireConnection(connection);return read(id).inventory();}
-            public StorageStatus storageStatus(UUID id){return new StorageStatus(current(id).overCapacity());}
-            public boolean isReserved(UUID id,UUID batch,Map<String,Long> inputs){return current(id).hasReservation(batch,inputs);}
-        };
     }
 
     private Loaded read(UUID location) {
@@ -168,13 +160,19 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
     }
 
     private <T> T mutate(UUID location, String diagnosticOperation, Function<GoodsInventory, T> operation) {
+        synchronized (lock) {
+            return SqliteTransactions.write(connection, tx -> mutate(tx, location, diagnosticOperation, operation));
+        }
+    }
+
+    private <T> T mutate(SqliteTransactions.WriteSession tx, UUID location, String diagnosticOperation,
+                         Function<GoodsInventory, T> operation) throws SQLException {
+        tx.requireConnection(connection);
         try (var diagnosticScope = EconomyDiagnostics.scope("inventory.mutate");
              var operationScope = EconomyDiagnostics.scope(diagnosticOperation)) {
-        synchronized (lock) {
-            return SqliteTransactions.write(connection, session -> {
-                session.requireConnection(connection);
-                Loaded loaded = read(location); // Authoritative re-read only after BEGIN IMMEDIATE.
-                GoodsInventory inventory = loaded.inventory();
+            return tx.perform(() -> {
+                var loaded = read(location);
+                var inventory = loaded.inventory();
                 var before = inventory.state();
                 T result;
                 try (var domainScope = EconomyDiagnostics.scope("inventory.domain")) { result = operation.apply(inventory); }
@@ -190,8 +188,6 @@ public final class SqliteInventoryStore implements ProductionInventoryPort {
                     throw failure(location, e);
                 }
             });
-        }
-
         }
     }
 

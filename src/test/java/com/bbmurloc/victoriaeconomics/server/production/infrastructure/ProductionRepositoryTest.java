@@ -10,6 +10,7 @@ import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;
 import java.sql.*;
+import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteTransactions;
 import java.util.*;
 import java.lang.reflect.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -126,7 +127,7 @@ class ProductionRepositoryTest {
         assertEquals(0, execution.executionRevision());
         assertNull(executions.load(id).batch());
         assertEquals(0, executions.load(id).executionRevision());
-        assertFalse(new SqliteProductionJournal(connection).containsBatch(batch));
+        assertEquals(0, scalar("SELECT COUNT(*) FROM production_batches"));
     }
 
     @Test void persistedTerminationCannotBeRevertedEvenByAStaleOrFabricatedSnapshot() {
@@ -179,7 +180,7 @@ class ProductionRepositoryTest {
         execution.start(batch, commitment());
         assertThrows(CommitOutcomeUnknownException.class, () -> repository.save(execution, 0));
         assertEquals(0, execution.executionRevision()); // The unacknowledged object is not published as authority.
-        assertTrue(new SqliteProductionJournal(connection).containsBatch(batch));
+
         assertEquals(batch, executions.load(id).batch().getId());
         assertEquals(1, executions.load(id).executionRevision());
         assertTrue(methods.load(id).pending().isEmpty());
@@ -191,9 +192,8 @@ class ProductionRepositoryTest {
             sql("UPDATE production_method_configurations SET configuration_revision=1,effective_revision=1");
             assertThrows(CommitOutcomeUnknownException.class, () -> executions.load(id));
             assertThrows(CommitOutcomeUnknownException.class, () -> methods.load(id));
-            var journal = new SqliteProductionJournal(connection);
-            assertThrows(CommitOutcomeUnknownException.class, () -> journal.containsBatch(UUID.randomUUID()));
-            assertThrows(CommitOutcomeUnknownException.class, journal::pendingStarts);
+            assertThrows(CommitOutcomeUnknownException.class, () -> SqliteTransactions.read(connection,
+                    tx -> executions.inSnapshot(tx,id)));
         } finally {
             connection.rollback();
             connection.setAutoCommit(true);

@@ -73,21 +73,56 @@ class ProductionIntegrationTest {
         }
     }
     @Test void insufficientMaterialsLeaveNoIntentOrReservation()throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.stock.withdraw(e.id,Map.of("wood",100L));assertThrows(ProductionStartBlocked.class,()->e.production.startBatch(e.id));assertTrue(e.stockState().reservations().isEmpty());assertTrue(e.journal.pendingStarts().isEmpty());assertEquals(0,e.quantity("wood"));}
+        try(var e=new TestEconomy(file(),true)){e.stock.withdraw(e.id,Map.of("wood",100L));assertThrows(ProductionStartBlocked.class,()->e.production.startBatch(e.id));assertTrue(e.stockState().reservations().isEmpty());assertEquals(0,e.quantity("wood"));}
     }
-    @Test void partialMultiMaterialFailureCompensatesAllHeldInputs()throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.inventory.reserveOnlyFirstMaterial=true;assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));assertTrue(e.stockState().reservations().isEmpty());assertTrue(e.journal.pendingStarts().isEmpty());e.inventory.reserveOnlyFirstMaterial=false;assertNotNull(e.production.startBatch(e.id));}
+    @Test void missingSecondMaterialDoesNotReserveFirstMaterial() throws Exception {
+        try (var e = new TestEconomy(file(), true)) {
+            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "efficient_tools");
+            assertEquals(Set.of("wood", "iron"), e.methods().recipe().inputs().keySet());
+            e.stock.withdraw(e.id, Map.of("iron", 100L));
+            var stock = e.stockState();
+            assertThrows(ProductionStartBlocked.class, () -> e.production.startBatch(e.id));
+            assertEquals(stock, e.stockState());
+            assertNull(e.execution().batch());
+            e.stock.deposit(e.id, Map.of("iron", 100L));
+            assertNotNull(e.production.startBatch(e.id));
+        }
     }
+
     @Test void failedFinalCommitReleasesReservationAndDoesNotCreateBatch()throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.sql("CREATE TRIGGER fail_start BEFORE UPDATE ON production_executions BEGIN SELECT RAISE(ABORT,'failed'); END");assertThrows(RuntimeException.class,()->e.production.startBatch(e.id));assertNull(e.execution().batch());assertTrue(e.stockState().reservations().isEmpty());assertTrue(e.journal.pendingStarts().isEmpty());}
+        try(var e=new TestEconomy(file(),true)){e.sql("CREATE TRIGGER fail_start BEFORE UPDATE ON production_executions BEGIN SELECT RAISE(ABORT,'failed'); END");assertThrows(RuntimeException.class,()->e.production.startBatch(e.id));assertNull(e.execution().batch());assertTrue(e.stockState().reservations().isEmpty());}
     }
-    @Test void failedReleaseRemainsJournaledAndRestartReleasesEverything()throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.inventory.failAfterReserve=true;e.inventory.failRelease=true;assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));assertEquals(1,e.journal.pendingStarts().size());assertEquals(1,e.stockState().reservations().size());}
-        try(var e=new TestEconomy(file(),false)){assertTrue(e.journal.pendingStarts().isEmpty());assertTrue(e.stockState().reservations().isEmpty());assertEquals(100,e.quantity("wood"));}
+    @Test void failedAtomicStartLeavesTheSameCompleteCheckpoint() throws Exception {
+        var world = dir.resolve("failed-start-world");
+        String initial;
+        try (var runtime = EconomyDatabase.open(world); var e = new TestEconomy(runtime, true)) {
+            initial = EconomyCheckpoint.capture(e.connection).sha256();
+            e.sql("CREATE TRIGGER reject_start BEFORE INSERT ON production_batches BEGIN SELECT RAISE(ABORT,'injected'); END");
+            assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
+            e.sql("DROP TRIGGER reject_start");
+            assertEquals(initial, EconomyCheckpoint.capture(e.connection).sha256());
+            runtime.requestCheckpoint().join();
+        }
+        try (var runtime = EconomyDatabase.open(world); var e = new TestEconomy(runtime, false)) {
+            assertNull(e.execution().batch());
+            assertTrue(e.stockState().reservations().isEmpty());
+            assertEquals(0, e.staffingRepository.load(e.id).totalOccupied());
+            assertEquals(0, e.scalar("SELECT employees FROM payroll_accruals"));
+        }
     }
-    @Test void finalAuthorityRecheckRejectsStaffingChangeAfterReservation()throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.inventory.afterReserve=()->e.setSupply("laborer",5);assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));assertNull(e.execution().batch());assertEquals(0,e.staffingRepository.load(e.id).totalOccupied());assertTrue(e.stockState().reservations().isEmpty());}
+
+    @Test void startReadsSupplyAndReservationsCommittedByOtherWriter() throws Exception {
+        try (var e = new TestEconomy(file(), true); var other = new TestEconomy(file(), false)) {
+            var competitor = e.createStockedBuilding().getId();
+            other.setSupply("laborer", 5);
+            var batch = other.production.startBatch(competitor);
+            assertEquals(5, batch.getConfiguration().workforcePlan().participatingWorkers().get("laborer"));
+            assertThrows(ProductionStartBlocked.class, () -> e.production.startBatch(e.id));
+            assertNull(e.execution().batch());
+            assertTrue(e.stockState().reservations().isEmpty());
+        }
     }
+
     @Test void manualPauseResumesSameBatchWithAutomaticOff()throws Exception{
         try(var e=new TestEconomy(file(),true)){var batch=e.production.startBatch(e.id);e.ticks(50);e.production.setManualPause(e.id,true);e.production.setAutomatic(e.id,false);e.ticks(10);assertEquals(50,e.execution().batch().getProgressUnits());e.production.setManualPause(e.id,false);e.ticks(1);assertEquals(batch.getId(),e.execution().batch().getId());assertEquals(51,e.execution().batch().getProgressUnits());assertFalse(e.execution().automatic());assertEquals(1,e.stockState().reservations().size());}
     }
@@ -150,7 +185,6 @@ class ProductionIntegrationTest {
             assertNull(e.execution().batch());
             assertNull(e.execution().lastBatch());
             assertEquals(stock, e.stockState());
-            assertTrue(e.journal.pendingStarts().isEmpty());
         }
     }
     @ParameterizedTest @ValueSource(ints = {50, 199})
@@ -226,7 +260,7 @@ class ProductionIntegrationTest {
     }
 
     @Test void missingWageConfigurationNeverAllowsStart()throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.sql("DELETE FROM regional_wage_rates");assertEquals(State.UNAVAILABLE,e.payroll.state(e.id));assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));assertNull(e.execution().batch());assertTrue(e.journal.pendingStarts().isEmpty());}
+        try(var e=new TestEconomy(file(),true)){e.sql("DELETE FROM regional_wage_rates");assertEquals(State.UNAVAILABLE,e.payroll.state(e.id));assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));assertNull(e.execution().batch());}
     }
     @Test void restartAfterInventoryReceiptLossCannotDuplicateProductsOrAdvanceTwice()throws Exception{
         try(var e=new TestEconomy(file(),true)){e.production.startBatch(e.id);e.ticks(199);e.inventory.loseSettlementAcknowledgement=true;assertThrows(IllegalStateException.class,()->e.ticks(1));assertEquals(30,e.quantity("tools"));assertTrue(e.execution().batch().needsSettlement());assertEquals(200L,e.execution().processingTick());}

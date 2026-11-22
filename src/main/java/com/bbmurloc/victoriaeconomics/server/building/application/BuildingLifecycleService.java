@@ -116,9 +116,6 @@ public final class BuildingLifecycleService {
             var staffing = new com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteBuildingStaffingRepository(connection, lock);
             if (segment.employees() != 0 || staffing.inTransaction(tx).load(id).batchId() != null)
                 throw new IllegalStateException("Lifecycle cannot hand off unreleased batch labor");
-            try(var s=connection.prepareStatement("SELECT 1 FROM production_start_intents WHERE building_id=?")) {
-                s.setString(1,id.toString());try(var r=s.executeQuery()){if(r.next())throw new IllegalStateException("StartIntent compensation remains unresolved");}
-            }
             var repo=executions.inTransaction(tx);var e=repo.load(id);
             if(e.automatic()||e.hasUnfinishedBatch())throw new IllegalStateException("Lifecycle resource settlement remains unresolved");
             if(current.batchId()!=null) {

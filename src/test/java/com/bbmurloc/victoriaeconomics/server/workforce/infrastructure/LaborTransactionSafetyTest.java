@@ -91,9 +91,9 @@ class LaborTransactionSafetyTest {
                     assertEquals(5, busy.getErrorCode());
                 }
             };
-            w.coordinator.prepare(id);
+            w.production.startBatch(id);
             assertTrue(observed.get());
-            assertTrue(w.staffing.load(id).occupiedByOccupation().isEmpty());
+            assertNotNull(w.staffing.load(id).batchId());
         }
     }
     @Test void twoConnectionsCompeteForOneRealRegionalSupplyWithoutOversubscription() throws Exception {
@@ -229,7 +229,7 @@ class LaborTransactionSafetyTest {
             assertThrows(CommitOutcomeUnknownException.class, () -> w.staffing.load(id));
             assertThrows(CommitOutcomeUnknownException.class, () -> w.identities.load(id));
             assertThrows(CommitOutcomeUnknownException.class, () -> w.supply.occupied(TestIdentities.REGION, "laborer"));
-            assertThrows(CommitOutcomeUnknownException.class, () -> w.coordinator.prepare(id));
+            assertThrows(CommitOutcomeUnknownException.class, () -> w.coordinator.startBatch(id, false));
             assertTrue(w.physical.isClosed());
             try (var fresh = new LaborTestWorld(file())) {
                 assertFalse(fresh.production.execution(id).automatic());

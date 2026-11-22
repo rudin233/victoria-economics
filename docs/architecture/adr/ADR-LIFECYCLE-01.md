@@ -1,5 +1,7 @@
 # ADR-LIFECYCLE-01：受控停产与未决交割门禁
 
+> 本文记录历史实施。Schema v12 已移除生产开工日志，现行协议见[当前运行合同](../../domain/production-operations/current-runtime.md)。
+
 日期：2026-10-21。状态：任务 E 的安全实施合同；**不批准尚未决定的出售和工资清算政策**。
 
 依据：[DDD 草案](../../design/VE-Production-Labor-DDD-重构设计草案-2026-10-20.md)已确认规则、任务 A～D 报告及任务 E 的明确授权。取代旧文档中以删除 Registry/方块代表经济拆除、以 locationId 代表资产产权的任何推断。

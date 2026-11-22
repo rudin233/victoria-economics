@@ -2,7 +2,6 @@ package com.bbmurloc.victoriaeconomics.server.production.application;
 
 import com.bbmurloc.victoriaeconomics.server.diagnostics.EconomyDiagnostics;
 import com.bbmurloc.victoriaeconomics.server.production.domain.*;
-import com.bbmurloc.victoriaeconomics.server.production.port.ProductionJournal;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.*;
 import com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository;
 import org.junit.jupiter.api.Test;
@@ -167,7 +166,7 @@ class ProductionSettlementOptimizationTest {
             e.ticks(200);
             assertNull(e.execution().batch()); assertTrue(e.execution().lastBatch().isCompleted());
             assertEquals(batch.getConfiguration().resolvedRecipe().outputs().get("tools").longValue(), e.quantity("tools")); assertTrue(e.stockState().reservations().isEmpty());
-            assertTrue(e.journal.pendingStarts().isEmpty()); assertEquals(200, e.execution().lastCompletedTick());
+            assertEquals(0,e.staffingRepository.load(e.id).totalOccupied()); assertEquals(200, e.execution().lastCompletedTick());
             assertEquals(overCapacity, e.stock.storageStatus(e.id).overCapacity());
             e.ticks(1);assertNotNull(e.production.blockedReason(e.id));
         }
@@ -215,15 +214,12 @@ class ProductionSettlementOptimizationTest {
 
     /** Test-only pre-optimization orchestration; all reads/writes still use the real repositories and journals. */
     private static void referenceTick(TestEconomy e) {
-        long tick = e.coordinator.acceptedTick(); e.production.recoverStarts();
+        long tick = e.coordinator.acceptedTick();
         for (UUID id : e.coordinator.buildingIds()) {
             if (e.coordinator.processTick(id, tick) != ProductionBoundaryCoordinator.TickResult.NEEDS_FOLLOW_UP) continue;
             referenceBoundary(e, id); var current = e.coordinator.execution(id);
             if (current.batch() == null && current.automatic() && tick >= current.nextStartNotBeforeTick() && !e.coordinator.lifecycleHeld(id)) {
-                referenceBoundary(e, id); var plan = e.coordinator.prepare(id); UUID batch = UUID.randomUUID();
-                e.journal.recordStart(new ProductionJournal.StartIntent(batch, id));
-                e.inventory.reserve(id, batch, plan.configuration().resolvedRecipe().inputs());
-                e.coordinator.commitStart(id, batch, plan, true); e.journal.finishStart(batch); e.coordinator.execution(id);
+                referenceBoundary(e, id); e.coordinator.startBatch(id, true);
             }
             e.coordinator.finishTick(id, tick);
         }
