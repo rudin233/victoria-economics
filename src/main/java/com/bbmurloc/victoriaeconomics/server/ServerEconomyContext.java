@@ -10,7 +10,7 @@ import com.bbmurloc.victoriaeconomics.common.definition.occupation.*;
 import com.bbmurloc.victoriaeconomics.common.definition.production.*;
 import com.bbmurloc.victoriaeconomics.server.building.*;
 import com.bbmurloc.victoriaeconomics.server.production.application.ProductionService;
-import com.bbmurloc.victoriaeconomics.server.production.application.EconomicClock;
+import com.bbmurloc.victoriaeconomics.server.production.application.ServerTickCoordinator;
 import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionRecipeResolver;
 import com.bbmurloc.victoriaeconomics.server.production.port.*;
 import com.bbmurloc.victoriaeconomics.server.production.application.ProductionBoundaryCoordinator;
@@ -53,7 +53,7 @@ public final class ServerEconomyContext implements AutoCloseable {
     private final StaffingApplicationService staffingService;
     private final ProductionService production;
     private final SqliteInventoryStore inventory;
-    private final EconomicClock clock;
+    private final ServerTickCoordinator tickCoordinator;
     private final FinanceService finance;
     private final PayrollAccrualService payrollAccrual;
     private final SqliteBuildingPayrollQuery payroll;
@@ -98,8 +98,8 @@ public final class ServerEconomyContext implements AutoCloseable {
             payrollPeriods=new PayrollPeriodService(connection,economyLock);
             households=new RegionalHouseholdService(connection,economyLock);
             lifecycle=new com.bbmurloc.victoriaeconomics.server.building.application.BuildingLifecycleService(connection,economyLock,recipes,production::settleForLifecycle,database::openVerificationConnection);
-            clock = new EconomicClock(new SqliteEconomicTimeRepository(connection, economyLock),
-                    payrollAccrual::recoverAcceptedTime, production::onEconomicTick,()->{lifecycle.recoverUnfinished();production.recoverAcceptedTick();},payrollPeriods::recoverAcceptedTime);
+            tickCoordinator = new ServerTickCoordinator(new SqliteEconomicTimeRepository(connection, economyLock),
+                    payrollAccrual::recoverAcceptedTime, production::onServerTick,()->{lifecycle.recoverUnfinished();production.recoverAcceptedTick();},payrollPeriods::recoverAcceptedTime);
         } catch (RuntimeException failure) {
             database.close();
             throw failure;
@@ -110,7 +110,7 @@ public final class ServerEconomyContext implements AutoCloseable {
         try (var diagnosticScope = EconomyDiagnostics.scope("context.tick")) {
         synchronized (economyLock) {
             if (stopping) return;
-            clock.onServerTick();
+            tickCoordinator.onServerTick();
         }
 
         }
@@ -149,7 +149,7 @@ public final class ServerEconomyContext implements AutoCloseable {
         return inventory;
     }
 
-    public EconomicTime getEconomicTime() { synchronized (economyLock) { return clock.persistentTime(); } }
+    public EconomicTime getEconomicTime() { synchronized (economyLock) { return tickCoordinator.persistentTime(); } }
     public FinanceService getFinanceService() { return finance; }
     public PayrollAccrualService getPayrollAccrualService() { return payrollAccrual; }
     public BuildingPayrollPort getPayrollQuery() { return payroll; }

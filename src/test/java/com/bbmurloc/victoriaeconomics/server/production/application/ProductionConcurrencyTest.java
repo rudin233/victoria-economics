@@ -21,9 +21,9 @@ class ProductionConcurrencyTest {
             a.production.startBatch(a.id);
             try(var b=new TestEconomy(file(),false);var pool=Executors.newFixedThreadPool(2)){
                 new SqliteEconomicTimeRepository(a.connection,a.lock).acceptNext(0);a.accrual.recoverAcceptedTime();
-                var start=new CountDownLatch(1);var f1=pool.submit(()->{await(start);a.production.onEconomicTick();});var f2=pool.submit(()->{await(start);b.production.onEconomicTick();});start.countDown();f1.get(20,TimeUnit.SECONDS);f2.get(20,TimeUnit.SECONDS);
+                var start=new CountDownLatch(1);var f1=pool.submit(()->{await(start);a.production.onServerTick();});var f2=pool.submit(()->{await(start);b.production.onServerTick();});start.countDown();f1.get(20,TimeUnit.SECONDS);f2.get(20,TimeUnit.SECONDS);
                 assertEquals(1,a.execution().batch().getProgressUnits());assertEquals(1,a.execution().lastCompletedTick());assertNull(a.execution().processingTick());
-                a.production.onEconomicTick();b.production.onEconomicTick();assertEquals(1,a.execution().batch().getProgressUnits());assertEquals(1,a.stockState().reservations().size());assertEquals(1,b.clock.persistentTime().productionCallbackReturnedTick());
+                a.production.onServerTick();b.production.onServerTick();assertEquals(1,a.execution().batch().getProgressUnits());assertEquals(1,a.stockState().reservations().size());assertEquals(1,b.clock.persistentTime().productionCallbackReturnedTick());
             }
         }
     }
@@ -39,7 +39,7 @@ class ProductionConcurrencyTest {
             new SqliteEconomicTimeRepository(a.connection,a.lock).acceptNext(0);a.accrual.recoverAcceptedTime();
             UUID batch=b.production.startBatch(b.id).getId();
             assertEquals(0,a.execution().batch().getProgressUnits());
-            a.production.onEconomicTick();b.production.onEconomicTick();
+            a.production.onServerTick();b.production.onServerTick();
             assertEquals(batch,a.execution().batch().getId());assertEquals(0,a.execution().batch().getProgressUnits());
             assertEquals(1,a.execution().lastCompletedTick());assertNull(a.execution().processingTick());
             a.ticks(1);assertEquals(batch,a.execution().batch().getId());assertEquals(1,a.execution().batch().getProgressUnits());
@@ -86,7 +86,7 @@ class ProductionConcurrencyTest {
             a.production.startBatch(a.id);var first=new SqliteEconomicTimeRepository(a.connection,a.lock);var second=new SqliteEconomicTimeRepository(b.connection,b.lock);
             first.acceptNext(0);assertThrows(IllegalStateException.class,()->second.acceptNext(1));
             a.accrual.recoverAcceptedTime();assertThrows(IllegalStateException.class,()->second.acceptNext(1));
-            a.production.onEconomicTick();second.acceptNext(1);assertEquals(2,first.load().acceptedTick());assertEquals(1,a.execution().batch().getProgressUnits());
+            a.production.onServerTick();second.acceptNext(1);assertEquals(2,first.load().acceptedTick());assertEquals(1,a.execution().batch().getProgressUnits());
         }
     }
     private static void attemptStart(TestEconomy e,AtomicInteger count){try{e.production.startBatch(e.id);count.incrementAndGet();}catch(IllegalStateException denied){}}

@@ -9,7 +9,7 @@
 | 职责 | 当前源码（均在 `src/main/java/com/bbmurloc/victoriaeconomics` 下） |
 |---|---|
 | NeoForge 启停 / Tick | `server/event/ServerLifecycleEvents` → `ServerEconomyRuntime` → `ServerEconomyContext` |
-| 世界持久时间 | `server/production/application/EconomicClock`、`server/time/infrastructure/SqliteEconomicTimeRepository` |
+| 世界持久时间 | `server/production/application/ServerTickCoordinator`、`server/time/infrastructure/SqliteEconomicTimeRepository` |
 | 建筑身份与创建 | `server/building/EconomicBuilding`、`BuildingService`、`server/production/application/ProductionBuildingInitializer` |
 | 双生产根 | `server/production/domain/ProductionMethodConfiguration` 与 `ProductionExecution`，各自 Repository / CAS |
 | 唯一实际雇佣 / 区域供给 | `server/workforce/domain/BuildingStaffing`、`RegionalLaborSupply`；occupied 由 SQL 真实人数派生 |

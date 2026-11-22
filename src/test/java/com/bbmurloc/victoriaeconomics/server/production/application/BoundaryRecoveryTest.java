@@ -76,7 +76,7 @@ class BoundaryRecoveryTest {
             e.production.startBatch(e.id);e.faults.beforeSql=sql->{if(sql.startsWith("UPDATE production_executions SET current_batch_id"))e.faults.afterCommit=true;};
             assertThrows(IllegalStateException.class,()->e.ticks(1));
         }
-        try(var e=new TestEconomy(file(),false)){assertEquals(1,e.execution().batch().getProgressUnits());assertEquals(1,e.execution().lastCompletedTick());e.production.onEconomicTick();assertEquals(1,e.execution().batch().getProgressUnits());}
+        try(var e=new TestEconomy(file(),false)){assertEquals(1,e.execution().batch().getProgressUnits());assertEquals(1,e.execution().lastCompletedTick());e.production.onServerTick();assertEquals(1,e.execution().batch().getProgressUnits());}
     }
     @Test void callbackConfirmationCannotHideAnUnsettledManualAbortAfterTickCompletion()throws Exception{
         try(var e=new TestEconomy(file(),true)){

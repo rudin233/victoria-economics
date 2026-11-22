@@ -7,9 +7,9 @@ import com.bbmurloc.victoriaeconomics.server.time.port.EconomicTimeRepository;
 import com.bbmurloc.victoriaeconomics.server.time.domain.EconomicTime;
 
 /**
- * Counts only executed logical server ticks. No wall-time/offline or chunk-load dependency.
+ * Coordinates acceptance and recovery for logical server ticks. No wall-time/offline or chunk-load dependency.
  */
-public final class EconomicClock {
+public final class ServerTickCoordinator {
     public static final int TICKS_PER_MINUTE = 1200;
     private final Runnable tick;
     private final EconomicTimeRepository repository;
@@ -20,21 +20,21 @@ public final class EconomicClock {
     private long ticks;
 
     /** Isolated simulations/legacy regression fixtures only. The server always requires the persistent constructor. */
-    public EconomicClock(Runnable tick) {
+    public ServerTickCoordinator(Runnable tick) {
         this.tick = Objects.requireNonNull(tick);
         this.repository = null; this.payrollRecovery = null;this.productionRecovery=()->{};this.paymentRecovery=()->{};
     }
 
     /** Time/payroll-only fixtures; formal server wiring also supplies per-building production recovery. */
-    public EconomicClock(EconomicTimeRepository repository, Runnable payrollRecovery, Runnable tick) {
+    public ServerTickCoordinator(EconomicTimeRepository repository, Runnable payrollRecovery, Runnable tick) {
         this(repository,payrollRecovery,tick,()->{});
     }
     /** Production-only regression fixtures; the formal constructor also supplies payment recovery. */
-    public EconomicClock(EconomicTimeRepository repository,Runnable payrollRecovery,Runnable tick,Runnable productionRecovery){
+    public ServerTickCoordinator(EconomicTimeRepository repository,Runnable payrollRecovery,Runnable tick,Runnable productionRecovery){
         this(repository,payrollRecovery,tick,productionRecovery,()->{});
     }
     /** Formal server wiring includes company-period recovery between accrual and production. */
-    public EconomicClock(EconomicTimeRepository repository,Runnable payrollRecovery,Runnable tick,Runnable productionRecovery,Runnable paymentRecovery){
+    public ServerTickCoordinator(EconomicTimeRepository repository,Runnable payrollRecovery,Runnable tick,Runnable productionRecovery,Runnable paymentRecovery){
         this.repository = Objects.requireNonNull(repository); this.payrollRecovery = Objects.requireNonNull(payrollRecovery);
         this.tick = Objects.requireNonNull(tick);
         this.productionRecovery=Objects.requireNonNull(productionRecovery);

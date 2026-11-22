@@ -5,7 +5,7 @@ import com.bbmurloc.victoriaeconomics.common.definition.production.*;
 import org.junit.jupiter.api.Test;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
-import com.bbmurloc.victoriaeconomics.server.production.application.EconomicClock;
+import com.bbmurloc.victoriaeconomics.server.production.application.ServerTickCoordinator;
 
 class ProductionDomainTest {
     private ProductionMethodRules rules() {
@@ -156,7 +156,7 @@ class ProductionDomainTest {
     void clockHasNoMinecraftOrChunkDependency() {
         var execution = new ProductionExecution(UUID.randomUUID());
         execution.start(UUID.randomUUID(), configuration(10, 10));
-        var clock = new EconomicClock(() -> execution.tick(1));
+        var clock = new ServerTickCoordinator(() -> execution.tick(1));
         for (int i = 0; i < 199; i++) clock.onServerTick();
         assertTrue(execution.batch().isActive());
         clock.onServerTick();

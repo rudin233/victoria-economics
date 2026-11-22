@@ -82,7 +82,7 @@ flowchart LR
 
 ## 4. 推进与结算
 
-`ServerLifecycleEvents.onServerTick(Post)` → `ServerEconomyContext.onServerTick()` → `EconomicClock.onServerTick()` → `ProductionService.onEconomicTick()` → `ProductionExecution.tick(1)`。
+`ServerLifecycleEvents.onServerTick(Post)` → `ServerEconomyContext.onServerTick()` → `ServerTickCoordinator.onServerTick()` → `ProductionService.onServerTick()` → `ProductionExecution.tick(1)`。
 
 满速仍为 1200 个逻辑 tick，不依赖 Level、Chunk、BlockEntity、GUI 或墙上时间，不离线补算。工资 CURRENT 恢复原 Batch，ARREARS 提交不可逆比例终止，其余状态暂停。执行 Repository 单独保存进度，不写 PM 配置。
 

@@ -20,7 +20,7 @@ class ProductionIntegrationTest {
             e.ticks(1);assertEquals(first.getId(),e.execution().lastBatch().getId());assertTrue(e.execution().lastBatch().isCompleted());
             assertNotEquals(first.getId(),e.execution().batch().getId());assertEquals(0,e.execution().batch().getProgressUnits());
             assertEquals(70,e.quantity("wood"));assertEquals(30,e.quantity("tools"));assertEquals(1,e.stockState().settlements().size());
-            e.production.onEconomicTick();assertEquals(0,e.execution().batch().getProgressUnits());e.ticks(1);assertEquals(1,e.execution().batch().getProgressUnits());
+            e.production.onServerTick();assertEquals(0,e.execution().batch().getProgressUnits());e.ticks(1);assertEquals(1,e.execution().batch().getProgressUnits());
         }
     }
     @Test void pendingPmAppliesAtomicallyAfterFrozenOldBatchCompletes()throws Exception{
@@ -72,7 +72,7 @@ class ProductionIntegrationTest {
     @Test void payrollRecoveryFactsBlockOneTickWithoutInventingCurrentThenResume()throws Exception{
         try(var e=new TestEconomy(file(),true)){var batch=e.production.startBatch(e.id);e.ticks(10);
             new SqliteEconomicTimeRepository(e.connection,e.lock).acceptNext(10);
-            assertEquals(State.RECOVERY,e.payroll.state(e.id));assertThrows(IllegalStateException.class,e.production::onEconomicTick);
+            assertEquals(State.RECOVERY,e.payroll.state(e.id));assertThrows(IllegalStateException.class,e.production::onServerTick);
             assertEquals(ProductionBatch.Status.PAUSED,e.execution().batch().getStatus());assertEquals(10,e.execution().batch().getProgressUnits());
             e.recover();assertEquals(State.CURRENT,e.payroll.state(e.id));e.production.setAutomatic(e.id,false);e.ticks(1);
             assertEquals(batch.getId(),e.execution().batch().getId());assertEquals(11,e.execution().batch().getProgressUnits());assertTrue(e.execution().pauseReasons().isEmpty());
@@ -86,7 +86,7 @@ class ProductionIntegrationTest {
     }
     @Test void restartAfterInventoryReceiptLossCannotDuplicateProductsOrAdvanceTwice()throws Exception{
         try(var e=new TestEconomy(file(),true)){e.production.startBatch(e.id);e.ticks(199);e.inventory.loseSettlementAcknowledgement=true;assertThrows(IllegalStateException.class,()->e.ticks(1));assertEquals(30,e.quantity("tools"));assertTrue(e.execution().batch().needsSettlement());assertEquals(200L,e.execution().processingTick());}
-        try(var e=new TestEconomy(file(),false)){assertEquals(30,e.quantity("tools"));assertEquals(200,e.execution().lastCompletedTick());assertEquals(0,e.execution().batch().getProgressUnits());e.production.onEconomicTick();assertEquals(0,e.execution().batch().getProgressUnits());}
+        try(var e=new TestEconomy(file(),false)){assertEquals(30,e.quantity("tools"));assertEquals(200,e.execution().lastCompletedTick());assertEquals(0,e.execution().batch().getProgressUnits());e.production.onServerTick();assertEquals(0,e.execution().batch().getProgressUnits());}
     }
     @Test void restartPreservesProgressRecipeAndReservation()throws Exception{
         UUID batch;ProductionBatchConfiguration snapshot;

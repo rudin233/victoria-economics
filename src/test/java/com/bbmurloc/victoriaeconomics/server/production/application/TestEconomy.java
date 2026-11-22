@@ -56,7 +56,7 @@ final class TestEconomy implements AutoCloseable {
     final com.bbmurloc.victoriaeconomics.server.household.application.RegionalHouseholdService households;
     final com.bbmurloc.victoriaeconomics.server.building.application.BuildingLifecycleService lifecycle;
     final UUID companyCash,householdCash;
-    EconomicClock clock;
+    ServerTickCoordinator clock;
     final UUID id;
     TestEconomy(Path file,boolean create)throws SQLException{this(file,create,1000);}
     TestEconomy(Path file,boolean create,long capacity)throws SQLException{
@@ -91,7 +91,7 @@ final class TestEconomy implements AutoCloseable {
         else id=buildings.getAll().getFirst().getId();
         recover();
     }
-    void recover(){clock=new EconomicClock(new SqliteEconomicTimeRepository(connection,lock),accrual::recoverAcceptedTime,production::onEconomicTick,()->{lifecycle.recoverUnfinished();production.recoverAcceptedTick();},periods::recoverAcceptedTime);}
+    void recover(){clock=new ServerTickCoordinator(new SqliteEconomicTimeRepository(connection,lock),accrual::recoverAcceptedTime,production::onServerTick,()->{lifecycle.recoverUnfinished();production.recoverAcceptedTick();},periods::recoverAcceptedTime);}
     EconomicBuilding building(){return buildings.get(id);}
     EconomicBuilding createBuilding(){return buildingService.createBuilding("tooling_workshop",TestIdentities.COMPANY,TestIdentities.REGION);}
     ProductionExecution execution(){return repository.load(id);}

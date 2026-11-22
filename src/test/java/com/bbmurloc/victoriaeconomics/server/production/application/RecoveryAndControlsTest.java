@@ -44,7 +44,7 @@ class RecoveryAndControlsTest {
         try(var e=new TestEconomy(file(),true)){
             UUID batch=e.production.startBatch(e.id).getId();e.ticks(10);e.production.setManualPause(e.id,true);e.production.setAutomatic(e.id,false);
             new SqliteEconomicTimeRepository(e.connection,e.lock).acceptNext(10);
-            assertThrows(IllegalStateException.class,e.production::onEconomicTick);
+            assertThrows(IllegalStateException.class,e.production::onServerTick);
             assertEquals(Set.of(ProductionExecution.PauseReason.MANUAL,ProductionExecution.PauseReason.PAYROLL_RECOVERY),e.execution().pauseReasons());
             e.recover();e.ticks(1);
             assertEquals(State.CURRENT,e.payroll.state(e.id));assertEquals(Set.of(ProductionExecution.PauseReason.MANUAL),e.execution().pauseReasons());

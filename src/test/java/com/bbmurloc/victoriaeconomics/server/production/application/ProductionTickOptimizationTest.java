@@ -30,14 +30,14 @@ class ProductionTickOptimizationTest {
             var result=e.execution();assertEquals(batch,result.batch().getId());assertEquals(1,result.batch().getProgressUnits());
             assertEquals(1,result.lastCompletedTick());assertNull(result.processingTick());assertEquals(revision+1,result.executionRevision());
             assertEquals(ALREADY_COMPLETED,e.coordinator.processTick(e.id,1));assertEquals(1,e.execution().batch().getProgressUnits());
-            e.production.onEconomicTick();assertEquals(1,e.clock.persistentTime().productionCallbackReturnedTick());
+            e.production.onServerTick();assertEquals(1,e.clock.persistentTime().productionCallbackReturnedTick());
         }
     }
     @Test void idleAndBlockedLifecycleCompleteWithoutInventingProductionOrEndingWages()throws Exception{
         try(var e=new TestEconomy(file(),true)){
             long prior=e.execution().executionRevision();accept(e,0);e.faults.commits=0;
             assertEquals(COMPLETED,e.coordinator.processTick(e.id,1));assertEquals(1,e.faults.commits);assertEquals(prior+1,e.execution().executionRevision());
-            assertNull(e.execution().batch());e.production.onEconomicTick();
+            assertNull(e.execution().batch());e.production.onServerTick();
             var command=new BuildingLifecycleOperation.Command(UUID.randomUUID(),e.id,TestIdentities.COMPANY,null,BuildingLifecycleOperation.Kind.DEMOLITION,0);
             e.lifecycle.request(command);accept(e,1);e.faults.commits=0;
             assertEquals(COMPLETED,e.coordinator.processTick(e.id,2));assertEquals(1,e.faults.commits);
@@ -61,8 +61,8 @@ class ProductionTickOptimizationTest {
             assertEquals(NEEDS_FOLLOW_UP,e.coordinator.processTick(e.id,200));
             assertEquals(ProductionBatch.Status.SETTLING_COMPLETED,e.execution().batch().getStatus());
             assertEquals(200L,e.execution().processingTick());assertEquals(199,e.execution().lastCompletedTick());assertTrue(e.stockState().settlements().isEmpty());
-            e.inventory.failSettlement=true;assertThrows(IllegalStateException.class,e.production::onEconomicTick);assertEquals(200L,e.execution().processingTick());
-            e.inventory.failSettlement=false;e.production.onEconomicTick();assertEquals(batch.getId(),e.execution().lastBatch().getId());
+            e.inventory.failSettlement=true;assertThrows(IllegalStateException.class,e.production::onServerTick);assertEquals(200L,e.execution().processingTick());
+            e.inventory.failSettlement=false;e.production.onServerTick();assertEquals(batch.getId(),e.execution().lastBatch().getId());
             assertEquals(0,e.execution().batch().getProgressUnits());assertEquals(1,e.stockState().settlements().size());assertEquals(200,e.execution().lastCompletedTick());
         }
     }
@@ -70,7 +70,7 @@ class ProductionTickOptimizationTest {
         try(var e=new TestEconomy(file(),true)){
             accept(e,0);UUID batch=e.production.startBatch(e.id).getId();
             assertEquals(NEEDS_FOLLOW_UP,e.coordinator.processTick(e.id,1));assertEquals(0,e.execution().batch().getProgressUnits());
-            e.production.onEconomicTick();assertEquals(batch,e.execution().batch().getId());assertEquals(0,e.execution().batch().getProgressUnits());
+            e.production.onServerTick();assertEquals(batch,e.execution().batch().getId());assertEquals(0,e.execution().batch().getProgressUnits());
             e.ticks(1);assertEquals(1,e.execution().batch().getProgressUnits());
         }
     }
@@ -81,7 +81,7 @@ class ProductionTickOptimizationTest {
             assertThrows(IllegalStateException.class,()->e.coordinator.processTick(e.id,1));
             assertEquals(0,e.execution().lastCompletedTick());assertNull(e.execution().processingTick());assertEquals(0,e.execution().batch().getProgressUnits());
             e.sql("DROP TRIGGER fail_progress");e.recover();assertEquals(1,e.execution().lastCompletedTick());assertEquals(1,e.execution().batch().getProgressUnits());
-            e.production.onEconomicTick();assertEquals(1,e.execution().batch().getProgressUnits());
+            e.production.onServerTick();assertEquals(1,e.execution().batch().getProgressUnits());
         }
     }
     @ParameterizedTest @CsvSource({"DELETE,false","DELETE,true","WAL,false","WAL,true"})
@@ -101,7 +101,7 @@ class ProductionTickOptimizationTest {
         try(var reopened=new TestEconomy(file(),false)){
             assertEquals(batch,reopened.execution().batch().getId());assertEquals(1,reopened.execution().batch().getProgressUnits());
             assertEquals(1,reopened.execution().lastCompletedTick());assertEquals(1,reopened.stockState().reservations().size());
-            reopened.production.onEconomicTick();assertEquals(1,reopened.execution().batch().getProgressUnits());
+            reopened.production.onServerTick();assertEquals(1,reopened.execution().batch().getProgressUnits());
         }
     }
     @ParameterizedTest @ValueSource(strings={"DELETE","WAL"})
@@ -115,7 +115,7 @@ class ProductionTickOptimizationTest {
                 var y=pool.submit(()->{gate.await();return b.coordinator.processTick(b.id,2);});gate.countDown();
                 assertEquals(Set.of(COMPLETED,ALREADY_COMPLETED),Set.of(x.get(20,TimeUnit.SECONDS),y.get(20,TimeUnit.SECONDS)));
                 assertEquals(2,a.execution().batch().getProgressUnits());assertEquals(2,a.execution().lastCompletedTick());assertNull(a.execution().processingTick());
-                a.production.onEconomicTick();b.production.onEconomicTick();assertEquals(2,a.execution().batch().getProgressUnits());
+                a.production.onServerTick();b.production.onServerTick();assertEquals(2,a.execution().batch().getProgressUnits());
             }
         }
     }

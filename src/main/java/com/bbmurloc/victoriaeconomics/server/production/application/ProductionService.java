@@ -68,8 +68,8 @@ public final class ProductionService {
         if(!e.hasUnfinishedBatch()&&!coordinator.lifecycleHeld(id))coordinator.reconfigure(id);
         }
     }
-    /** One durable advance per building/accepted Tick. A failure leaves that Tick pending and stops global allocation. */
-    public void onEconomicTick(){
+    /** One durable advance per building/accepted server tick; no wall-time catch-up. A failure leaves that tick pending and stops global allocation. */
+    public void onServerTick(){
         try (var diagnosticScope = EconomyDiagnostics.scope("production.tick")) {synchronized(lock){
         long tick=coordinator.acceptedTick();recoverStarts();var failures=new ArrayList<RuntimeException>();
         for(UUID id:coordinator.buildingIds())try(var buildingMeasurement=EconomyDiagnostics.scope("production.building")){
@@ -86,7 +86,7 @@ public final class ProductionService {
     }
     /** Restart uses the existing accepted Tick and checkpoints; it neither allocates nor guesses missed Ticks. */
     public void recoverAcceptedTick(){
-        try (var diagnosticScope = EconomyDiagnostics.scope("production.recovery")) {synchronized(lock){if(!coordinator.needsRecovery())return;recoverStarts();recoverBoundaries();onEconomicTick();}
+        try (var diagnosticScope = EconomyDiagnostics.scope("production.recovery")) {synchronized(lock){if(!coordinator.needsRecovery())return;recoverStarts();recoverBoundaries();onServerTick();}
         }
     }
     public void recoverBoundaries(){synchronized(lock){

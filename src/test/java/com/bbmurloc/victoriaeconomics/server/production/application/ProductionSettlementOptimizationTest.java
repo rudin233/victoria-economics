@@ -34,7 +34,7 @@ class ProductionSettlementOptimizationTest {
             assertEquals(14, e.scalar("SELECT SUM(paid) FROM payroll_accruals"));
             assertEquals(14, e.scalar("SELECT balance FROM finance_accounts WHERE id='" + e.householdCash + "'"));
             assertEquals(9986, e.scalar("SELECT balance FROM finance_accounts WHERE id='" + e.companyCash + "'"));
-            e.production.onEconomicTick(); e.periods.recoverAcceptedTime();
+            e.production.onServerTick(); e.periods.recoverAcceptedTime();
             assertEquals(180, e.quantity("tools")); assertEquals(6, e.stockState().settlements().size());
             assertEquals(14, e.scalar("SELECT SUM(paid) FROM payroll_accruals"));
         }
@@ -127,7 +127,7 @@ class ProductionSettlementOptimizationTest {
                 assertEquals(30L, e.stock.inspect(id).quantities().get("tools"));
                 assertEquals(1, e.stock.inspect(id).settlements().size());
             }
-            e.production.onEconomicTick();
+            e.production.onServerTick();
             assertEquals(30, e.quantity("tools")); assertEquals(1, e.stockState().settlements().size());
             e.ticks(1); assertEquals(1, e.execution().batch().getProgressUnits());
         }
