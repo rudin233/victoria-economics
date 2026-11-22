@@ -58,7 +58,7 @@ public final class BuildingLifecycleService {
         try(var s=connection.prepareStatement("SELECT id,remainder FROM payroll_accruals WHERE building_id=? AND closed_tick IS NULL")) {
             s.setString(1,b.getId().toString());try(var r=s.executeQuery()){if(!r.next())throw new IllegalStateException("Trusted payroll enrollment required");segment=UUID.fromString(r.getString(1));fraction=r.getLong(2);}
         }
-        long employees=0;try(var s=connection.prepareStatement("SELECT employed FROM building_staffing_roles WHERE building_id=?")) {
+        long employees=0;try(var s=connection.prepareStatement("SELECT occupied_count FROM building_staffing_roles WHERE building_id=?")) {
             s.setString(1,b.getId().toString());try(var r=s.executeQuery()){while(r.next())employees=Math.addExact(employees,r.getLong(1));}
         }
         boolean configured;long units=0;int reservations=0;
@@ -113,6 +113,9 @@ public final class BuildingLifecycleService {
                 throw new IllegalStateException("Lifecycle cannot publish a changed identity");
             var segment=payroll.inTransaction(tx).currentForBuilding(id);
             if(!segment.id().equals(current.payrollSegment()))throw new IllegalStateException("Lifecycle payroll source changed");
+            var staffing = new com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteBuildingStaffingRepository(connection, lock);
+            if (segment.employees() != 0 || staffing.inTransaction(tx).load(id).batchId() != null)
+                throw new IllegalStateException("Lifecycle cannot hand off unreleased batch labor");
             try(var s=connection.prepareStatement("SELECT 1 FROM production_start_intents WHERE building_id=?")) {
                 s.setString(1,id.toString());try(var r=s.executeQuery()){if(r.next())throw new IllegalStateException("StartIntent compensation remains unresolved");}
             }

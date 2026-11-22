@@ -13,16 +13,16 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ProductionSchemaContractTest {
     @TempDir Path dir;Path file(){return dir.resolve("contract.sqlite");}
-    @Test void v9StoresOnlyIntegerParticipationAndReloadsWithoutRewritingBytes()throws Exception{
+    @Test void v11StoresOnlyIntegerParticipationAndReloadsWithoutRewritingBytes()throws Exception{
         UUID id;ProductionBatchConfiguration snapshot;
         try(var e=new TestEconomy(file(),true)){
             id=e.id;snapshot=e.production.startBatch(id).getConfiguration();
-            try(var s=e.connection.createStatement();var r=s.executeQuery("SELECT configuration_json FROM production_batches")){r.next();String json=r.getString(1);assertTrue(json.contains("\"formatVersion\":9"));assertTrue(json.contains("\"participatingWorkers\""));assertFalse(json.contains("\"employees\""));}
+            try(var s=e.connection.createStatement();var r=s.executeQuery("SELECT configuration_json FROM production_batches")){r.next();String json=r.getString(1);assertTrue(json.contains("\"formatVersion\":10"));assertTrue(json.contains("\"participatingWorkers\""));assertFalse(json.contains("\"employees\""));}
             assertEquals(0,e.scalar("SELECT COUNT(*) FROM sqlite_master WHERE name='employment_state'"));
         }
         byte[] before=Files.readAllBytes(file());try(var c=SqliteEconomyDatabase.open(file())){assertEquals(snapshot,new SqliteProductionExecutionRepository(c,new Object()).load(id).batch().getConfiguration());}assertArrayEquals(before,Files.readAllBytes(file()));
     }
-    @ParameterizedTest @ValueSource(strings={"npcSnapshot","participationMismatch","payrollMismatch","staffingMismatch","pausedWithoutReasons","activeWithReasons","endedWithoutBarrier","activeWithBarrier","futureCompletedTick","futurePendingTick","unknownReason","duplicateReason"})
+    @ParameterizedTest @ValueSource(strings={"npcSnapshot","participationMismatch","payrollMismatch","staffingMismatch","pausedWithoutReasons","activeWithReasons","endedWithoutBarrier","activeWithBarrier","futureCompletedTick","futurePendingTick","futureBatchStart","cooldown","lostAllocation","unbackedReservation","unknownReason","duplicateReason"})
     void inconsistentProductionStaffingPayrollAndBarrierFactsAreRejectedWithoutRepair(String corruption)throws Exception{
         try(var e=new TestEconomy(file(),true)){
             var batch=e.production.startBatch(e.id);var original=batch.getConfiguration();
@@ -38,13 +38,23 @@ class ProductionSchemaContractTest {
                     try(var s=e.connection.prepareStatement("UPDATE production_batches SET configuration_json=?")){s.setString(1,validJson);s.executeUpdate();}
                 }
                 case "payrollMismatch"->e.sql("UPDATE payroll_accruals SET employees=13");
-                case "staffingMismatch"->e.sql("UPDATE building_staffing_roles SET employed=9 WHERE occupation_id='laborer'");
+                case "staffingMismatch"->e.sql("UPDATE building_staffing_roles SET occupied_count=9 WHERE occupation_id='laborer'");
                 case "pausedWithoutReasons"->e.sql("UPDATE production_batches SET status='PAUSED'");
                 case "activeWithReasons"->e.sql("UPDATE production_executions SET pause_reasons_json='[\"MANUAL\"]'");
-                case "endedWithoutBarrier"->e.sql("UPDATE production_batches SET status='ABORTED'");
+                case "endedWithoutBarrier"->e.sql("UPDATE production_batches SET status='ABORTED',ended_tick=0");
                 case "activeWithBarrier"->e.sql("UPDATE production_executions SET boundary='RECONFIGURING'");
                 case "futureCompletedTick"->e.sql("UPDATE production_executions SET last_completed_tick=1");
                 case "futurePendingTick"->e.sql("UPDATE production_executions SET processing_tick=1");
+                case "futureBatchStart" -> e.sql("UPDATE production_batches SET started_tick=1");
+                case "cooldown" -> e.sql("UPDATE production_executions SET next_start_not_before_tick=2");
+                case "lostAllocation" -> {
+                    e.sql("UPDATE production_batches SET status='SETTLING_ABORTED'");
+                    e.sql("DELETE FROM building_staffing_roles");
+                    e.sql("UPDATE building_staffing SET batch_id=NULL");
+                    e.sql("UPDATE payroll_accruals SET employees=0");
+                    e.sql("UPDATE payroll_employment_history SET employees=0");
+                }
+                case "unbackedReservation" -> e.stock.reserve(e.id, UUID.randomUUID(), Map.of("wood", 1L));
                 case "unknownReason"->e.sql("UPDATE production_executions SET pause_reasons_json='[\"FUTURE\"]'");
                 default->e.sql("UPDATE production_executions SET pause_reasons_json='[\"MANUAL\",\"MANUAL\"]'");
             }

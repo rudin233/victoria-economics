@@ -74,7 +74,7 @@ final class EconomyFinancialValidation {
             }
             if (p.closedTick() == null) {
                 long employees = 0;
-                try (var q = c.prepareStatement("SELECT employed FROM building_staffing_roles WHERE building_id=?")) {
+                try (var q = c.prepareStatement("SELECT occupied_count FROM building_staffing_roles WHERE building_id=?")) {
                     q.setString(1, p.buildingId().toString()); try (var workers = q.executeQuery()) { while (workers.next()) employees = Math.addExact(employees, workers.getLong(1)); }
                 }
                 require(employees == p.employees());

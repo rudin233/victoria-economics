@@ -25,7 +25,7 @@ public final class EconomyCheckpointGameTests {
         if(!"checkpoint".equals(mode())){helper.succeed();return;}
         var server=helper.getLevel().getServer();var f=new GameEconomyFixture(server);f.fund(10_000_000);
         var buildings=new ArrayList<com.bbmurloc.victoriaeconomics.server.building.EconomicBuilding>();
-        for(int i=0;i<4;i++)buildings.add(f.create(10,4));
+        for(int i=0;i<4;i++)buildings.add(f.create());
         for(var b:buildings)f.context().getProductionService().startBatch(b.getId());
         long began=f.context().getEconomicTime().acceptedTick();
         var ordinary=new AtomicBoolean();var flush=new AtomicBoolean();var finished=new AtomicBoolean();
@@ -53,7 +53,7 @@ public final class EconomyCheckpointGameTests {
                 helper.assertTrue(levelSaves>=ctx.nativeSaveStatus().requests(),"Per-level save events did not occur");
                 ctx.awaitEconomicSave();
                 for(var b:buildings){var e=ctx.getProductionService().execution(b.getId());
-                    helper.assertTrue(e.lastCompletedTick()==tick&&e.batch().getProgressUnits()==elapsed%200,"Saving repeated or lost production Tick");
+                    GameEconomyFixture.assertUnpausedProgress(helper, e, tick);
                 }
                 ctx.flushEconomicSave();
                 Files.writeString(Path.of("native-save-evidence.json"),new GsonBuilder().setPrettyPrinting().create().toJson(Map.of("nativeSave",ctx.nativeSaveStatus(),"levelSaveEvents",levelSaves,"acceptedTick",tick,"checkpoint",ctx.checkpointStatus())));
@@ -67,7 +67,7 @@ public final class EconomyCheckpointGameTests {
     public static void processCrashDiscardsOnlyTheUnsavedWholeEconomicSuffix(GameTestHelper helper)throws Exception{
         if(!"crash".equals(mode())){helper.succeed();return;}
         var server=helper.getLevel().getServer();var f=new GameEconomyFixture(server);f.fund(1_000_000);
-        var b=f.create(10,4);f.context().getProductionService().startBatch(b.getId());
+        var b=f.create();f.context().getProductionService().startBatch(b.getId());
         long began=f.context().getEconomicTime().acceptedTick();var saved=new AtomicBoolean();
         helper.onEachTick(()->{
             try{

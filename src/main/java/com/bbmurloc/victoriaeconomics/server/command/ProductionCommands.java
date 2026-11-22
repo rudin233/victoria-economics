@@ -70,11 +70,6 @@ public final class ProductionCommands {
                                         .then(argument("enabled", BoolArgumentType.bool()).executes(ctx -> run(ctx, economy -> economy.getProductionService().setAutomatic(id(ctx), BoolArgumentType.getBool(ctx, "enabled"))))))
                                 .then(literal("pause").requires(source->source.hasPermission(4))
                                         .then(argument("enabled",BoolArgumentType.bool()).executes(ctx->run(ctx,economy->economy.getProductionService().setManualPause(id(ctx),BoolArgumentType.getBool(ctx,"enabled"))))))
-                                .then(literal("staffing").requires(source->source.hasPermission(4))
-                                        .then(argument("occupation",StringArgumentType.word()).then(argument("target",IntegerArgumentType.integer(0))
-                                                .executes(ctx->run(ctx,economy->economy.getStaffingService().requestTarget(id(ctx),StringArgumentType.getString(ctx,"occupation"),IntegerArgumentType.getInteger(ctx,"target")))))))
-                                .then(literal("cancel_staffing").requires(source->source.hasPermission(4))
-                                        .then(argument("occupation",StringArgumentType.word()).executes(ctx->run(ctx,economy->economy.getStaffingService().cancelPending(id(ctx),StringArgumentType.getString(ctx,"occupation"))))))
                                 .then(literal("pm").requires(source -> source.hasPermission(4))
                                         .then(argument("group", StringArgumentType.word()).then(argument("method", StringArgumentType.word())
                                                 .executes(ctx -> run(ctx, economy -> economy.getProductionService().selectProductionMethod(id(ctx), StringArgumentType.getString(ctx, "group"), StringArgumentType.getString(ctx, "method")))))))
@@ -160,9 +155,11 @@ public final class ProductionCommands {
                 + "; executionRevision=" + execution.executionRevision() + "; completedTick=" + execution.lastCompletedTick()
                 + "; pending=" + configuration.pending() + "; boundary=" + execution.boundary()
                 + "; processingTick="+execution.processingTick()+"; pauses="+execution.pauseReasons()
-                + "; batch=" + (batch == null ? "none" : batch.getId() + " " + batch.getStatus() + " " + batch.getProgress())
+                + "; nextStartNotBeforeTick=" + execution.nextStartNotBeforeTick()
+                + "; batch=" + (batch == null ? "none" : batch.getId() + " " + batch.getStatus() + " " + batch.getProgress()
+                        + " startedTick=" + batch.startedTick() + " endedTick=" + batch.endedTick())
                 + "; blocked=" + economy.getProductionService().blockedReason(id(ctx)));
         reply(ctx, "Inventory " + economy.getInventoryStore().inspect(id(ctx)));
-        reply(ctx,"Staffing "+economy.getStaffingCalculator().calculate(id(ctx))+"; payroll="+economy.getPayrollQuery().state(id(ctx)));
+        reply(ctx,"批次用工 "+economy.getStaffingCalculator().calculate(id(ctx))+"; payroll="+economy.getPayrollQuery().state(id(ctx)));
     }
 }

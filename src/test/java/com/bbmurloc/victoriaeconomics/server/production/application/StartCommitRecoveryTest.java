@@ -79,6 +79,71 @@ class StartCommitRecoveryTest {
     @Test void finalExecutionRevisionRecheckPreservesOtherControlCommand()throws Exception{
         try(var e=new TestEconomy(file(),true)){e.inventory.afterReserve=()->e.production.stopAfterCurrentBatch(e.id);assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));assertNull(e.execution().batch());assertFalse(e.execution().automatic());assertTrue(e.stockState().reservations().isEmpty());}
     }
+    @ParameterizedTest @ValueSource(strings = {"batch", "execution", "staffing", "roles", "payroll", "history"})
+    void failedAcquisitionRollsBackEveryStartWriteAndCompensatesStock(String point) throws Exception {
+        try (var e = new TestEconomy(file(), true)) {
+            var staff = e.staffingRepository.load(e.id);
+            long wageRevision = e.scalar("SELECT revision FROM payroll_accruals");
+            long wageHistory = e.scalar("SELECT COUNT(*) FROM payroll_employment_history");
+            var stock = e.stockState();
+            String stage = switch (point) {
+                case "batch" -> "BEFORE INSERT ON production_batches";
+                case "execution" -> "BEFORE UPDATE ON production_executions";
+                case "staffing" -> "BEFORE UPDATE ON building_staffing";
+                case "roles" -> "BEFORE INSERT ON building_staffing_roles";
+                case "payroll" -> "BEFORE UPDATE ON payroll_accruals WHEN NEW.employees>0";
+                default -> "BEFORE INSERT ON payroll_employment_history";
+            };
+            e.sql("CREATE TRIGGER fail_start " + stage + " BEGIN SELECT RAISE(ABORT,'injected'); END");
+            assertThrows(IllegalStateException.class, () -> e.production.startBatch(e.id));
+            assertNull(e.execution().batch());
+            assertEquals(0, e.scalar("SELECT COUNT(*) FROM production_batches"));
+            assertEquals(staff, e.staffingRepository.load(e.id));
+            assertEquals(0, e.scalar("SELECT employees FROM payroll_accruals"));
+            assertEquals(wageRevision, e.scalar("SELECT revision FROM payroll_accruals"));
+            assertEquals(wageHistory, e.scalar("SELECT COUNT(*) FROM payroll_employment_history"));
+            assertEquals(stock, e.stockState());
+            assertTrue(e.journal.pendingStarts().isEmpty());
+            e.sql("DROP TRIGGER fail_start");
+            var batch = e.production.startBatch(e.id);
+            assertEquals(batch.getId(), e.staffingRepository.load(e.id).batchId());
+            assertEquals(14, e.scalar("SELECT employees FROM payroll_accruals"));
+        }
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void unknownTerminalCommitPreservesExactlyOneWageCutoff(boolean committed) throws Exception {
+        UUID batch;
+        try (var e = new TestEconomy(file(), true)) {
+            batch = e.production.startBatch(e.id).getId();
+            e.production.stopAfterCurrentBatch(e.id);
+            e.ticks(199);
+            e.faults.beforeSql = sql -> {
+                if (sql.startsWith("UPDATE production_batches SET progress_units=?,status=?,ended_tick=?")) {
+                    e.faults.beforeCommit = !committed;
+                    e.faults.afterCommit = committed;
+                }
+            };
+            assertThrows(IllegalStateException.class, () -> e.ticks(1));
+            assertThrows(CommitOutcomeUnknownException.class, e::execution);
+            try (var fresh = SqliteEconomyDatabase.open(file()); var statement = fresh.createStatement();
+                 var row = statement.executeQuery("SELECT b.ended_tick,s.batch_id,p.employees FROM production_batches b JOIN building_staffing s USING(building_id) JOIN payroll_accruals p USING(building_id)")) {
+                assertTrue(row.next());
+                assertEquals(committed ? 200L : null, row.getObject(1) == null ? null : row.getLong(1));
+                assertEquals(committed ? null : batch.toString(), row.getString(2));
+                assertEquals(committed ? 0 : 14, row.getLong(3));
+            }
+        }
+        try (var recovered = new TestEconomy(file(), false)) {
+            assertNull(recovered.execution().batch());
+            assertEquals(batch, recovered.execution().lastBatch().getId());
+            assertEquals(1, recovered.stockState().settlements().size());
+            assertEquals(30, recovered.quantity("tools"));
+            assertEquals(0, recovered.staffingRepository.load(recovered.id).totalOccupied());
+            assertEquals(3, recovered.scalar("SELECT COUNT(*) FROM payroll_employment_history"));
+        }
+    }
+
     @Test void concurrentPmAndStartFollowSuccessfulCommitOrder()throws Exception{
         try(var e=new TestEconomy(file(),true);var pool=Executors.newFixedThreadPool(2)){
             var start=pool.submit(()->e.production.startBatch(e.id));var pm=pool.submit(()->e.production.selectProductionMethod(e.id,"tooling_workshop_base","reduced_tools"));start.get(15,TimeUnit.SECONDS);pm.get(15,TimeUnit.SECONDS);

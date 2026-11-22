@@ -13,7 +13,7 @@ import java.math.BigDecimal;
 import java.util.*;
 import java.util.function.Function;
 
-/** Schema v10 checkpoints retain the unchanged, explicitly tagged v9 business JSON contract. */
+/** Schema v11 使用业务 JSON format 10，批次时间由 SQL 列保存。 */
 public final class EconomyStateCodec {
     private static final Gson GSON = new Gson();
     private static final int FULL_SPEED_TICKS = 200;
@@ -21,8 +21,8 @@ public final class EconomyStateCodec {
 
     /** A future semantic change must replace the schema/codec together, never reinterpret old snapshots in place. */
     public static void requireCurrentFormat() {
-        if (EconomySchema.VERSION != 10 || ProductionBatch.FULL_SPEED_TICKS != FULL_SPEED_TICKS)
-            throw new IllegalStateException("Schema v10 requires payload format 9 integer goods/participation and 200 ticks");
+        if (EconomySchema.VERSION != 11 || ProductionBatch.FULL_SPEED_TICKS != FULL_SPEED_TICKS)
+            throw new IllegalStateException("Schema v11 requires payload format 10 integer goods/participation and 200 ticks");
     }
 
     public static ProductionBatchConfiguration decodeBatchConfiguration(String json) {
@@ -36,11 +36,11 @@ public final class EconomyStateCodec {
             var root = fields(envelope.get("snapshot"), "productionMethodSelections", "resolvedRecipe", "workforcePlan", "effectiveRevision");
             var recipe = fields(root.get("resolvedRecipe"), "inputs", "outputs", "requiredWorkers");
             var workforce = fields(root.get("workforcePlan"), "participatingWorkers", "speedNumerator", "speedDenominator");
-            var employees = map(workforce.get("participatingWorkers"), value -> Math.toIntExact(integer(value)));
+            var participants = map(workforce.get("participatingWorkers"), value -> Math.toIntExact(integer(value)));
             return new ProductionBatchConfiguration(map(root.get("productionMethodSelections"), EconomyStateCodec::string),
                     new ResolvedProductionRecipe(quantities(recipe.get("inputs")), quantities(recipe.get("outputs")),
                             map(recipe.get("requiredWorkers"), value -> Math.toIntExact(integer(value)))),
-                    new WorkforcePlan(employees, Math.toIntExact(integer(workforce.get("speedNumerator"))),
+                    new WorkforcePlan(participants, Math.toIntExact(integer(workforce.get("speedNumerator"))),
                             Math.toIntExact(integer(workforce.get("speedDenominator")))),
                     integer(root.get("effectiveRevision")));
         } catch (RuntimeException failure) {
@@ -49,9 +49,10 @@ public final class EconomyStateCodec {
         }
     }
 
-    public static ProductionBatch decodeBatch(UUID batchId, UUID buildingId, String json, long progress, String status) {
+    public static ProductionBatch decodeBatch(UUID batchId, UUID buildingId, String json, long progress, String status,
+                                              long startedTick, Long endedTick) {
         try {
-            return new ProductionBatch(batchId, buildingId, decodeBatchConfiguration(json), progress, ProductionBatch.Status.valueOf(status));
+            return new ProductionBatch(batchId, buildingId, decodeBatchConfiguration(json), progress, ProductionBatch.Status.valueOf(status), startedTick, endedTick);
         } catch (RuntimeException failure) {
             throw incompatible("Batch " + batchId, failure);
         }
@@ -132,13 +133,13 @@ public final class EconomyStateCodec {
 
     private static JsonObject envelope(JsonElement snapshot) {
         var result = new JsonObject();
-        result.addProperty("formatVersion", 9);
+        result.addProperty("formatVersion", 10);
         result.add("snapshot", snapshot);
         return result;
     }
 
     private static void requireVersion(JsonObject envelope) {
-        if (integer(envelope.get("formatVersion")) != 9) throw invalid("Unknown snapshot format version");
+        if (integer(envelope.get("formatVersion")) != 10) throw invalid("Unknown snapshot format version");
     }
 
     public static String encodePauseReasons(Set<ProductionExecution.PauseReason> reasons) {
@@ -246,6 +247,6 @@ public final class EconomyStateCodec {
 
     private static IllegalArgumentException invalid(String message) { return new IllegalArgumentException(message); }
     private static IllegalStateException incompatible(String kind, RuntimeException failure) {
-        return new IllegalStateException("Invalid or incompatible payload format 9 " + kind + " (Schema v10); no conversion was attempted", failure);
+        return new IllegalStateException("Invalid or incompatible payload format 10 " + kind + " (Schema v11); no conversion was attempted", failure);
     }
 }

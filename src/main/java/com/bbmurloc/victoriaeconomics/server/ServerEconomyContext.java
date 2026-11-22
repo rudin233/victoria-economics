@@ -20,7 +20,6 @@ import com.bbmurloc.victoriaeconomics.server.storage.sqlite.SqliteBuildingReposi
 import com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteBuildingStaffingRepository;
 import com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteOccupationCatalog;
 import com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.SqliteStaffingQuery;
-import com.bbmurloc.victoriaeconomics.server.workforce.application.StaffingApplicationService;
 import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore;
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionJournal;
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionMethodConfigurationRepository;
@@ -50,7 +49,6 @@ public final class ServerEconomyContext implements AutoCloseable {
     private final BuildingService buildingService;
     private final ProductionRecipeResolver recipes;
     private final StaffingCalculator staffing;
-    private final StaffingApplicationService staffingService;
     private final ProductionService production;
     private final SqliteInventoryStore inventory;
     private final ServerTickCoordinator tickCoordinator;
@@ -83,14 +81,13 @@ public final class ServerEconomyContext implements AutoCloseable {
             repository.loadAll().forEach(buildings::add);
             buildings.getAll().forEach(b -> { methodRepository.load(b.getId()); executionRepository.load(b.getId()); });
             inventory = new SqliteInventoryStore(connection, economyLock);
-            var staffingRepository = new SqliteBuildingStaffingRepository(connection, recipes, occupations, economyLock);
+            var staffingRepository = new SqliteBuildingStaffingRepository(connection, economyLock);
             var initializer = new ProductionBuildingInitializer(connection, economyLock, repository, methodRepository, executionRepository, recipes,
                     staffingRepository, database::openVerificationConnection);
             buildingService = new BuildingService(buildings, repository, types, initializer, economyLock);
             staffing = new StaffingCalculator(new SqliteStaffingQuery(connection, recipes, occupations, economyLock));
             var coordinator=new ProductionBoundaryCoordinator(connection,recipes,occupations,economyLock);
             production = new ProductionService(coordinator,inventory,new SqliteProductionJournal(connection),economyLock);
-            staffingService=new StaffingApplicationService(coordinator,production::retry);
             finance = new FinanceService(connection, economyLock);
             payrollAccrual = new PayrollAccrualService(connection, economyLock);
             payroll = new SqliteBuildingPayrollQuery(connection, economyLock);
@@ -139,7 +136,6 @@ public final class ServerEconomyContext implements AutoCloseable {
     public StaffingCalculator getStaffingCalculator() {
         return staffing;
     }
-    public StaffingApplicationService getStaffingService() { return staffingService; }
 
     public ProductionService getProductionService() {
         return production;

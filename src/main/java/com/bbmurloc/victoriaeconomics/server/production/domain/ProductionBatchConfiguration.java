@@ -2,7 +2,7 @@ package com.bbmurloc.victoriaeconomics.server.production.domain;
 
 import java.util.*;
 
-/** Frozen PM, recipe and participation. Wages and live employment remain outside this snapshot. */
+/** 冻结的生产方法、配方和本批参产人数。工资及运行时占用由各自仓储维护。 */
 public record ProductionBatchConfiguration(Map<String,String> productionMethodSelections,ResolvedProductionRecipe resolvedRecipe,WorkforcePlan workforcePlan,long effectiveRevision){
     public ProductionBatchConfiguration(Map<String,String> selections,ResolvedProductionRecipe recipe,WorkforcePlan plan){this(selections,recipe,plan,0);}
     public ProductionBatchConfiguration {

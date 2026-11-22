@@ -1,6 +1,6 @@
 # 当前经济运行链与代码阅读地图
 
-日期：2026-10-21；Schema v10、业务 JSON format 9。当前存档合同见 [P 检查点设计](../../design/VE-Task-P-一致性检查点架构.md)及 [P 验收报告](../../testing/VE-Task-P-经济Tick性能诊断与优化验收.md)。[任务 E 报告](../../design/VE-Task-E-M5.1-M5.2-M5.3-建筑生命周期与整体验收.md)记录此前 v9 阶段；其中逐 Tick 落盘要求已被用户本轮决定替代。[生产概览](overview.md)与[代码阅读地图](code-reading-map.md)描述现行行为。搬包审查和 ADR-PO-02 的实施记录保留历史。
+Schema v11 使用业务 JSON format 10。当前存档合同见 [P 检查点设计](../../design/VE-Task-P-一致性检查点架构.md)及 [P 验收报告](../../testing/VE-Task-P-经济Tick性能诊断与优化验收.md)。[任务 E 报告](../../design/VE-Task-E-M5.1-M5.2-M5.3-建筑生命周期与整体验收.md)记录此前 v9 阶段；其中逐 Tick 落盘要求已被用户本轮决定替代。[生产概览](overview.md)与[代码阅读地图](code-reading-map.md)描述现行行为。搬包审查和 ADR-PO-02 的实施记录保留历史。
 
 工作包 P 恢复阶段只局部减少同步结算重复工作：同一显式 WriteSession 的 Execution Session 复用已严格解码的不可变配置，每次保存仍重新读取行并比对原 JSON；不跨事务缓存经济状态。prepare/commitStart 各自重新校验库存、Staffing、工资及 CAS。自动重开不再重复已经完成的重配置，资产阶段、Journal 和未知提交恢复边界保持。具体安全论证、688 项回归及未通过的性能项目见 P 报告第 12 节；不能把查询数量下降等同于 20 TPS 验收通过。
 
@@ -12,7 +12,7 @@
 | 世界持久时间 | `server/production/application/ServerTickCoordinator`、`server/time/infrastructure/SqliteEconomicTimeRepository` |
 | 建筑身份与创建 | `server/building/EconomicBuilding`、`BuildingService`、`server/production/application/ProductionBuildingInitializer` |
 | 双生产根 | `server/production/domain/ProductionMethodConfiguration` 与 `ProductionExecution`，各自 Repository / CAS |
-| 唯一实际雇佣 / 区域供给 | `server/workforce/domain/BuildingStaffing`、`RegionalLaborSupply`；occupied 由 SQL 真实人数派生 |
+| 批次临时用工 / 区域供给 | `server/workforce/domain/BuildingStaffing`、`RegionalLaborSupply`。区域占用从各批次的人数派生 |
 | 重配置 / 开工 / 恢复 | `server/production/application/ProductionBoundaryCoordinator`、`ProductionService`；StartIntent / Journal 保留 |
 | 整数商品 | `server/inventory/domain/GoodsInventory`、`server/inventory/infrastructure/SqliteInventoryStore` |
 | 历史工资 / 付款 | `server/payroll/domain/PayrollAccrual`、`PayrollPaymentRun`；`PayrollAccrualService`、`PayrollPeriodService`、`CompanyPayrollService` |
@@ -29,21 +29,25 @@
 
 ## 保存与恢复
 
-SQLite RAM 存储是运行时唯一权威，磁盘 `economy.sqlite` 只保存完整检查点。后台线程只写主线程已冻结的不可变表格，不触及世界或活跃聚合。一次物理写事务包含时间、全部聚合、账本、付款行、历史回执及检查点 ID/摘要；最多一份执行中、一份待执行新快照。旧文件 v1～v9 拒绝、不迁移，主文件及 WAL 受保护；不用 SavedData。
+SQLite RAM 存储是运行时唯一权威，磁盘 `economy.sqlite` 只保存完整检查点。后台线程只写主线程已冻结的不可变表格，不触及世界或活跃聚合。一次物理写事务包含时间、全部聚合、账本、付款行、历史回执及检查点 ID/摘要；最多一份执行中、一份待执行新快照。旧文件 v1～v10 拒绝、不迁移，主文件及 WAL 受保护；不用 SavedData。
 
 默认跟随 Minecraft 原生自动保存（普通 20 TPS 为约 6000 Tick），不另写死 200 Tick。普通 `/save-all` 请求后台存档，不代表 VE 已提交；`/save-all flush` 等待 VE 确认，否则报错。正常停服先停止经济推进、恢复可解决待办并等待最后存档，再释放 Context。异常或超时明确保留上一检查点。可用 `/ve checkpoint status` 查看最近提交与失败，用 `/ve checkpoint flush` 显式等待。
 
 Minecraft 原生文件和 VE SQLite 没有共同物理事务。正式虚拟库存→背包/箱子交换入口保持关闭。绑定锚点前先确认含建筑身份的 VE 检查点；NBT 只作身份提示，不能创建经济资产、转移所有权或证明拆除。
 
-每职业至少 10%，速度是人数比例瓶颈。Staffing Pending 不改变当前 Batch；部分招聘消费一次请求。PM、人数和旧工资截止在同一 IMMEDIATE 写事务生效。没有设备、NPC Employment 或旧三阶段边界。普通工具、机械商品仍保留。
+每批开工按生效配方的满编需求从区域获取可用人员，每个必需职业至少一人。所有招到的人参与生产和计薪，速度取各职业人数比例的最小值。配方及人数在本批冻结，只为生产方法保留 Pending。无批次时计薪人数为零，已发生债务和余数保留。
 
-正常完工全额耗料、全额产出。普通欠薪状态推进时暂停当前批次，MANUAL 等暂停原因各自保留。仅在受控的出售或拆除准备、欠薪期间缩减已雇人员等特殊业务路径中，未决定完工的批次才可能中止，按全额退料、零产出结算。公司周期父 Run 的多币种分区、真实扣转、账本和债务减少同事务；历史来源的未决部分冲销仍 BLOCKED。所有账户零余额开户，没有正式测试注资或默认人口入口。
+开工物理事务确认 Batch、原料预留、用工占用与工资基数。库存完成或中止回执可信后，另一物理事务保存终态和结束 Tick，释放对应 batchId 的占用，并将计薪人数归零。暂停和待结算期间仍保留本批人员。工资按区间 [开工 Tick，结束 Tick) 累计。
+
+每个 accepted Tick 先推进并结算各建筑，再以 Tick 对区域内完整 UUID 列表的长度取余并轮转开工。本 Tick 刚终结的建筑最早在下一 Tick 招聘，其他符合条件的建筑可使用已释放的供给。
+
+正常完工全额耗料、全额产出。普通欠薪状态推进时暂停当前批次，MANUAL 等暂停原因各自保留。仅在受控的出售或拆除准备的特殊业务路径中，未决定完工的批次才可能中止，按全额退料、零产出结算。公司周期父 Run 的多币种分区、真实扣转、账本和债务减少同事务；历史来源的未决部分冲销仍 BLOCKED。所有账户零余额开户，没有正式测试注资或默认人口入口。
 
 ## 生命周期的实际开放范围
 
 详见 [ADR-LIFECYCLE-01 的 E0 矩阵](../../architecture/adr/ADR-LIFECYCLE-01.md)。本轮正式开放受控准备、持久阻塞、重试和可信核验；**最终出售及拆除未开放**。
 
-`无操作 → QUIESCING → BLOCKED`。开始事务保存独立意图、关 automatic、中止决定；库存结算确认后原子接替 RECONFIGURING 屏障。BLOCKED 不改变 owner、不释放员工、不关闭工资，持续保留原公司义务；不应用卖方 Pending。已决定 COMPLETED 的批次保持原结算。
+`无操作 → QUIESCING → BLOCKED`。开始事务保存独立意图、关 automatic、中止决定；库存结算确认后原子接替 RECONFIGURING 屏障。进入 BLOCKED 前已经释放批次用工，原有所有权与公司工资债务继续保留；不应用卖方 Pending。已决定 COMPLETED 的批次保持原结算。
 
 没有 approve、强制完成、清理操作记录或移除 Registry 的后门。方块消失只是锚点消失，经济身份不会随之删除。墓碑格式的独立验证不是正式拆除验收。
 
@@ -58,8 +62,6 @@ Minecraft 原生文件和 VE SQLite 没有共同物理事务。正式虚拟库�
 /ve production <building> start|stop|retry
 /ve production <building> automatic <true|false>
 /ve production <building> pause <true|false>
-/ve production <building> staffing <occupation> <target>
-/ve production <building> cancel_staffing <occupation>
 /ve production <building> pm <group> <method>
 /ve production <building> cancel_pm
 /ve debug <building> bind_anchor <x> <y> <z>

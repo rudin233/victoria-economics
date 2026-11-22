@@ -31,7 +31,7 @@ public final class EconomyPerformanceGameTests {
                 SqliteTransactions.write(c,tx->{for(String role:List.of("laborer","machinist"))supply.inTransaction(tx).save(new RegionalLaborSupply(fixture.region,role,2000,1),0);return null;});
             }
             int count=scenario.endsWith("32")?32:scenario.endsWith("16")?16:4;
-            for(int i=0;i<count;i++)buildings.add(fixture.create(10,4));
+            for(int i=0;i<count;i++)buildings.add(fixture.create());
             if(scenario.equals("history4"))seedVerifiableHistory(fixture,buildings);
             if(scenario.startsWith("active")||scenario.equals("history4"))for(var b:buildings)ctx.getProductionService().startBatch(b.getId());
         }else fixture=null;
@@ -51,7 +51,7 @@ public final class EconomyPerformanceGameTests {
                     helper.assertTrue(current.getPayrollQuery().state(b.getId())==com.bbmurloc.victoriaeconomics.server.production.port.BuildingPayrollPort.State.CURRENT,"Normal paid payroll path was bypassed or failed");
                     if(scenario.startsWith("active")||scenario.equals("history4")){
                         helper.assertTrue(e.lastBatch()!=null&&e.lastBatch().isCompleted(),"No real continuous completion");
-                        helper.assertTrue(e.batch()!=null&&e.batch().getProgressUnits()==(tick-began)%200,"Repeated, omitted or idle production Tick");
+                        GameEconomyFixture.assertUnpausedProgress(helper, e, tick);
                     }
                 }
                 var file=server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT).resolve("victoria_economics/economy.sqlite");

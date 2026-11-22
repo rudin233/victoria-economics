@@ -46,6 +46,7 @@ public final class EconomyCheckpoint {
     private static EconomyCheckpoint captureInside(Connection connection) throws SQLException {
         long tick = requireCompleteTick(connection);
         var tables = new ArrayList<Table>();
+        // 按版本化表结构读取全部列，批次占用与时间字段一并纳入摘要。
         for (String name : EconomySchema.checkpointTables()) {
             var columns = new ArrayList<String>();
             try (var s = connection.createStatement(); var r = s.executeQuery("PRAGMA table_info(" + quote(name) + ")")) {

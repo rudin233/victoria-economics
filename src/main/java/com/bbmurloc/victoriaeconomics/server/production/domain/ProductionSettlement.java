@@ -14,6 +14,16 @@ public record ProductionSettlement(UUID batchId, Outcome outcome, Map<String, Lo
         if (outputs.isEmpty()) throw new IllegalArgumentException("Settlement needs the frozen output recipe");
     }
 
+    public static ProductionSettlement forBatch(ProductionBatch batch) {
+        var outcome = switch (batch.getStatus()) {
+            case SETTLING_COMPLETED, COMPLETED -> Outcome.COMPLETED;
+            case SETTLING_ABORTED, ABORTED -> Outcome.ABORTED;
+            default -> throw new IllegalStateException("Batch has no settlement decision");
+        };
+        var recipe = batch.getConfiguration().resolvedRecipe();
+        return new ProductionSettlement(batch.getId(), outcome, recipe.inputs(), recipe.outputs());
+    }
+
     public Map<String, Long> consumed() { return outcome == Outcome.COMPLETED ? inputs : Map.of(); }
     public Map<String, Long> produced() { return outcome == Outcome.COMPLETED ? outputs : Map.of(); }
 

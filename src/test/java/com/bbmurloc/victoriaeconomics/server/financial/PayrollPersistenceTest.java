@@ -27,11 +27,11 @@ class PayrollPersistenceTest {
         try(var w=new FinancialTestWorld(file())) {
             UUID b=w.world.create().getId();
             assertEquals(State.CURRENT,w.query.state(b)); // Empty but fully initialized real wage segment.
-            w.sql("DELETE FROM regional_wage_rates");w.world.setSupply(1);
-            assertThrows(IllegalStateException.class,()->w.world.commands.requestTarget(b,"laborer",1));
+            w.sql("DELETE FROM regional_wage_rates");w.world.setSupply(1);w.world.stock(b);
+            assertThrows(IllegalStateException.class,()->w.world.production.startBatch(b));
             assertEquals(State.UNAVAILABLE,w.query.state(b));
-            assertThrows(IllegalStateException.class,()->w.world.commands.applyEffectiveChanges(b));
-            assertTrue(w.world.staffing.load(b).employed().isEmpty());
+            assertThrows(IllegalStateException.class,()->w.world.production.startBatch(b));
+            assertTrue(w.world.staffing.load(b).occupiedByOccupation().isEmpty());
             w.sql("DELETE FROM payroll_employment_history");w.sql("DELETE FROM payroll_accruals");assertEquals(State.UNAVAILABLE,w.query.state(b));
             assertEquals(0,w.scalar("SELECT COUNT(*) FROM sqlite_master WHERE name='employment_state'"));
         }
@@ -69,9 +69,9 @@ class PayrollPersistenceTest {
         try(var w=new FinancialTestWorld(file())) {
             UUID b=w.staffingFixture(1,1200),p=w.enroll(b);w.acceptedTimeFixture(100);w.changeEmployeesFixture(p,3);
             assertEquals(100,w.payroll.load(p).accrued());assertEquals(3,w.payroll.load(p).employees());
-            w.acceptedTimeFixture(200);w.changeEmployeesFixture(p,0);assertEquals(400,w.payroll.load(p).accrued());
-            w.acceptedTimeFixture(1200);w.accrual.recoverAcceptedTime();assertEquals(400,w.payroll.load(p).matured());
-            assertTrue(w.world.staffing.load(b).employed().isEmpty());assertEquals(0,w.scalar("SELECT COUNT(*) FROM sqlite_master WHERE name='employment_state'"));
+            w.acceptedTimeFixture(200);w.changeEmployeesFixture(p,0);assertEquals(397,w.payroll.load(p).accrued());
+            w.acceptedTimeFixture(1200);w.accrual.recoverAcceptedTime();assertEquals(397,w.payroll.load(p).matured());
+            assertTrue(w.world.staffing.load(b).occupiedByOccupation().isEmpty());assertEquals(0,w.scalar("SELECT COUNT(*) FROM sqlite_master WHERE name='employment_state'"));
         }
     }
     @Test void employeeWriteFailureRollsBackOldAccrualAndHeadcountTogether() throws Exception {
@@ -79,7 +79,7 @@ class PayrollPersistenceTest {
             UUID b=w.staffingFixture(1,1200),p=w.enroll(b);w.acceptedTimeFixture(100);
             w.sql("CREATE TRIGGER fail_staff BEFORE UPDATE ON building_staffing BEGIN SELECT RAISE(ABORT,'failed'); END");
             assertThrows(RuntimeException.class,()->w.changeEmployeesFixture(p,3));
-            assertEquals(0,w.payroll.load(p).lastAccruedTick());assertEquals(1,w.payroll.load(p).employees());assertEquals(1,w.world.staffing.load(b).employed().get("laborer"));
+            assertEquals(0,w.payroll.load(p).lastAccruedTick());assertEquals(1,w.payroll.load(p).employees());assertEquals(1,w.world.staffing.load(b).occupiedByOccupation().get("laborer"));
         }
     }
     @Test void rateChangesAccrueOldIntervalAtomicallyAndNeverRepriceHistory() throws Exception {
@@ -106,16 +106,13 @@ class PayrollPersistenceTest {
             w.sql("UPDATE production_executions SET automatic=0 WHERE building_id='"+b+"'");
             if(control.equals("STOPPED")||control.equals("DISABLED"))w.sql("UPDATE economic_buildings SET status='"+control+"' WHERE id='"+b+"'");
             if(control.equals("PAUSED")||control.equals("SETTLING_ABORTED")) {
-                var recipe=new ResolvedProductionRecipe(Map.of("wood",1L),Map.of("tools",1L),Map.of("laborer",1));
-                var snapshot=new ProductionBatchConfiguration(Map.of("base","test"),recipe,new WorkforcePlan(Map.of("laborer",1),1,1));
-                UUID batch=UUID.randomUUID();
-                try(var s=w.c.prepareStatement("INSERT INTO production_batches VALUES(?,?,?,?,?)")) {
-                    s.setString(1,batch.toString());s.setString(2,b.toString());s.setString(3,EconomyStateCodec.encodeBatchConfiguration(snapshot));s.setLong(4,20);s.setString(5,control);s.executeUpdate();
-                }
-                w.sql("UPDATE production_executions SET current_batch_id='"+batch+"' WHERE building_id='"+b+"'");
+                var repo = new com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionExecutionRepository(w.c,w.world.lock);
+                var execution = repo.load(b);
+                if (control.equals("PAUSED")) execution.pause(); else execution.terminate();
+                repo.save(execution, execution.executionRevision());
             }
             if(control.equals("OVER_CAPACITY")) {
-                var stock=new SqliteInventoryStore(w.c,w.world.lock);stock.createLocation(b,1);stock.deposit(b,Map.of("wood",1L));
+                var stock=new SqliteInventoryStore(w.c,w.world.lock);stock.deposit(b,Map.of("wood",1000L));
                 UUID batch=UUID.randomUUID();stock.reserve(b,batch,Map.of("wood",1L));
                 stock.settle(b,new ProductionSettlement(batch,ProductionSettlement.Outcome.COMPLETED,Map.of("wood",1L),Map.of("tools",2L)));
                 assertTrue(stock.storageStatus(b).overCapacity());
@@ -127,6 +124,7 @@ class PayrollPersistenceTest {
     @Test void historicalDebtAndFractionsNeverMoveToNewCompany() throws Exception {
         try(var w=new FinancialTestWorld(file())) {
             UUID b=w.staffingFixture(1,1),old=w.enroll(b);w.acceptedTimeFixture(1801);
+            w.changeEmployeesFixture(old, 0);
             SqliteTransactions.write(w.c,tx->{w.payroll.inTransaction(tx).close(old,1801);return null;});
             var buyer=new CompanyId(UUID.randomUUID());w.world.companies.create(new Company(buyer));
             // Isolated persistence fixture, NOT a sale service or formal owner mutation entry point.
@@ -135,7 +133,7 @@ class PayrollPersistenceTest {
             assertEquals(State.CURRENT,w.query.state(b,buyer));assertEquals(State.UNAVAILABLE,w.query.state(b,TestIdentities.COMPANY));
             assertEquals(1,w.payroll.load(old).unpaid());assertEquals(601,w.payroll.load(old).remainder());
             w.acceptedTimeFixture(2400);w.accrual.recoverAcceptedTime();
-            assertEquals(601,w.payroll.load(old).remainder());assertEquals(599,w.payroll.load(next).remainder());
+            assertEquals(601,w.payroll.load(old).remainder());assertEquals(0,w.payroll.load(next).remainder());
             assertEquals(TestIdentities.COMPANY,w.payroll.load(old).company());assertEquals(buyer,w.payroll.load(next).company());
         }
         try(var ignored=SqliteEconomyDatabase.open(file())) { /* historical graph passes read-only consistency gate */ }
@@ -178,7 +176,7 @@ class PayrollPersistenceTest {
     @Test void changedStaffingWithoutCutoffIsRejectedInsteadOfRecomputedFromNewCount() throws Exception {
         try(var w=new FinancialTestWorld(file())) {
             UUID b=w.staffingFixture(1,7),p=w.enroll(b);w.acceptedTimeFixture(600);
-            w.sql("UPDATE building_staffing_roles SET employed=2 WHERE building_id='"+b+"'");
+            w.sql("UPDATE building_staffing_roles SET occupied_count=2 WHERE building_id='"+b+"'");
             assertThrows(IllegalStateException.class,w.accrual::recoverAcceptedTime);assertEquals(State.RECOVERY,w.query.state(b));
             assertEquals(0,w.payroll.load(p).lastAccruedTick());assertEquals(0,w.time.load().payrollTick());
         }
@@ -196,7 +194,7 @@ class PayrollPersistenceTest {
             UUID b=w.staffingFixture(2,7),p=w.enroll(b);w.acceptedTimeFixture(600);
             w.sql("CREATE TRIGGER fail_history BEFORE INSERT ON payroll_employment_history BEGIN SELECT RAISE(ABORT,'failed'); END");
             assertThrows(RuntimeException.class,()->w.changeEmployeesFixture(p,3));
-            assertEquals(0,w.payroll.load(p).lastAccruedTick());assertEquals(2,w.world.staffing.load(b).employed().get("laborer"));
+            assertEquals(0,w.payroll.load(p).lastAccruedTick());assertEquals(2,w.world.staffing.load(b).occupiedByOccupation().get("laborer"));
             assertEquals(2,w.scalar("SELECT COUNT(*) FROM payroll_employment_history")); // Initial empty base plus the initial hire.
         }
     }
@@ -226,7 +224,7 @@ class PayrollPersistenceTest {
         try(var w=new FinancialTestWorld(file())) {
             UUID b=w.staffingFixture(1,7),p=w.enroll(b);w.acceptedTimeFixture(100);w.changeEmployeesFixture(p,3);
             w.acceptedTimeFixture(399);w.changeEmployeesFixture(p,2);w.acceptedTimeFixture(1200);w.accrual.recoverAcceptedTime();
-            assertEquals(4,w.scalar("SELECT COUNT(*) FROM payroll_employment_history"));
+            assertEquals(6,w.scalar("SELECT COUNT(*) FROM payroll_employment_history"));
         }
         try(var ignored=SqliteEconomyDatabase.open(file())) {}
     }

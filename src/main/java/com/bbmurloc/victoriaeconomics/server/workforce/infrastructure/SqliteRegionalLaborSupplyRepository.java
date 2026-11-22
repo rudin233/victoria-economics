@@ -30,14 +30,14 @@ public final class SqliteRegionalLaborSupplyRepository implements RegionalLaborS
             }
             @Override public long occupied(RegionId region, String role) {
                 try { return tx.perform(() -> sum(region, role)); }
-                catch (SQLException failure) { throw new IllegalStateException("Cannot aggregate employment", failure); }
+                catch (SQLException failure) { throw new IllegalStateException("Cannot aggregate batch labor", failure); }
             }
             @Override public void create(RegionalLaborSupply supply) { persist(supply, null); }
             @Override public void save(RegionalLaborSupply supply, long expected) { persist(supply, expected); }
             private void persist(RegionalLaborSupply supply, Long expected) {
                 try { tx.perform(() -> {
                     if (occupations.get(supply.occupationId()) == null) throw new IllegalArgumentException("Unknown occupation");
-                    if (supply.totalSupply() < sum(supply.regionId(), supply.occupationId())) throw new IllegalStateException("Supply cannot fall below actual employment");
+                    if (supply.totalSupply() < sum(supply.regionId(), supply.occupationId())) throw new IllegalStateException("Supply cannot fall below batch labor");
                     if (supply.revision() != (expected == null ? 0 : Math.incrementExact(expected))) throw new IllegalArgumentException("Invalid supply revision");
                     String sql = expected == null
                             ? "INSERT INTO regional_labor_supply(total_supply,revision,region_id,occupation_id) VALUES(?,?,?,?)"
@@ -68,13 +68,13 @@ public final class SqliteRegionalLaborSupplyRepository implements RegionalLaborS
         } catch (SQLException failure) { throw new IllegalStateException("Cannot read supply", failure); }
     }
     private long sum(RegionId region, String role) {
-        try (var statement = connection.prepareStatement("SELECT s.employed FROM building_staffing_roles s JOIN economic_buildings b ON b.id=s.building_id WHERE b.region_id=? AND s.occupation_id=?")) {
+        try (var statement = connection.prepareStatement("SELECT s.occupied_count FROM building_staffing_roles s JOIN economic_buildings b ON b.id=s.building_id WHERE b.region_id=? AND s.occupation_id=?")) {
             statement.setString(1, region.toString()); statement.setString(2, role);
             try (var rows = statement.executeQuery()) {
                 long result = 0;
                 while (rows.next()) result = Math.addExact(result, rows.getLong(1));
                 return result;
             }
-        } catch (SQLException failure) { throw new IllegalStateException("Cannot aggregate actual employment", failure); }
+        } catch (SQLException failure) { throw new IllegalStateException("Cannot aggregate batch labor", failure); }
     }
 }

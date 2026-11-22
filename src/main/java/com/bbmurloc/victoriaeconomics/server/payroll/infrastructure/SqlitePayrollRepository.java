@@ -142,7 +142,7 @@ public final class SqlitePayrollRepository implements PayrollRepository {
             }
             return result.accrual();
         }
-        /** Future UoW: accrue old base, save Staffing, then acknowledge its new base in this same session. */
+        /** 先按旧基数累计，更新批次占用后，在同一个事务确认新计薪基数。 */
         public PayrollAccrual changeEmployees(UUID id, long count, long tick) throws SQLException { return tx.perform(() -> {
             requireStaffingAuthority();
             if (tick != SqliteEconomicTimeRepository.inTransaction(connection, tx).acceptedTick()) throw new IllegalArgumentException("Employee change must use accepted current tick");
@@ -212,7 +212,7 @@ public final class SqlitePayrollRepository implements PayrollRepository {
     }
     private long employees(UUID id) throws SQLException {
         long result = 0;
-        try (var s = connection.prepareStatement("SELECT employed FROM building_staffing_roles WHERE building_id=?")) {
+        try (var s = connection.prepareStatement("SELECT occupied_count FROM building_staffing_roles WHERE building_id=?")) {
             s.setString(1, id.toString()); try (var r = s.executeQuery()) { while (r.next()) result = Math.addExact(result, r.getLong(1)); }
         }
         return result;

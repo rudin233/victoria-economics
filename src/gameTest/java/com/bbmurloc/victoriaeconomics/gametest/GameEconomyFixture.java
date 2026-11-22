@@ -38,19 +38,51 @@ final class GameEconomyFixture {
             ctx.getFinanceService().open(companyCash,FinanceAccount.OwnerKind.COMPANY,company.value(),currency);
             ctx.getHouseholds().open(region,currency,householdCash);
             var supply=new SqliteRegionalLaborSupplyRepository(c,ctx.getOccupationRegistry(),new Object());
-            SqliteTransactions.write(c,tx->{for(String role:List.of("laborer","machinist"))supply.inTransaction(tx).create(new RegionalLaborSupply(region,role,100,0));return null;});
+            SqliteTransactions.write(c,tx->{for(String role:List.of("laborer","machinist"))supply.inTransaction(tx).create(new RegionalLaborSupply(region,role,10000,0));return null;});
         }
     }
     ServerEconomyContext context(){return ServerEconomyRuntime.get(server);}
     Connection connect(){return context().openRuntimeVerificationConnection();}
-    EconomicBuilding create(int laborers,int machinists)throws Exception{
+    EconomicBuilding create()throws Exception{
         var before=context().getBuildingRegistry().getAll().stream().map(EconomicBuilding::getId).collect(java.util.stream.Collectors.toSet());
         if(command("ve debug create tooling_workshop 1000000 "+company+" "+region,4)!=1)throw new AssertionError("Actual creation command failed");
         var b=context().getBuildingRegistry().getAll().stream().filter(x->!before.contains(x.getId())).findFirst().orElseThrow();
         context().getInventoryStore().deposit(b.getId(),Map.of("wood",100000L,"iron",100000L));
-        context().getStaffingService().requestTarget(b.getId(),"laborer",laborers);context().getStaffingService().requestTarget(b.getId(),"machinist",machinists);
         return b;
     }
+    void setSupply(int laborers, int machinists) throws Exception {
+        try (var c = connect()) {
+            var supply = new SqliteRegionalLaborSupplyRepository(c, context().getOccupationRegistry(), new Object());
+            SqliteTransactions.write(c, tx -> {
+                var repo = supply.inTransaction(tx);
+                for (var entry : Map.of("laborer", laborers, "machinist", machinists).entrySet()) {
+                    var prior = repo.find(region, entry.getKey()).orElseThrow();
+                    repo.save(prior.withTotal(entry.getValue()), prior.revision());
+                }
+                return null;
+            });
+        }
+    }
+
+    static void assertUnpausedProgress(net.minecraft.gametest.framework.GameTestHelper helper,
+                                      com.bbmurloc.victoriaeconomics.server.production.domain.ProductionExecution execution,
+                                      long tick) {
+        helper.assertTrue(execution.lastCompletedTick() == tick, "Building Tick did not complete");
+        var batch = execution.batch();
+        if (batch == null) {
+            var last = execution.lastBatch();
+            helper.assertTrue(last != null && last.isCompleted() && last.endedTick() == tick
+                    && execution.nextStartNotBeforeTick() == tick + 1, "Unexpected idle Tick after production");
+        } else {
+            var plan = batch.getConfiguration().workforcePlan();
+            long expected = Math.multiplyExact(tick - batch.startedTick(), plan.speedNumerator());
+            helper.assertTrue(batch.isActive() && batch.getProgressUnits() == expected
+                    && expected < batch.getMaximumProgressUnits(), "Production skipped or repeated a Tick");
+            if (execution.lastBatch() != null)
+                helper.assertTrue(batch.startedTick() == execution.lastBatch().endedTick() + 1, "Wrong restart Tick after completion");
+        }
+    }
+
     int command(String command,int permission)throws Exception{return server.getCommands().getDispatcher().execute(command,server.createCommandSourceStack().withPermission(permission).withSuppressedOutput());}
     long scalar(String sql)throws Exception{try(var c=connect();var s=c.createStatement();var r=s.executeQuery(sql)){if(!r.next())throw new AssertionError("Missing SQL fact");return r.getLong(1);}}
     /** Real test-only external credit with immutable provenance and a full ledger, not a mock balance. */

@@ -15,8 +15,15 @@ public final class ProductionBatch {
     private final ProductionBatchConfiguration configuration;
     private final long progressUnits;
     private final Status status;
+    private final long startedTick;
+    private final Long endedTick;
 
     public ProductionBatch(UUID id, UUID buildingId, ProductionBatchConfiguration configuration, long progressUnits, Status status) {
+        this(id, buildingId, configuration, progressUnits, status, 0, status == Status.COMPLETED || status == Status.ABORTED ? 0L : null);
+    }
+
+    public ProductionBatch(UUID id, UUID buildingId, ProductionBatchConfiguration configuration, long progressUnits,
+                           Status status, long startedTick, Long endedTick) {
         this.id = Objects.requireNonNull(id);
         this.buildingId = Objects.requireNonNull(buildingId);
         this.configuration = Objects.requireNonNull(configuration);
@@ -31,6 +38,10 @@ public final class ProductionBatch {
             throw new IllegalArgumentException("Full progress must enter settlement");
         }
         this.progressUnits = progressUnits;
+        this.startedTick = startedTick;
+        this.endedTick = endedTick;
+        if (startedTick < 0 || isEnded() != (endedTick != null) || (endedTick != null && endedTick < startedTick))
+            throw new IllegalArgumentException("Invalid batch lifetime");
     }
 
     public UUID getId() {
@@ -60,6 +71,10 @@ public final class ProductionBatch {
     public Status getStatus() {
         return status;
     }
+
+    public long startedTick() { return startedTick; }
+
+    public Long endedTick() { return endedTick; }
 
     public boolean isActive() {
         return status == Status.ACTIVE;

@@ -30,7 +30,7 @@ class BuildingLifecycleRecoveryTest {
             assertEquals(started?ProductionBatch.Status.ABORTED:ProductionBatch.Status.ACTIVE,e.execution().batch().getStatus());
             assertEquals(started?ProductionExecution.Boundary.RECONFIGURING:ProductionExecution.Boundary.NONE,e.execution().boundary());
             assertEquals(!started,e.execution().automatic());assertEquals(100,e.quantity("wood"));assertEquals(started?0:1,e.stockState().reservations().size());
-            assertEquals(14,e.scalar("SELECT employees FROM payroll_accruals"));assertEquals(14,e.scalar("SELECT SUM(employed) FROM building_staffing_roles"));
+            assertEquals(started?0:14,e.scalar("SELECT employees FROM payroll_accruals"));assertEquals(started?0:14,e.scalar("SELECT SUM(occupied_count) FROM building_staffing_roles"));
             e.sql("DROP TRIGGER fail");var complete=e.lifecycle.request(cmd);assertEquals(Status.BLOCKED,complete.status());assertEquals(batch.getId(),e.execution().lastBatch().getId());assertEquals(1,e.stockState().settlements().size());
         }
     }

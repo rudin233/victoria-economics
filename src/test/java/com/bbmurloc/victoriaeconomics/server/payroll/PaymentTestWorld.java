@@ -42,7 +42,7 @@ public final class PaymentTestWorld implements AutoCloseable {
         if(rates==0)f.accrual.configureRate(new RegionalWageRate(region,currency,f.time.load().acceptedTick(),wage,0));
         else if(f.scalar("SELECT COUNT(*) FROM payroll_accruals")==0)f.sql("UPDATE regional_wage_rates SET amount="+wage); // isolated pre-enrollment fixture only
         SqliteTransactions.write(c,tx->{var supply=f.world.supply.inTransaction(tx);if(supply.find(region,"laborer").isEmpty())supply.create(new RegionalLaborSupply(region,"laborer",1000,0));return null;});
-        f.world.buildings.createBuilding(id,"tooling_workshop",company,region);f.world.commands.requestTarget(id,"laborer",employees);return id;
+        f.world.buildings.createBuilding(id,"tooling_workshop",company,region);f.world.startPayrollFixture(id,employees);return id;
     }
     public void mature(long period){f.acceptedTimeFixture(Math.multiplyExact(period,1200L));f.accrual.recoverAcceptedTime();}
     public PayrollPaymentRun.Command command(long period){return PayrollPaymentRun.Command.forPeriod(TestIdentities.COMPANY,period);}

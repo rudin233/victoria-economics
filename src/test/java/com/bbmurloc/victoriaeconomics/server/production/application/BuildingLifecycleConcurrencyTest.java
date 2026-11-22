@@ -42,19 +42,19 @@ class BuildingLifecycleConcurrencyTest {
     @Test void planningUsesDeferredSnapshotWithoutTakingAWriteLock()throws Exception{
         try(var a=new TestEconomy(file(),true);var b=new TestEconomy(file(),false)){
             a.sql("PRAGMA journal_mode=WAL");b.sql("PRAGMA busy_timeout=0");var command=BuildingLifecycleTest.command(a,Kind.SALE);var changed=new AtomicBoolean();
-            a.faults.beforeSql=sql->{if(sql.startsWith("SELECT employed FROM building_staffing_roles")&&changed.compareAndSet(false,true)) {
+            a.faults.beforeSql=sql->{if(sql.startsWith("SELECT occupied_count FROM building_staffing_roles")&&changed.compareAndSet(false,true)) {
                 try{b.sql("UPDATE regional_labor_supply SET total_supply=total_supply+1");}catch(SQLException failure){throw new RuntimeException(failure);}
             }};
             assertFalse(a.lifecycle.assess(command).finalizationAvailable());assertTrue(changed.get());assertEquals(101,b.scalar("SELECT total_supply FROM regional_labor_supply WHERE occupation_id='laborer'"));
         }
     }
-    @Test void otherConnectionCannotApplyStaffingAfterIntentAndDoesNotFreeRegionalLabor()throws Exception{
+    @Test void otherConnectionCannotEnableProductionWhileLifecycleRetainsLaborUntilConfirmation()throws Exception{
         try(var a=new TestEconomy(file(),true);var b=new TestEconomy(file(),false)){
             a.production.startBatch(a.id);var cmd=BuildingLifecycleTest.command(a,Kind.DEMOLITION);a.inventory.failSettlement=true;
             assertThrows(IllegalStateException.class,()->a.lifecycle.request(cmd));
-            assertThrows(IllegalStateException.class,()->b.staffing.requestTarget(a.id,"laborer",0));assertThrows(IllegalStateException.class,()->b.production.setAutomatic(a.id,true));
-            assertEquals(14,b.scalar("SELECT SUM(employed) FROM building_staffing_roles"));assertEquals(14,b.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));
-            a.inventory.failSettlement=false;assertEquals(Status.BLOCKED,a.lifecycle.recover(cmd.id()).status());assertEquals(10,b.supply.occupied(com.bbmurloc.victoriaeconomics.server.TestIdentities.REGION,"laborer"));
+            assertThrows(IllegalStateException.class,()->b.production.setAutomatic(a.id,true));
+            assertEquals(2,b.scalar("SELECT COUNT(*) FROM building_staffing_roles"));assertEquals(14,b.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));
+            a.inventory.failSettlement=false;assertEquals(Status.BLOCKED,a.lifecycle.recover(cmd.id()).status());assertEquals(0,b.supply.occupied(com.bbmurloc.victoriaeconomics.server.TestIdentities.REGION,"laborer"));
         }
     }
     private static void await(CountDownLatch start){try{start.await();}catch(InterruptedException failure){Thread.currentThread().interrupt();throw new RuntimeException(failure);}}

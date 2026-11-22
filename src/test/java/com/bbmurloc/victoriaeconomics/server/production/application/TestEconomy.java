@@ -15,7 +15,6 @@ import com.bbmurloc.victoriaeconomics.server.inventory.domain.GoodsInventory;
 import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore;
 import com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.*;
 import com.bbmurloc.victoriaeconomics.server.workforce.domain.RegionalLaborSupply;
-import com.bbmurloc.victoriaeconomics.server.workforce.application.StaffingApplicationService;
 import com.bbmurloc.victoriaeconomics.server.payroll.application.PayrollAccrualService;
 import com.bbmurloc.victoriaeconomics.server.payroll.infrastructure.*;
 import com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository;
@@ -48,7 +47,6 @@ final class TestEconomy implements AutoCloseable {
     final BuildingService buildingService;
     final ProductionBoundaryCoordinator coordinator;
     final ProductionService production;
-    final StaffingApplicationService staffing;
     final PayrollAccrualService accrual;
     final SqliteBuildingPayrollQuery payroll;
     final SqlitePayrollRepository payrollRepository;
@@ -82,13 +80,13 @@ final class TestEconomy implements AutoCloseable {
         groups.register(new ProductionMethodGroupDefinition("tooling_workshop_automation","tooling_workshop",List.of("hand_assembly")));
         resolver=new ProductionRecipeResolver(types,groups,methods);
         buildingRepository=new SqliteBuildingRepository(connection,lock);repository=new SqliteProductionExecutionRepository(connection,lock);configurations=new SqliteProductionMethodConfigurationRepository(connection,resolver,lock);
-        staffingRepository=new SqliteBuildingStaffingRepository(connection,resolver,occupations,lock);supply=new SqliteRegionalLaborSupplyRepository(connection,occupations,lock);
+        staffingRepository=new SqliteBuildingStaffingRepository(connection,lock);supply=new SqliteRegionalLaborSupplyRepository(connection,occupations,lock);
         buildingRepository.loadAll().forEach(buildings::add);
         var initializer=new ProductionBuildingInitializer(connection,lock,buildingRepository,configurations,repository,resolver,staffingRepository,verificationConnection);
         buildingService=new BuildingService(buildings,buildingRepository,types,initializer,lock);
         stock=new SqliteInventoryStore(connection,lock);inventory=new FaultInventory(stock);journal=new FaultJournal(new SqliteProductionJournal(connection));
         coordinator=new ProductionBoundaryCoordinator(connection,resolver,occupations,lock);production=new ProductionService(coordinator,inventory,journal,lock);
-        staffing=new StaffingApplicationService(coordinator,production::retry);accrual=new PayrollAccrualService(connection,lock);payroll=new SqliteBuildingPayrollQuery(connection,lock);payrollRepository=new SqlitePayrollRepository(connection,lock);
+        accrual=new PayrollAccrualService(connection,lock);payroll=new SqliteBuildingPayrollQuery(connection,lock);payrollRepository=new SqlitePayrollRepository(connection,lock);
         finance=new com.bbmurloc.victoriaeconomics.server.finance.application.FinanceService(connection,lock);
         accounts=new com.bbmurloc.victoriaeconomics.server.finance.infrastructure.SqliteFinanceAccountRepository(connection,lock);
         payments=new com.bbmurloc.victoriaeconomics.server.payroll.application.CompanyPayrollService(connection,lock);
@@ -99,7 +97,7 @@ final class TestEconomy implements AutoCloseable {
         // Explicit zero-cash test accounts, with no issuance. Real zero-payment periods preserve arrears assertions.
         companyCash=finance.open(new UUID(800,1),com.bbmurloc.victoriaeconomics.server.finance.domain.FinanceAccount.OwnerKind.COMPANY,TestIdentities.COMPANY.value(),currency).id();
         householdCash=households.open(TestIdentities.REGION,currency,new UUID(900,1)).sector().accountId();
-        if(create){id=createBuilding().getId();stock.createLocation(id,capacity);stock.deposit(id,Map.of("wood",100L,"iron",100L));setSupply("laborer",100);setSupply("machinist",100);staffing.requestTarget(id,"laborer",10);staffing.requestTarget(id,"machinist",4);}
+        if(create){id=createBuilding().getId();stock.createLocation(id,capacity);stock.deposit(id,Map.of("wood",100L,"iron",100L));setSupply("laborer",100);setSupply("machinist",100);}
         else id=buildings.getAll().getFirst().getId();
         recover();
     }
@@ -112,13 +110,19 @@ final class TestEconomy implements AutoCloseable {
     long quantity(String good){return stockState().quantities().getOrDefault(good,0L);}
     void ticks(int count){for(int i=0;i<count;i++)clock.onServerTick();}
     void setSupply(String role,long total){SqliteTransactions.write(connection,tx->{var repo=supply.inTransaction(tx);var prior=repo.find(TestIdentities.REGION,role);if(prior.isEmpty())repo.create(new RegionalLaborSupply(TestIdentities.REGION,role,total,0));else repo.save(prior.get().withTotal(total),prior.get().revision());return null;});}
-    /** Isolated concurrent persistence injection; not a formal application admission path. */
-    void staffingRaceFixture(String role,int target){SqliteTransactions.write(connection,tx->{
-        var wages=payrollRepository.inTransaction(tx);var p=wages.currentForBuilding(id);long tick=SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick();
-        wages.accrue(p,tick);var repo=staffingRepository.inTransaction(tx);var prior=repo.load(id);var counts=new TreeMap<>(prior.employed());counts.put(role,target);
-        var changed=new com.bbmurloc.victoriaeconomics.server.workforce.domain.BuildingStaffing(id,counts,prior.pending(),Math.incrementExact(prior.revision()));repo.save(changed,prior.revision());
-        long sum=0;for(int count:changed.employed().values())sum=Math.addExact(sum,count);wages.changeEmployees(p.id(),sum,tick);return null;
-    });}
+    EconomicBuilding createStockedBuilding() {
+        var building = createBuilding();
+        stock.createLocation(building.getId(), 1000);
+        stock.deposit(building.getId(), Map.of("wood", 100L, "iron", 100L));
+        return building;
+    }
+
+    void beginDemolition() {
+        lifecycle.request(new com.bbmurloc.victoriaeconomics.server.building.domain.BuildingLifecycleOperation.Command(
+                UUID.randomUUID(), id, TestIdentities.COMPANY, null,
+                com.bbmurloc.victoriaeconomics.server.building.domain.BuildingLifecycleOperation.Kind.DEMOLITION,
+                building().identityRevision()));
+    }
     void sql(String sql)throws SQLException{try(var s=connection.createStatement()){s.execute(sql);}}
     long scalar(String sql)throws SQLException{try(var s=connection.createStatement();var r=s.executeQuery(sql)){r.next();return r.getLong(1);}}
     @Override public void close()throws SQLException{if(ownsConnection)physical.close();}

@@ -44,7 +44,7 @@ class PayrollAccrualBatchOptimizationTest {
             assertThrows(IllegalStateException.class,()->SqliteTransactions.write(w.c,tx->{w.payroll.inTransaction(tx).accrueAll(List.of(before),10);return null;}));
             assertEquals(10,w.payroll.load(id).lastAccruedTick());
             // Deliberately invalid persistence fixture: this must never be accepted as a new wage base.
-            w.sql("UPDATE building_staffing_roles SET employed=2");
+            w.sql("UPDATE building_staffing_roles SET occupied_count=2");
             assertThrows(IllegalStateException.class,w.accrual::recoverAcceptedTime);assertEquals(10,w.time.load().payrollTick());
             w.acceptedTimeFixture(11);
             assertThrows(IllegalStateException.class,w.accrual::recoverAcceptedTime);assertEquals(10,w.time.load().payrollTick());assertEquals(1,w.payroll.load(id).employees());

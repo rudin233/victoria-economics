@@ -39,16 +39,16 @@ class LaborTransactionSafetyTest {
             UUID id = first.create().getId(); first.setSupply(10);
             var building = second.identities.load(id); var staffing = second.staffing.load(id);
             var supply = second.supply.find(TestIdentities.REGION, "laborer").orElseThrow();
-            first.buildings.stopBuilding(id); first.requestPendingForPersistenceTest(id, "laborer", 3); first.setSupply(9);
+            first.startPayrollFixture(id, 3); first.buildings.stopBuilding(id); first.setSupply(9);
             assertThrows(IllegalStateException.class, () -> second.identities.save(building.withStatus(BuildingStatus.DISABLED), 0));
             assertThrows(IllegalStateException.class, () -> SqliteTransactions.write(second.connection, tx -> {
-                second.staffing.inTransaction(tx).save(staffing.requestTarget("laborer", 4, Map.of("laborer", 10)), 0); return null;
+                second.staffing.inTransaction(tx).release(id, first.staffing.load(id).batchId(), staffing.revision()); return null;
             }));
             assertThrows(IllegalStateException.class, () -> SqliteTransactions.write(second.connection, tx -> {
                 second.supply.inTransaction(tx).save(supply.withTotal(8), 0); return null;
             }));
             assertEquals(1, first.identities.load(id).identityRevision());
-            assertEquals(Map.of("laborer", 3), first.staffing.load(id).pending());
+            assertEquals(Map.of("laborer", 3), first.staffing.load(id).occupiedByOccupation());
             assertEquals(9, first.supply.find(TestIdentities.REGION, "laborer").orElseThrow().totalSupply());
         }
     }
@@ -57,18 +57,24 @@ class LaborTransactionSafetyTest {
     void isolatedEmploymentCommitUncertaintyPreservesOneWholePersistentOutcome(boolean actuallyCommitted) throws Exception {
         var reference = new AtomicReference<Faults>(); UUID id;
         try (var w = world(reference)) {
-            id = w.create().getId(); w.setSupply(10); w.requestPendingForPersistenceTest(id, "laborer", 8);
+            id = w.create().getId(); w.setSupply(8); w.setSupply(TestIdentities.REGION, "machinist", 4);w.stock(id);
             var faults = reference.get(); faults.commits = 0;
-            faults.failCommitBefore = !actuallyCommitted; faults.failCommitAfter = actuallyCommitted;
-            assertThrows(CommitOutcomeUnknownException.class, () -> w.applyPendingForPersistenceTest(id));
+            faults.beforeSql = sql -> {
+                if (sql.startsWith("INSERT INTO production_batches")) {
+                    faults.commits = 0;
+                    faults.failCommitBefore = !actuallyCommitted;
+                    faults.failCommitAfter = actuallyCommitted;
+                }
+            };
+            assertThrows(CommitOutcomeUnknownException.class, () -> w.production.startBatch(id));
             assertEquals(1, faults.commits);
         }
         try (var fresh = new LaborTestWorld(file())) {
             var root = fresh.staffing.load(id);
-            assertEquals(actuallyCommitted ? Map.of("laborer", 8) : Map.of(), root.employed());
-            assertEquals(actuallyCommitted ? Map.of() : Map.of("laborer", 8), root.pending());
+            assertEquals(actuallyCommitted ? Map.of("laborer", 8, "machinist", 4) : Map.of(), root.occupiedByOccupation());
+            assertEquals(actuallyCommitted, root.batchId() != null);
             assertEquals(actuallyCommitted ? 8 : 0, fresh.supply.occupied(TestIdentities.REGION, "laborer"));
-            assertEquals(actuallyCommitted ? 2 : 1, root.revision());
+            assertEquals(actuallyCommitted ? 1 : 0, root.revision());
         }
     }
 
@@ -76,7 +82,7 @@ class LaborTransactionSafetyTest {
     void actualWritePermissionPrecedesIdentityAndStaffingReads(String mode) throws Exception {
         var reference = new AtomicReference<Faults>();
         try (var w = world(reference); var observer = DriverManager.getConnection("jdbc:sqlite:" + file())) {
-            UUID id = w.create().getId(); w.setSupply(10); w.sql("PRAGMA journal_mode=" + mode);
+            UUID id = w.create().getId(); w.setSupply(10); w.setSupply(TestIdentities.REGION, "machinist", 4);w.stock(id);w.sql("PRAGMA journal_mode=" + mode);
             sql(observer, "PRAGMA busy_timeout=0");
             var observed = new AtomicBoolean();
             reference.get().beforeSql = text -> {
@@ -85,35 +91,38 @@ class LaborTransactionSafetyTest {
                     assertEquals(5, busy.getErrorCode());
                 }
             };
-            w.requestPendingForPersistenceTest(id, "laborer", 4);
+            w.coordinator.prepare(id);
             assertTrue(observed.get());
-            assertEquals(Map.of("laborer", 4), w.staffing.load(id).pending());
+            assertTrue(w.staffing.load(id).occupiedByOccupation().isEmpty());
         }
     }
     @Test void twoConnectionsCompeteForOneRealRegionalSupplyWithoutOversubscription() throws Exception {
         try (var first = new LaborTestWorld(file()); var second = new LaborTestWorld(file()); var pool = Executors.newFixedThreadPool(2)) {
             first.sql("PRAGMA journal_mode=WAL");
             UUID a = first.create().getId(), b = first.create().getId(); first.setSupply(12);
-            first.requestPendingForPersistenceTest(a, "laborer", 8); second.requestPendingForPersistenceTest(b, "laborer", 8);
+            first.setSupply(TestIdentities.REGION, "machinist", 8);first.stock(a);first.stock(b);
             var barrier = new CyclicBarrier(2);
-            var x = pool.submit(() -> { barrier.await(); first.applyPendingForPersistenceTest(a); return null; });
-            var y = pool.submit(() -> { barrier.await(); second.applyPendingForPersistenceTest(b); return null; });
+            var x = pool.submit(() -> { barrier.await(); tryStart(first,a); return null; });
+            var y = pool.submit(() -> { barrier.await(); tryStart(second,b); return null; });
             x.get(10, TimeUnit.SECONDS); y.get(10, TimeUnit.SECONDS);
-            int aCount = first.staffing.load(a).employed().get("laborer"), bCount = second.staffing.load(b).employed().get("laborer");
-            assertEquals(Set.of(8, 4), Set.of(aCount, bCount));
+            if (first.staffing.load(a).batchId() == null) first.production.startBatch(a);
+            if (second.staffing.load(b).batchId() == null) second.production.startBatch(b);
+            int aCount = first.staffing.load(a).occupiedByOccupation().get("laborer"), bCount = second.staffing.load(b).occupiedByOccupation().get("laborer");
+            assertEquals(Set.of(10, 2), Set.of(aCount, bCount));
             assertEquals(12, first.supply.occupied(TestIdentities.REGION, "laborer"));
-            assertTrue(first.staffing.load(a).pending().isEmpty()); assertTrue(second.staffing.load(b).pending().isEmpty());
+            assertNotEquals(first.staffing.load(a).batchId(), second.staffing.load(b).batchId());
         }
     }
     @Test void concurrentSupplyReductionAndHiringCannotViolateTheConstraint() throws Exception {
         try (var first = new LaborTestWorld(file()); var second = new LaborTestWorld(file()); var pool = Executors.newFixedThreadPool(2)) {
             first.sql("PRAGMA journal_mode=WAL"); UUID id = first.create().getId(); first.setSupply(10);
-            first.requestPendingForPersistenceTest(id, "laborer", 8);
+            first.setSupply(TestIdentities.REGION, "machinist", 4);first.stock(id);
             var barrier = new CyclicBarrier(2);
-            var hire = pool.submit(() -> { barrier.await(); first.applyPendingForPersistenceTest(id); return null; });
+            var hire = pool.submit(() -> { barrier.await(); tryStart(first,id); return null; });
             var reduce = pool.submit(() -> { barrier.await(); try { second.setSupply(5); return true; } catch (IllegalStateException expected) { return false; } });
             hire.get(10, TimeUnit.SECONDS); boolean reduced = reduce.get(10, TimeUnit.SECONDS);
-            assertEquals(reduced ? 5 : 8, first.supply.occupied(TestIdentities.REGION, "laborer"));
+            if (first.staffing.load(id).batchId() == null) first.production.startBatch(id);
+            assertEquals(reduced ? 5 : 10, first.supply.occupied(TestIdentities.REGION, "laborer"));
             assertEquals(reduced ? 5 : 10, second.supply.find(TestIdentities.REGION, "laborer").orElseThrow().totalSupply());
         }
     }
@@ -138,19 +147,19 @@ class LaborTransactionSafetyTest {
         }
     }
     @ParameterizedTest @ValueSource(booleans = {true, false})
-    void unknownPendingCommitReturnsNoSuccessAndRestartReadsTheActualRevision(boolean actuallyCommitted) throws Exception {
+    void unknownAutomaticControlCommitCannotCreateLabor(boolean actuallyCommitted) throws Exception {
         var reference = new AtomicReference<Faults>(); UUID id;
         try (var w = world(reference)) {
             id = w.create().getId(); var faults = reference.get(); faults.commits = 0;
             faults.failCommitBefore = !actuallyCommitted; faults.failCommitAfter = actuallyCommitted;
-            assertThrows(CommitOutcomeUnknownException.class, () -> w.requestPendingForPersistenceTest(id, "laborer", 3));
+            assertThrows(CommitOutcomeUnknownException.class, () -> w.production.setAutomatic(id, true));
             assertEquals(1, faults.commits);
         }
         try (var restored = new LaborTestWorld(file())) {
             var root = restored.staffing.load(id);
-            assertEquals(actuallyCommitted ? 1 : 0, root.revision());
-            assertEquals(actuallyCommitted ? Map.of("laborer", 3) : Map.of(), root.pending());
-            assertTrue(root.employed().isEmpty());
+            assertEquals(0, root.revision());
+            assertEquals(actuallyCommitted, restored.production.execution(id).automatic());
+            assertTrue(root.occupiedByOccupation().isEmpty());
         }
     }
     @Test void cleanupFailureAfterCreationAlsoRequiresFreshVerificationBeforePublishing() throws Exception {
@@ -176,17 +185,21 @@ class LaborTransactionSafetyTest {
         var reference = new AtomicReference<Faults>();
         try (var w = world(reference); var observer = new LaborTestWorld(file())) {
             UUID id = w.create().getId();
-            w.setSupply(10); w.requestPendingForPersistenceTest(id, "laborer", 3); w.applyPendingForPersistenceTest(id);
-            w.requestPendingForPersistenceTest(id, "laborer", 5);
+            w.setSupply(10);w.setSupply(TestIdentities.REGION, "machinist", 4);w.stock(id);
             w.sql("CREATE TRIGGER reject_roles BEFORE INSERT ON building_staffing_roles BEGIN SELECT RAISE(ABORT,'role write failed'); END");
             var guarded = SqliteConnectionGuard.protect(w.connection);
             try (var cached = guarded.createStatement()) {
-                var faults = reference.get(); faults.failRollback = true; faults.failClose = true; faults.commits = 0; faults.resets = 0;
-                assertThrows(CommitOutcomeUnknownException.class, () -> w.applyPendingForPersistenceTest(id));
+                var faults = reference.get();
+                faults.beforeSql = sql -> {
+                    if (sql.startsWith("INSERT INTO building_staffing_roles")) {
+                        faults.failRollback = true; faults.failClose = true; faults.commits = 0; faults.resets = 0;
+                    }
+                };
+                assertThrows(CommitOutcomeUnknownException.class, () -> w.production.startBatch(id));
                 assertEquals(0, faults.commits); assertEquals(0, faults.resets);
-                assertEquals(3, observer.staffing.load(id).revision());
-                assertEquals(Map.of("laborer", 3), observer.staffing.load(id).employed());
-                assertEquals(3, observer.supply.occupied(TestIdentities.REGION, "laborer"));
+                assertEquals(0, observer.staffing.load(id).revision());
+                assertTrue(observer.staffing.load(id).occupiedByOccupation().isEmpty());
+                assertEquals(0, observer.supply.occupied(TestIdentities.REGION, "laborer"));
                 assertThrows(SQLException.class, () -> cached.executeQuery("SELECT 1"));
                 assertThrows(CommitOutcomeUnknownException.class, () -> w.staffing.load(id));
             }
@@ -198,7 +211,7 @@ class LaborTransactionSafetyTest {
             w.sql("PRAGMA journal_mode=WAL"); UUID id = w.create().getId(); w.setSupply(10);
             var mutated = new AtomicBoolean();
             reference.get().beforeSql = text -> {
-                if (text.startsWith("SELECT revision FROM building_staffing") && mutated.compareAndSet(false, true)) other.setSupply(9);
+                if (text.startsWith("SELECT s.batch_id,s.revision") && mutated.compareAndSet(false, true)) other.setSupply(9);
             };
             var snapshot = new StaffingCalculator(new SqliteStaffingQuery(w.connection, w.recipes, w.occupations, w.lock)).calculate(id);
             assertTrue(mutated.get());
@@ -212,14 +225,23 @@ class LaborTransactionSafetyTest {
             SqliteTransactions.read(w.connection, tx -> { captured.set(tx); return w.staffing.inSnapshot(tx, id); });
             assertThrows(IllegalStateException.class, () -> w.staffing.inSnapshot(captured.get(), id));
             w.connection.setAutoCommit(false);
-            try {
-                assertThrows(CommitOutcomeUnknownException.class, () -> w.staffing.load(id));
-                assertThrows(CommitOutcomeUnknownException.class, () -> w.identities.load(id));
-                assertThrows(CommitOutcomeUnknownException.class, () -> w.supply.occupied(TestIdentities.REGION, "laborer"));
-                assertThrows(CommitOutcomeUnknownException.class, () -> w.requestPendingForPersistenceTest(id, "laborer", 1));
-            } finally { w.connection.rollback(); w.connection.setAutoCommit(true); }
+            w.sql("UPDATE production_executions SET automatic=1 WHERE building_id='" + id + "'");
+            assertThrows(CommitOutcomeUnknownException.class, () -> w.staffing.load(id));
+            assertThrows(CommitOutcomeUnknownException.class, () -> w.identities.load(id));
+            assertThrows(CommitOutcomeUnknownException.class, () -> w.supply.occupied(TestIdentities.REGION, "laborer"));
+            assertThrows(CommitOutcomeUnknownException.class, () -> w.coordinator.prepare(id));
+            assertTrue(w.physical.isClosed());
+            try (var fresh = new LaborTestWorld(file())) {
+                assertFalse(fresh.production.execution(id).automatic());
+                assertNull(fresh.staffing.load(id).batchId());
+            }
         }
     }
+    private static void tryStart(LaborTestWorld world, UUID id) {
+        try { world.production.startBatch(id); }
+        catch (com.bbmurloc.victoriaeconomics.server.production.application.ProductionStartBlocked retryable) { }
+    }
+
     private LaborTestWorld world(AtomicReference<Faults> reference) throws Exception {
         return new LaborTestWorld(file(), base -> { var faults = new Faults(base); reference.set(faults); return faults.connection; });
     }

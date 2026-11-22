@@ -10,7 +10,11 @@ import com.bbmurloc.victoriaeconomics.server.production.infrastructure.*;
 import com.bbmurloc.victoriaeconomics.server.production.port.BuildingPayrollPort.State;
 import com.bbmurloc.victoriaeconomics.server.production.port.ProductionExecutionRepository;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.*;
-import com.bbmurloc.victoriaeconomics.server.workforce.domain.*;
+import com.bbmurloc.victoriaeconomics.server.company.domain.CompanyId;
+import com.bbmurloc.victoriaeconomics.server.region.domain.RegionId;
+import com.bbmurloc.victoriaeconomics.server.inventory.domain.GoodsInventory;
+import com.bbmurloc.victoriaeconomics.server.production.port.ProductionJournal.StartIntent;
+import com.bbmurloc.victoriaeconomics.server.payroll.domain.PayrollAccrual;
 import com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.*;
 import com.bbmurloc.victoriaeconomics.server.payroll.infrastructure.*;
 import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore;
@@ -35,7 +39,7 @@ public final class ProductionBoundaryCoordinator {
     public ProductionBoundaryCoordinator(Connection c,ProductionRecipeResolver recipes,OccupationRegistry occupations,Object lock){
         connection=c;this.lock=lock;this.occupations=occupations;
         buildings=new SqliteBuildingRepository(c,lock);methods=new SqliteProductionMethodConfigurationRepository(c,recipes,lock);
-        executions=new SqliteProductionExecutionRepository(c,lock);staffing=new SqliteBuildingStaffingRepository(c,recipes,occupations,lock);
+        executions=new SqliteProductionExecutionRepository(c,lock);staffing=new SqliteBuildingStaffingRepository(c,lock);
         supply=new SqliteRegionalLaborSupplyRepository(c,occupations,lock);payroll=new SqlitePayrollRepository(c,lock);
         wages=new SqliteBuildingPayrollQuery(c,lock);inventory=new SqliteInventoryStore(c,lock);
     }
@@ -43,6 +47,16 @@ public final class ProductionBoundaryCoordinator {
     public ProductionMethodConfiguration methods(UUID id){return methods.load(id);}
     public long acceptedTick(){return new SqliteEconomicTimeRepository(connection,lock).load().acceptedTick();}
     public List<UUID> buildingIds(){synchronized(lock){return buildings.loadAll().stream().filter(b->b.lifecycle()==BuildingLifecycle.EXISTING).map(EconomicBuilding::getId).toList();}}
+    Map<RegionId, List<UUID>> buildingsByRegion() {
+        synchronized (lock) {
+            var regions = new TreeMap<RegionId, List<UUID>>(Comparator.comparing(RegionId::toString));
+            buildings.loadAll().stream().filter(b -> b.lifecycle() == BuildingLifecycle.EXISTING)
+                    .sorted(Comparator.comparing(EconomicBuilding::getId))
+                    .forEach(b -> regions.computeIfAbsent(b.regionId(), ignored -> new ArrayList<>()).add(b.getId()));
+            return regions;
+        }
+    }
+
     private <T>T write(SqliteTransactions.WriteWork<T> work){
         try (var diagnosticScope = EconomyDiagnostics.scope("production.coordinator.write")) {synchronized(lock){
         try{return SqliteTransactions.write(connection,work);}
@@ -67,85 +81,141 @@ public final class ProductionBoundaryCoordinator {
         change.accept(m,e.blocksConfiguration());
         if(m.configurationRevision()==revision)return null;
         if(e.blocksConfiguration())methods.inTransaction(tx).save(m,revision);
-        else reconfigure(tx,id,e,m,revision,staffing.inTransaction(tx).load(id),executionRepository);
+        else reconfigure(tx,id,e,m,revision,executionRepository);
         return null;
     });}
-    /** Returns true only when a durable arrears-dismissal abort decision now needs resource settlement. */
-    public boolean requestStaffing(UUID id,String role,Integer target){return write(tx->{
-        var b=admit(tx,id);noUnresolvedStart(tx,id);if(occupations.get(role)==null)throw new IllegalArgumentException("Unknown occupation");
-        var repo=staffing.inTransaction(tx);var old=repo.load(id);var m=methods.inTransaction(tx).load(id);var executionRepository=executions.inTransaction(tx);var e=executionRepository.load(id);
-        var requested=target==null?old.cancel(role):old.requestTarget(role,target,m.recipe().requiredWorkers());
-        if(requested==old)return false;
-        if(target!=null&&!e.blocksConfiguration()){
-            reconfigure(tx,id,e,m,m.configurationRevision(),requested,executionRepository);return false;
+    public void reconfigure(UUID id) {
+        try (var measurement = EconomyDiagnostics.stage("production.reconfigure")) {
+            write(tx -> {
+                var executionsInTransaction = executions.inTransaction(tx);
+                var execution = executionsInTransaction.load(id);
+                var method = methods.inTransaction(tx).load(id);
+                reconfigure(tx, id, execution, method, method.configurationRevision(), executionsInTransaction);
+                return null;
+            });
         }
-        repo.save(requested,old.revision());
-        if(target!=null&&target<old.employed().getOrDefault(role,0)&&e.hasUnfinishedBatch()
-                &&wages.inTransaction(tx,id,b.ownerCompanyId())==State.ARREARS){
-            e.terminate();executionRepository.save(e,e.executionRevision());return true;
-        }
-        return false;
-    });}
-    public void reconfigure(UUID id){try(var measurement=EconomyDiagnostics.stage("production.reconfigure")){write(tx->{
-        var executionRepository=executions.inTransaction(tx);var e=executionRepository.load(id);if(e.hasUnfinishedBatch())throw new IllegalStateException("Running Batch defers staffing and PM changes");
-        var m=methods.inTransaction(tx).load(id);reconfigure(tx,id,e,m,m.configurationRevision(),staffing.inTransaction(tx).load(id),executionRepository);return null;
-    });}}
-    private void reconfigure(SqliteTransactions.WriteSession tx,UUID id,ProductionExecution e,ProductionMethodConfiguration m,long pmRevision,BuildingStaffing requested,ProductionExecutionRepository.Session executionRepository)throws SQLException{
-        var b=admit(tx,id);noUnresolvedStart(tx,id);if(e.hasUnfinishedBatch())throw new IllegalStateException("Previous Batch unfinished");
-        long tick=SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick();
-        var wagesRepo=payroll.inTransaction(tx);var segment=wagesRepo.currentForBuilding(id);
-        if(!wagesRepo.currencyForRegion(b.regionId()).equals(segment.currency()))throw new IllegalStateException("Regional wage currency mismatch");
-        wagesRepo.accrue(segment,tick);
-        var staffRepo=staffing.inTransaction(tx);var before=staffRepo.load(id);
-        m.applyPending();var capacity=m.recipe().requiredWorkers();
-        var capped=StaffingTransition.forCapacity(requested,capacity).after();var available=new TreeMap<String,Long>();
-        var regional=supply.inTransaction(tx);
-        for(String role:capacity.keySet()){
-            long total=regional.find(b.regionId(),role).map(RegionalLaborSupply::totalSupply).orElse(0L);
-            long free=Math.subtractExact(total,regional.occupied(b.regionId(),role));
-            free=Math.addExact(free,Math.subtractExact(before.employed().getOrDefault(role,0),capped.employed().getOrDefault(role,0)));
-            available.put(role,free);
-        }
-        var planned=StaffingTransition.consumePending(requested,capacity,available).after();
-        if(m.configurationRevision()!=pmRevision)methods.inTransaction(tx).save(m,pmRevision);
-        if(!before.employed().equals(planned.employed())||!before.pending().equals(planned.pending())){
-            var changed=new BuildingStaffing(id,planned.employed(),planned.pending(),Math.incrementExact(before.revision()));
-            staffRepo.save(changed,before.revision());
-            long count=0;for(int n:changed.employed().values())count=Math.addExact(count,n);
-            if(count!=segment.employees())wagesRepo.changeEmployees(segment.id(),count,tick);
-        }
-        if(e.boundary()==ProductionExecution.Boundary.RECONFIGURING){e.reconfigurationCompleted();executionRepository.save(e,e.executionRevision());}
     }
-    public record StartPlan(ProductionBatchConfiguration configuration,long executionRevision){}
-    private record PreparedStart(ProductionBatchConfiguration configuration, ProductionExecution execution, boolean reserved) {}
-    public StartPlan prepare(UUID id){try(var measurement=EconomyDiagnostics.stage("production.prepare")){return write(tx->{var prepared=prepare(tx,id,null,executions.inTransaction(tx));return new StartPlan(prepared.configuration(),prepared.execution().executionRevision());});}}
-    private PreparedStart prepare(SqliteTransactions.WriteSession tx,UUID id,UUID reservedBatch,ProductionExecutionRepository.Session executionRepository)throws SQLException{
-        var b=admit(tx,id);if(b.getStatus()!=BuildingStatus.ACTIVE)throw new ProductionStartBlocked("Building stopped");
-        var e=executionRepository.load(id);if(e.batch()!=null||e.boundary()!=ProductionExecution.Boundary.NONE)throw new ProductionStartBlocked("Previous Batch or reconfiguration unfinished");
-        if(wages.inTransaction(tx,id,b.ownerCompanyId())!=State.CURRENT)throw new ProductionStartBlocked("Payroll is not CURRENT or is unavailable");
-        var m=methods.inTransaction(tx).load(id);if(m.pending().isPresent())throw new IllegalStateException("Pending PM not applied");
-        var stock=inventory.inspectStart(tx,id,m.recipe().inputs(),reservedBatch);
-        if(!stock.configured())throw new ProductionStartBlocked("Storage location has not been configured");
-        if(stock.overCapacity())throw new ProductionStartBlocked("Storage is over capacity");
-        var s=staffing.inTransaction(tx).load(id);WorkforcePlan plan;
-        try{plan=new WorkforcePlanningService().plan(m.recipe().requiredWorkers(),s.employed());}catch(IllegalStateException denied){throw new ProductionStartBlocked(denied.getMessage());}
-        if(reservedBatch==null&&!stock.inputsAvailable())throw new ProductionStartBlocked("Missing batch input");
-        return new PreparedStart(new ProductionBatchConfiguration(m.effective().methods(),m.recipe(),plan,m.effectiveRevision()),e,stock.reserved());
-    }
-    public ProductionBatch commitStart(UUID id,UUID batch,StartPlan expected,boolean automaticRequest){try(var measurement=EconomyDiagnostics.stage("production.commitStart")){return write(tx->{
-        var executionRepository=executions.inTransaction(tx);var prepared=prepare(tx,id,batch,executionRepository);var current=prepared.configuration();if(!current.equals(expected.configuration()))throw new IllegalStateException("Production conditions changed before commit");
-        var e=prepared.execution();if(e.executionRevision()!=expected.executionRevision())throw new IllegalStateException("Execution changed before final start");
-        if(automaticRequest&&!e.automatic())throw new IllegalStateException("Automatic production disabled before commit");
-        try(var s=connection.prepareStatement("SELECT batch_id FROM production_start_intents WHERE building_id=?")){
-            s.setString(1,id.toString());try(var r=s.executeQuery()){if(!r.next()||!batch.toString().equals(r.getString(1)))throw new IllegalStateException("StartIntent does not match Batch");}
+
+    private void reconfigure(SqliteTransactions.WriteSession tx, UUID id, ProductionExecution execution,
+                             ProductionMethodConfiguration method, long pmRevision,
+                             ProductionExecutionRepository.Session repository) throws SQLException {
+        var building = admit(tx, id);
+        noUnresolvedStart(tx, id);
+        if (execution.hasUnfinishedBatch()) throw new IllegalStateException("Previous Batch unfinished");
+        var segment = payrollSegment(tx, building);
+        if (staffing.inTransaction(tx).load(id).batchId() != null || segment.employees() != 0)
+            throw new IllegalStateException("Idle production must not retain batch labor");
+        method.applyPending();
+        if (method.configurationRevision() != pmRevision) {
+            if (!payroll.inTransaction(tx).currencyForRegion(building.regionId()).equals(segment.currency()))
+                throw new IllegalStateException("Regional wage currency mismatch");
+            methods.inTransaction(tx).save(method, pmRevision);
         }
-        if(!prepared.reserved())throw new IllegalStateException("Complete input Reservation required");
-        // A manual start can race the callback after this Tick was accepted. Persist that the
-        // advance decision saw no old Batch, together with the new Batch's zero progress.
-        long tick=SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick();
-        if(e.processingTick()==null&&e.lastCompletedTick()<tick)e.beginTick(tick);
-        var started=e.start(batch,current);if(!automaticRequest)e.requestAutomatic(true);executionRepository.save(e,e.executionRevision());return started;
-    });}}
+        if (execution.boundary() == ProductionExecution.Boundary.RECONFIGURING) {
+            execution.reconfigurationCompleted();
+            repository.save(execution, execution.executionRevision());
+        }
+    }
+
+    private PayrollAccrual payrollSegment(SqliteTransactions.WriteSession tx, EconomicBuilding building) throws SQLException {
+        var segment = payroll.inTransaction(tx).currentForBuilding(building.getId());
+        if (!segment.company().equals(building.ownerCompanyId()) || !segment.region().equals(building.regionId()))
+            throw new IllegalStateException("Payroll ownership does not match building");
+        return segment;
+    }
+
+    public record StartPlan(ProductionBatchConfiguration configuration, CompanyId company, RegionId region,
+                            long identityRevision, long configurationRevision, long executionRevision) {}
+    private record PreparedStart(StartPlan plan, EconomicBuilding building, ProductionExecution execution,
+                                 long tick, boolean reserved) {}
+
+    public StartPlan prepare(UUID id) {
+        try (var measurement = EconomyDiagnostics.stage("production.prepare")) {
+            return write(tx -> {
+                noUnresolvedStart(tx, id);
+                return prepare(tx, id, null, executions.inTransaction(tx)).plan();
+            });
+        }
+    }
+
+    private PreparedStart prepare(SqliteTransactions.WriteSession tx, UUID id, UUID reservedBatch,
+                                  ProductionExecutionRepository.Session repository) throws SQLException {
+        var building = admit(tx, id);
+        if (building.getStatus() != BuildingStatus.ACTIVE) throw new ProductionStartBlocked("Building stopped");
+        var execution = repository.load(id);
+        if (execution.batch() != null || execution.boundary() != ProductionExecution.Boundary.NONE)
+            throw new ProductionStartBlocked("Previous Batch or reconfiguration unfinished");
+        long tick = SqliteEconomicTimeRepository.inTransaction(connection, tx).acceptedTick();
+        if (tick < execution.nextStartNotBeforeTick()) throw new ProductionStartBlocked("Wait until the next economic Tick");
+        if (staffing.inTransaction(tx).load(id).batchId() != null || payrollSegment(tx, building).employees() != 0)
+            throw new IllegalStateException("Idle production must not retain batch labor");
+        if (wages.inTransaction(tx, id, building.ownerCompanyId()) != State.CURRENT)
+            throw new ProductionStartBlocked("Payroll is not CURRENT or is unavailable");
+        var method = methods.inTransaction(tx).load(id);
+        if (method.pending().isPresent()) throw new IllegalStateException("Pending PM not applied");
+        var recipe = method.recipe();
+        var stock = inventory.inspectStart(tx, id, recipe.inputs(), reservedBatch);
+        if (!stock.configured()) throw new ProductionStartBlocked("Storage location has not been configured");
+        if (stock.overCapacity()) throw new ProductionStartBlocked("Storage is over capacity");
+        if (reservedBatch == null && !stock.inputsAvailable()) throw new ProductionStartBlocked("Missing batch input");
+
+        var regional = supply.inTransaction(tx);
+        var hired = new TreeMap<String, Integer>();
+        boolean missing = false;
+        for (var requirement : recipe.requiredWorkers().entrySet()) {
+            String occupation = requirement.getKey();
+            if (occupations.get(occupation) == null) throw new IllegalStateException("Unknown recipe occupation: " + occupation);
+            long total = regional.find(building.regionId(), occupation).map(s -> s.totalSupply()).orElse(0L);
+            long occupied = regional.occupied(building.regionId(), occupation);
+            if (occupied < 0 || occupied > total) throw new IllegalStateException("Invalid regional labor allocation");
+            int count = Math.toIntExact(Math.min(requirement.getValue(), Math.subtractExact(total, occupied)));
+            missing |= count == 0;
+            hired.put(occupation, count);
+        }
+        if (missing) throw new ProductionStartBlocked("Regional labor unavailable for a required occupation");
+        var workforce = new WorkforcePlanningService().plan(recipe.requiredWorkers(), hired);
+        var config = new ProductionBatchConfiguration(method.effective().methods(), recipe, workforce, method.effectiveRevision());
+        var plan = new StartPlan(config, building.ownerCompanyId(), building.regionId(), building.identityRevision(),
+                method.configurationRevision(), execution.executionRevision());
+        return new PreparedStart(plan, building, execution, tick, stock.reserved());
+    }
+
+    public ProductionBatch commitStart(UUID id, UUID batch, StartPlan expected, boolean automaticRequest) {
+        try (var measurement = EconomyDiagnostics.stage("production.commitStart")) {
+            return write(tx -> {
+                var repository = executions.inTransaction(tx);
+                var prepared = prepare(tx, id, batch, repository);
+                if (!prepared.plan().equals(expected)) throw new ProductionStartBlocked("Production conditions changed before commit");
+                var execution = prepared.execution();
+                if (automaticRequest && !execution.automatic()) throw new ProductionStartBlocked("Automatic production disabled before commit");
+                try (var s = connection.prepareStatement("SELECT batch_id FROM production_start_intents WHERE building_id=?")) {
+                    s.setString(1, id.toString());
+                    try (var rows = s.executeQuery()) {
+                        if (!rows.next() || !batch.toString().equals(rows.getString(1))) throw new IllegalStateException("StartIntent does not match Batch");
+                    }
+                }
+                if (!prepared.reserved()) throw new IllegalStateException("Complete input Reservation required");
+
+                long tick = prepared.tick();
+                var wageRepository = payroll.inTransaction(tx);
+                var segment = payrollSegment(tx, prepared.building());
+                if (!wageRepository.currencyForRegion(prepared.building().regionId()).equals(segment.currency()))
+                    throw new IllegalStateException("Regional wage currency mismatch");
+                wageRepository.accrue(segment, tick);
+
+                if (execution.processingTick() == null && execution.lastCompletedTick() < tick) execution.beginTick(tick);
+                var started = execution.start(batch, expected.configuration(), tick);
+                if (!automaticRequest) execution.requestAutomatic(true);
+                repository.save(execution, execution.executionRevision());
+                var staff = staffing.inTransaction(tx);
+                var before = staff.load(id);
+                staff.acquire(id, batch, started.getConfiguration().workforcePlan().participatingWorkers(), before.revision());
+                wageRepository.changeEmployees(segment.id(), staff.load(id).totalOccupied(), tick);
+                return started;
+            });
+        }
+    }
+
     /** No detached aggregate escapes this decision; success means physical commit and cleanup were confirmed. */
     public enum TickResult { ALREADY_COMPLETED, COMPLETED, NEEDS_FOLLOW_UP }
     /** Keeps the explicit staged capability used by recovery/fault clients. */
@@ -180,7 +250,7 @@ public final class ProductionBoundaryCoordinator {
             else if(e.batch()==null&&!e.automatic()){
                 if(!held){
                     var m=methods.inTransaction(tx).load(id);
-                    reconfigure(tx,id,e,m,m.configurationRevision(),staffing.inTransaction(tx).load(id),executionRepository);
+                    reconfigure(tx,id,e,m,m.configurationRevision(),executionRepository);
                     finished=true;
                 }else{
                     var op=new SqliteBuildingLifecycleOperationRepository(connection,lock).inTransaction(tx).forBuilding(id).orElseThrow();
@@ -200,7 +270,65 @@ public final class ProductionBoundaryCoordinator {
         });
     }
     public void finishTick(UUID id,long tick){write(tx->{var repo=executions.inTransaction(tx);var e=repo.load(id);if(e.lastCompletedTick()==tick&&e.processingTick()==null)return null;e.finishTick(tick);repo.save(e,e.executionRevision());return null;});}
-    public void confirmSettlement(UUID id,UUID batch){write(tx->{var repo=executions.inTransaction(tx);var e=repo.load(id);if(e.batch()==null&&e.lastBatch()!=null&&e.lastBatch().getId().equals(batch)&&e.lastBatch().isEnded())return null;if(e.batch()==null||!e.batch().getId().equals(batch))throw new IllegalStateException("Foreign settlement receipt");if(!e.batch().isEnded()){e.settlementCompleted(batch);repo.save(e,e.executionRevision());}return null;});}
+    public void confirmSettlement(UUID id, ProductionSettlement settlement) {
+        try (var measurement = EconomyDiagnostics.stage("production.confirmSettlement")) {
+            write(tx -> {
+                var repo = executions.inTransaction(tx);
+                var execution = repo.load(id);
+                UUID batchId = settlement.batchId();
+                var batch = execution.batch();
+                boolean current = batch != null && batch.getId().equals(batchId);
+                if (!current) batch = executions.findBatch(tx, batchId);
+                if (batch == null || !batch.getBuildingId().equals(id)
+                        || !ProductionSettlement.forBatch(batch).equals(settlement))
+                    throw new IllegalStateException("Foreign or mismatched settlement");
+
+                var stock = inventory.inspect(tx, id);
+                if (!Objects.equals(stock.settlements().get(batchId), new GoodsInventory.Settlement(settlement))
+                        || stock.reservations().containsKey(batchId))
+                    throw new IllegalStateException("Missing durable settlement evidence");
+
+                var staff = staffing.inTransaction(tx);
+                var allocation = staff.load(id);
+                long tick = SqliteEconomicTimeRepository.inTransaction(connection, tx).acceptedTick();
+                if (batch.isEnded()) {
+                    if (batch.endedTick() > tick || batchId.equals(allocation.batchId()))
+                        throw new IllegalStateException("Ended batch retains labor or has an invalid end Tick");
+                    return null;
+                }
+                if (!current || !batchId.equals(allocation.batchId())
+                        || !allocation.occupiedByOccupation().equals(batch.getConfiguration().workforcePlan().participatingWorkers()))
+                    throw new IllegalStateException("Current batch labor does not match settlement");
+
+                var wageRepository = payroll.inTransaction(tx);
+                var segment = payrollSegment(tx, live(tx, id));
+                wageRepository.accrue(segment, tick);
+                staff.release(id, batchId, allocation.revision());
+                wageRepository.changeEmployees(segment.id(), 0, tick);
+                execution.settlementCompleted(batchId, tick);
+                repo.save(execution, execution.executionRevision());
+                return null;
+            });
+        }
+    }
+
+    void verifyCommittedStart(StartIntent intent) {
+        write(tx -> {
+            UUID id = intent.buildingId();
+            var execution = executions.inTransaction(tx).load(id);
+            var batch = execution.batch();
+            var allocation = staffing.inTransaction(tx).load(id);
+            var segment = payrollSegment(tx, live(tx, id));
+            if (batch == null || !batch.getId().equals(intent.batchId()) || batch.isEnded()
+                    || !batch.getId().equals(allocation.batchId())
+                    || !batch.getConfiguration().workforcePlan().participatingWorkers().equals(allocation.occupiedByOccupation())
+                    || allocation.totalOccupied() != segment.employees()
+                    || !batch.getConfiguration().resolvedRecipe().inputs().equals(inventory.inspect(tx, id).reservations().get(batch.getId())))
+                throw new IllegalStateException("Committed start graph cannot be confirmed");
+            return null;
+        });
+    }
+
     public void automatic(UUID id, boolean enabled) {
         write(tx -> {
             admit(tx, id);

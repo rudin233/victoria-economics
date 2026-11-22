@@ -28,7 +28,7 @@ public final class TestIdentities {
             insert.setString(1, id.toString()); insert.setString(2, type);
             insert.setString(3, COMPANY.toString()); insert.setString(4, REGION.toString()); insert.executeUpdate();
         }
-        try (var insert = connection.prepareStatement("INSERT INTO building_staffing VALUES(?,0)")) {
+        try (var insert = connection.prepareStatement("INSERT INTO building_staffing(building_id,revision) VALUES(?,0)")) {
             insert.setString(1, id.toString()); insert.executeUpdate();
         }
         long version;

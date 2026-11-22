@@ -60,7 +60,7 @@ public final class FinancialTestWorld implements AutoCloseable {
     public UUID staffingFixture(int employees, long wage) throws Exception {
         sql("UPDATE payroll_runtime SET authority='BUILDING_STAFFING'");
         if(scalar("SELECT COUNT(*) FROM payroll_accruals")==0)sql("UPDATE regional_wage_rates SET amount="+wage);
-        var b = world.create(); world.setSupply(100); world.commands.requestTarget(b.getId(), "laborer", employees); world.applyPendingForPersistenceTest(b.getId());
+        var b = world.create(); world.startPayrollFixture(b.getId(), employees);
         if (scalar("SELECT COUNT(*) FROM regional_wage_rates") == 0) accrual.configureRate(new RegionalWageRate(TestIdentities.REGION, CURRENCY, time.load().acceptedTick(), wage, 0));
         return b.getId();
     }
@@ -83,12 +83,16 @@ public final class FinancialTestWorld implements AutoCloseable {
     }
     private long timeRead(SqliteTransactions.WriteSession tx) { return SqliteEconomicTimeRepository.inTransaction(c,tx).acceptedTick(); }
     public void changeEmployeesFixture(UUID segment, int count) {
-        SqliteTransactions.write(c, tx -> {
-            var p = payroll.inTransaction(tx); var old = p.load(segment); p.accrue(old, timeRead(tx));
-            var repo = world.staffing.inTransaction(tx); var staffing = repo.load(old.buildingId());
-            var changed = new com.bbmurloc.victoriaeconomics.server.workforce.domain.BuildingStaffing(staffing.buildingId(), count == 0 ? Map.of() : Map.of("laborer", count), staffing.pending(), Math.incrementExact(staffing.revision()));
-            repo.save(changed, staffing.revision()); p.changeEmployees(segment, count, timeRead(tx)); return null;
-        });
+        var prior = payroll.load(segment);
+        var repo = new com.bbmurloc.victoriaeconomics.server.production.infrastructure.SqliteProductionExecutionRepository(c, world.lock);
+        var execution = repo.load(prior.buildingId());
+        execution.terminate();
+        repo.save(execution, execution.executionRevision());
+        world.production.retry(prior.buildingId());
+        if (count > 0) {
+            acceptedTimeFixture(Math.incrementExact(time.load().acceptedTick()));
+            world.startPayrollFixture(prior.buildingId(), count, false);
+        }
     }
     public void sql(String sql) throws SQLException { world.sql(sql); }
     public long scalar(String sql) throws SQLException { try (var s = c.createStatement(); var r = s.executeQuery(sql)) { r.next(); return r.getLong(1); } }

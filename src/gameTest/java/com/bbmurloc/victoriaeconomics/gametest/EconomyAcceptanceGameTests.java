@@ -21,9 +21,9 @@ public final class EconomyAcceptanceGameTests {
     @GameTest(template="empty",timeoutTicks=2700)
     public static void commandsLifecycleRestartUnloadedAnchorAndRealPayroll(GameTestHelper helper)throws Exception{
         var server=helper.getLevel().getServer();helper.assertTrue(ServerEconomyRuntime.isStarted(server),"NeoForge did not start the formal economy context");
-        var life=new GameEconomyFixture(server);var sale=life.create(10,4);var demolition=life.create(10,4);
-        var paid=new GameEconomyFixture(server);paid.fund(100000);var continuous=paid.create(10,4);
-        var late=new GameEconomyFixture(server);var slow=late.create(1,1);
+        var life=new GameEconomyFixture(server);var sale=life.create();var demolition=life.create();
+        var paid=new GameEconomyFixture(server);paid.fund(100000);var continuous=paid.create();
+        var late=new GameEconomyFixture(server);late.setSupply(1,1);var slow=late.create();
         try {life.command("ve production "+sale.getId()+" start",2);helper.fail("Permission level 2 could mutate production");}catch(com.mojang.brigadier.exceptions.CommandSyntaxException expected){}
         helper.assertTrue(life.command("ve production "+sale.getId()+" status",2)==1,"Read permission failed");
         var local=new BlockPos(1,1,1);helper.setBlock(local,ModBlocks.BUILDING_ANCHOR_BLOCK.get());var abs=helper.absolutePos(local);
@@ -65,8 +65,7 @@ public final class EconomyAcceptanceGameTests {
                     }
                 }
                 if(elapsed>0&&elapsed<=1100){
-                    var batch=ctx.getProductionService().execution(continuous.getId()).batch();
-                    helper.assertTrue(batch!=null&&batch.getProgressUnits()==elapsed%200,"Continuous production inserted a gap or double advance");
+                    GameEconomyFixture.assertUnpausedProgress(helper, ctx.getProductionService().execution(continuous.getId()), accepted);
                 }
                 if(accepted/1200>began/1200&&arrearsChecked.compareAndSet(false,true)){
                     var e=ctx.getProductionService().execution(slow.getId());helper.assertTrue(e.batch()!=null&&e.batch().getStatus()==ProductionBatch.Status.PAUSED&&e.batch().getId().equals(slowBatch),"Real arrears did not pause original Batch");

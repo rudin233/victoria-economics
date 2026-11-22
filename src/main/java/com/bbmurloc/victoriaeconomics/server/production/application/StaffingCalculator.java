@@ -3,7 +3,7 @@ package com.bbmurloc.victoriaeconomics.server.production.application;
 import com.bbmurloc.victoriaeconomics.server.workforce.port.StaffingQueryPort;
 import java.util.*;
 
-/** Integer Staffing, capacity, Pending and regional supply diagnostics from one committed snapshot. */
+/** 从同一快照显示本批占用、配方需求及区域供给。 */
 public final class StaffingCalculator {
     private final StaffingQueryPort query;
     public StaffingCalculator(StaffingQueryPort query) { this.query = Objects.requireNonNull(query); }
@@ -15,11 +15,10 @@ public final class StaffingCalculator {
             var supply = entry.getValue();
             OptionalLong available = supply.total().isPresent()
                     ? OptionalLong.of(Math.subtractExact(supply.total().getAsLong(), supply.occupied())) : OptionalLong.empty();
-            Integer pending = facts.staffing().pending().get(role);
             occupations.put(role, new OccupationStaffingSnapshot(role, facts.capacity().getOrDefault(role, 0),
-                    facts.staffing().employed().getOrDefault(role, 0), pending == null ? OptionalInt.empty() : OptionalInt.of(pending),
+                    facts.staffing().occupiedByOccupation().getOrDefault(role, 0),
                     supply.total(), supply.occupied(), available));
         }
-        return new StaffingSnapshot(building, facts.staffing().revision(), facts.effectivePmRevision(), occupations);
+        return new StaffingSnapshot(building, facts.staffing().batchId(), facts.staffing().revision(), facts.effectivePmRevision(), occupations);
     }
 }

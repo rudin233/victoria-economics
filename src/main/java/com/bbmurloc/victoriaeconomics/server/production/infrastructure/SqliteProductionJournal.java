@@ -14,23 +14,25 @@ public final class SqliteProductionJournal implements ProductionJournal {
 
     @Override
     public void recordStart(StartIntent intent) {
-        try (var statement = connection.prepareStatement("INSERT INTO production_start_intents(batch_id, building_id) VALUES (?, ?)")) {
-            statement.setString(1, intent.batchId().toString());
-            statement.setString(2, intent.buildingId().toString());
-            statement.executeUpdate();
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to record production start: " + intent.batchId(), e);
-        }
+        SqliteTransactions.write(connection, tx -> {
+            try (var statement = connection.prepareStatement("INSERT INTO production_start_intents(batch_id, building_id) VALUES (?, ?)")) {
+                statement.setString(1, intent.batchId().toString());
+                statement.setString(2, intent.buildingId().toString());
+                statement.executeUpdate();
+            }
+            return null;
+        });
     }
 
     @Override
     public void finishStart(UUID batch) {
-        try (var statement = connection.prepareStatement("DELETE FROM production_start_intents WHERE batch_id = ?")) {
-            statement.setString(1, batch.toString());
-            statement.executeUpdate();
-        } catch (SQLException e) {
-            throw new IllegalStateException("Failed to finish production start: " + batch, e);
-        }
+        SqliteTransactions.write(connection, tx -> {
+            try (var statement = connection.prepareStatement("DELETE FROM production_start_intents WHERE batch_id = ?")) {
+                statement.setString(1, batch.toString());
+                statement.executeUpdate();
+            }
+            return null;
+        });
     }
 
     @Override

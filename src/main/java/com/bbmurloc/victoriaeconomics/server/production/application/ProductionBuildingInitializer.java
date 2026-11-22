@@ -9,7 +9,7 @@ import java.sql.*;
 import java.util.*;
 import java.util.function.Supplier;
 
-/** Four aggregate roots and the initial payroll segment share one physical creation transaction. */
+/** 建筑、方法、执行、空用工占用与零基数工资段由同一物理事务创建。 */
 public final class ProductionBuildingInitializer implements BuildingCreation {
     private final Connection connection;
     private final Object lock;

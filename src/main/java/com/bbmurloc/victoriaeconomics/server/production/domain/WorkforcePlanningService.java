@@ -2,17 +2,17 @@ package com.bbmurloc.victoriaeconomics.server.production.domain;
 
 import java.util.*;
 
-/** Exact speed from effective PM demand and authoritative employed counts. */
+/** 按本批招聘人数与满编需求计算精确速度。 */
 public final class WorkforcePlanningService {
-    public WorkforcePlan plan(Map<String,Integer> demand,Map<String,Integer> employed){
+    public WorkforcePlan plan(Map<String,Integer> demand,Map<String,Integer> hired){
         if(demand.isEmpty())throw new IllegalArgumentException("Production requires positive occupation demand");
-        employed.forEach((role,count)->{if(count==null||count<0||count>demand.getOrDefault(role,0))throw new IllegalStateException("Employment exceeds effective PM capacity");});
+        hired.forEach((role,count)->{if(count==null||count<0||!demand.containsKey(role)||count>demand.get(role))throw new IllegalArgumentException("Invalid batch hire count");});
         int numerator=1,denominator=1;
         var participants=new TreeMap<String,Integer>();
         for(var entry:demand.entrySet()){
-            int required=entry.getValue(),count=employed.getOrDefault(entry.getKey(),0);
+            int required=entry.getValue(),count=hired.getOrDefault(entry.getKey(),0);
             if(required<=0)throw new IllegalArgumentException("Positive occupation demand required");
-            if(Math.multiplyExact((long)count,10)<required)throw new IllegalStateException("Minimum 10% staffing not met: "+entry.getKey());
+            if(count==0)throw new IllegalStateException("No worker for required occupation: "+entry.getKey());
             participants.put(entry.getKey(),count);
             if(Math.multiplyExact((long)count,denominator)<Math.multiplyExact((long)numerator,required)){numerator=count;denominator=required;}
         }

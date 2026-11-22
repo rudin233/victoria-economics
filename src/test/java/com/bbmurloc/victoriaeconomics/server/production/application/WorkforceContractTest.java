@@ -1,46 +1,91 @@
 package com.bbmurloc.victoriaeconomics.server.production.application;
 
+import com.bbmurloc.victoriaeconomics.server.production.domain.ProductionSettlement;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import com.bbmurloc.victoriaeconomics.server.TestIdentities;
-import com.bbmurloc.victoriaeconomics.server.finance.domain.CurrencyId;
-import com.bbmurloc.victoriaeconomics.server.payroll.domain.RegionalWageRate;
 import java.nio.file.Path;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class WorkforceContractTest {
     @TempDir Path dir;
-    @Test void productionUsesOnlyPersistentIntegerStaffingWithNoEmploymentTable()throws Exception{
-        try(var e=new TestEconomy(dir.resolve("authority.sqlite"),true)){
-            e.staffing.requestTarget(e.id,"laborer",6);e.staffing.requestTarget(e.id,"machinist",3);
-            var frozen=e.production.startBatch(e.id).getConfiguration();assertEquals(Map.of("laborer",6,"machinist",3),frozen.workforcePlan().participatingWorkers());assertEquals(0.6,frozen.productionSpeed());
-            assertEquals(0,e.scalar("SELECT COUNT(*) FROM sqlite_master WHERE name='employment_state'"));
-        }
-    }
-    @Test void pendingDoesNotChangeEffectiveHeadcountOrFrozenParticipation()throws Exception{
-        try(var e=new TestEconomy(dir.resolve("pending.sqlite"),true)){
-            var frozen=e.production.startBatch(e.id).getConfiguration();e.staffing.requestTarget(e.id,"laborer",3);
-            assertEquals(10,e.staffingRepository.load(e.id).employed().get("laborer"));assertEquals(3,e.staffingRepository.load(e.id).pending().get("laborer"));
-            assertEquals(14,e.scalar("SELECT employees FROM payroll_accruals"));assertEquals(frozen,e.execution().batch().getConfiguration());
-            assertThrows(IllegalStateException.class,()->e.staffing.applyEffectiveChanges(e.id));
-        }
-    }
-    @Test void newEmployeesAfterReservationAreRecheckedAndFailedStartCompensates()throws Exception{
-        try(var e=new TestEconomy(dir.resolve("recheck.sqlite"),true)){
-            e.inventory.afterReserve=()->e.staffingRaceFixture("machinist",0);
-            assertThrows(ProductionStartBlocked.class,()->e.production.startBatch(e.id));assertNull(e.execution().batch());assertTrue(e.stockState().reservations().isEmpty());assertTrue(e.journal.pendingStarts().isEmpty());
-        }
-    }
-    @Test void liveWageRateAndPendingRequestsCannotRewriteAnExistingBatchSnapshot()throws Exception{
-        try(var e=new TestEconomy(dir.resolve("wage-snapshot.sqlite"),true)){
-            var batch=e.production.startBatch(e.id);var frozen=batch.getConfiguration();e.ticks(50);
-            e.accrual.configureRate(new RegionalWageRate(TestIdentities.REGION,new CurrencyId(new UUID(700,1)),50,2,1));
-            e.staffing.requestTarget(e.id,"laborer",3);e.production.selectProductionMethod(e.id,"tooling_workshop_base","reduced_tools");
+    Path file() { return dir.resolve("labor.sqlite"); }
+
+    @Test void allPartialHiresParticipateAndFullRecipeSettlesAtBottleneckSpeed() throws Exception {
+        try (var e = new TestEconomy(file(), true)) {
+            e.setSupply("laborer", 6);
+            e.setSupply("machinist", 2);
+            var batch = e.production.startBatch(e.id);
+            var plan = batch.getConfiguration().workforcePlan();
+            assertEquals(Map.of("laborer", 6, "machinist", 2), plan.participatingWorkers());
+            assertEquals(1, plan.speedNumerator());
+            assertEquals(2, plan.speedDenominator());
+            assertEquals(8, e.scalar("SELECT employees FROM payroll_accruals"));
+            e.production.stopAfterCurrentBatch(e.id);
+            e.ticks(399);
+            assertEquals(399, e.execution().batch().getProgressUnits());
             e.ticks(1);
-            assertEquals(batch.getId(),e.execution().batch().getId());assertEquals(frozen,e.execution().batch().getConfiguration());
-            assertEquals(Map.of("laborer",10,"machinist",4),frozen.workforcePlan().participatingWorkers());assertEquals(51,e.execution().batch().getProgressUnits());
-            assertEquals(728,e.scalar("SELECT remainder FROM payroll_accruals"));assertEquals(14,e.scalar("SELECT employees FROM payroll_accruals"));
+            assertEquals(batch.getId(), e.execution().lastBatch().getId());
+            assertEquals(400L, e.execution().lastBatch().endedTick());
+            assertEquals(70, e.quantity("wood"));
+            assertEquals(30, e.quantity("tools"));
+            assertEquals(0, e.staffingRepository.load(e.id).totalOccupied());
+            assertEquals(0, e.scalar("SELECT employees FROM payroll_accruals"));
+        }
+    }
+
+    @Test void missingOneOccupationLeavesEveryOtherOccupationAndResourcesFree() throws Exception {
+        try (var e = new TestEconomy(file(), true)) {
+            e.setSupply("machinist", 0);
+            assertThrows(ProductionStartBlocked.class, () -> e.production.startBatch(e.id));
+            assertTrue(e.journal.pendingStarts().isEmpty());
+            assertTrue(e.stockState().reservations().isEmpty());
+            assertNull(e.staffingRepository.load(e.id).batchId());
+            assertEquals(0, e.scalar("SELECT employees FROM payroll_accruals"));
+            e.ticks(20);
+            assertEquals(0, e.scalar("SELECT remainder FROM payroll_accruals"));
+        }
+    }
+
+    @Test void historicalSettlementReplayDoesNotReleaseNewerBatchOrWriteWages() throws Exception {
+        try (var e = new TestEconomy(file(), true)) {
+            e.production.startBatch(e.id);
+            e.ticks(200);
+            var oldest = ProductionSettlement.forBatch(e.execution().lastBatch());
+            e.ticks(1);
+            var next = e.execution().batch();
+            var staffing = e.staffingRepository.load(e.id);
+            long wageRevision = e.scalar("SELECT revision FROM payroll_accruals");
+            e.coordinator.confirmSettlement(e.id, oldest);
+            assertEquals(next.getId(), e.execution().batch().getId());
+            assertEquals(staffing, e.staffingRepository.load(e.id));
+            assertEquals(wageRevision, e.scalar("SELECT revision FROM payroll_accruals"));
+        }
+    }
+
+    @Test void threeBuildingsRotateScarceLaborWithoutSameTickRehire() throws Exception {
+        try (var e = new TestEconomy(file(), true)) {
+            e.setSupply("laborer", 10);
+            e.setSupply("machinist", 4);
+            var ids = List.of(e.id, e.createStockedBuilding().getId(), e.createStockedBuilding().getId());
+            for (var id : ids) e.production.setAutomatic(id, true);
+            var winners = new HashSet<UUID>();
+            e.ticks(1);
+            for (int round = 0; round < 3; round++) {
+                long tick = e.clock.elapsedTicks();
+                var running = ids.stream().filter(id -> e.repository.load(id).batch() != null).toList();
+                assertEquals(1, running.size());
+                winners.add(running.getFirst());
+                var batch = e.repository.load(running.getFirst()).batch();
+                assertEquals(tick, batch.startedTick());
+                assertEquals(0, batch.getProgressUnits());
+                e.production.onServerTick();
+                assertEquals(0, e.repository.load(running.getFirst()).batch().getProgressUnits());
+                e.ticks(200);
+                assertNull(e.repository.load(running.getFirst()).batch());
+                assertEquals(tick + 200, e.repository.load(running.getFirst()).lastBatch().endedTick());
+            }
+            assertTrue(winners.size() >= 2, "固定首位不能持续独占区域供给");
         }
     }
 }

@@ -47,16 +47,25 @@ class ProductionConcurrencyTest {
     }
     @Test void regionalCompetitionCommitsHeadcountAndPayrollBaseTogetherWithoutRefill()throws Exception{
         try(var a=new TestEconomy(file(),true)){
-            a.staffing.requestTarget(a.id,"laborer",0);a.staffing.requestTarget(a.id,"machinist",0);a.setSupply("laborer",12);
-            UUID first=a.createBuilding().getId(),second=a.createBuilding().getId();
-            try(var b=new TestEconomy(file(),false);var pool=Executors.newFixedThreadPool(2)){
-                var start=new CountDownLatch(1);var f1=pool.submit(()->{await(start);a.staffing.requestTarget(first,"laborer",8);});var f2=pool.submit(()->{await(start);b.staffing.requestTarget(second,"laborer",8);});start.countDown();f1.get(20,TimeUnit.SECONDS);f2.get(20,TimeUnit.SECONDS);
-                int x=a.staffingRepository.load(first).employed().get("laborer"),y=b.staffingRepository.load(second).employed().get("laborer");
-                assertEquals(12,Math.addExact(x,y));assertEquals(Set.of(4,8),Set.of(x,y));
-                assertTrue(a.staffingRepository.load(first).pending().isEmpty());assertTrue(b.staffingRepository.load(second).pending().isEmpty());
-                assertEquals(12,a.scalar("SELECT SUM(employees) FROM payroll_accruals"));assertEquals(12,a.supply.occupied(TestIdentities.REGION,"laborer"));
+            a.setSupply("laborer",12);
+            UUID first=a.id,second=a.createStockedBuilding().getId();
+            try(var b=new TestEconomy(file(),false)){
+                var plan = a.coordinator.prepare(first);
+                UUID rejected = UUID.randomUUID();
+                var intent = new com.bbmurloc.victoriaeconomics.server.production.port.ProductionJournal.StartIntent(rejected,first);
+                a.journal.recordStart(intent);
+                a.stock.reserve(first,rejected,plan.configuration().resolvedRecipe().inputs());
+                b.production.startBatch(second);
+                assertThrows(ProductionStartBlocked.class, () -> a.coordinator.commitStart(first,rejected,plan,false));
+                a.production.recoverStarts();
+                assertTrue(a.stockState().reservations().isEmpty());
+                assertNull(a.staffingRepository.load(first).batchId());
+                a.production.startBatch(first);
+                int x=a.staffingRepository.load(first).occupiedByOccupation().get("laborer"),y=b.staffingRepository.load(second).occupiedByOccupation().get("laborer");
+                assertEquals(12,Math.addExact(x,y));assertEquals(Set.of(2,10),Set.of(x,y));
+                assertEquals(20,a.scalar("SELECT SUM(employees) FROM payroll_accruals"));assertEquals(12,a.supply.occupied(TestIdentities.REGION,"laborer"));
                 assertThrows(IllegalStateException.class,()->b.setSupply("laborer",11));a.setSupply("laborer",20);a.ticks(1);
-                assertEquals(x,a.staffingRepository.load(first).employed().get("laborer"));assertEquals(y,b.staffingRepository.load(second).employed().get("laborer"));
+                assertEquals(x,a.staffingRepository.load(first).occupiedByOccupation().get("laborer"));assertEquals(y,b.staffingRepository.load(second).occupiedByOccupation().get("laborer"));
             }
         }
     }
@@ -67,12 +76,12 @@ class ProductionConcurrencyTest {
             a.faults.beforeSql=sql->{if(sql.startsWith("SELECT b.*")||sql.startsWith("SELECT * FROM economic_buildings")){
                 if(tested.compareAndSet(false,true)){var busy=assertThrows(SQLException.class,()->b.sql("UPDATE regional_labor_supply SET total_supply=total_supply"));assertEquals(5,busy.getErrorCode());}
             }};
-            a.staffing.requestTarget(a.id,"laborer",5);assertTrue(tested.get());assertEquals(9,a.scalar("SELECT employees FROM payroll_accruals"));
+            a.setSupply("laborer",5);a.production.startBatch(a.id);assertTrue(tested.get());assertEquals(9,a.scalar("SELECT employees FROM payroll_accruals"));
         }
     }
     @Test void oneBuildingFailureDoesNotReplayAnotherBuildingsCommittedAdvance()throws Exception{
         try(var e=new TestEconomy(file(),true)){
-            var second=e.createBuilding();e.stock.createLocation(second.getId(),1000);e.stock.deposit(second.getId(),Map.of("wood",100L));e.staffing.requestTarget(second.getId(),"laborer",10);e.staffing.requestTarget(second.getId(),"machinist",4);
+            var second=e.createBuilding();e.stock.createLocation(second.getId(),1000);e.stock.deposit(second.getId(),Map.of("wood",100L));
             e.production.startBatch(e.id);e.production.startBatch(second.getId());
             e.sql("CREATE TRIGGER fail_one BEFORE UPDATE ON production_executions WHEN NEW.building_id='"+e.id+"' AND (NEW.processing_tick IS NOT NULL OR NEW.last_completed_tick>OLD.last_completed_tick) BEGIN SELECT RAISE(ABORT,'one building failed'); END");
             assertThrows(IllegalStateException.class,()->e.ticks(1));assertEquals(0,e.execution().batch().getProgressUnits());assertEquals(1,e.repository.load(second.getId()).batch().getProgressUnits());

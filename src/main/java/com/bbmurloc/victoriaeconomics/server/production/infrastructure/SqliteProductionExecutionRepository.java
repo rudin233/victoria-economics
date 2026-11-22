@@ -60,10 +60,10 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
                 SELECT * FROM production_executions e
                 LEFT JOIN (SELECT batch_id AS current_id, building_id AS current_owner,
                     configuration_json AS current_configuration, progress_units AS current_progress,
-                    status AS current_status FROM production_batches) c ON c.current_id=e.current_batch_id
+                    status AS current_status, started_tick AS current_started, ended_tick AS current_ended FROM production_batches) c ON c.current_id=e.current_batch_id
                 LEFT JOIN (SELECT batch_id AS last_id, building_id AS last_owner,
                     configuration_json AS last_configuration, progress_units AS last_progress,
-                    status AS last_status FROM production_batches) l ON l.last_id=e.last_batch_id
+                    status AS last_status, started_tick AS last_started, ended_tick AS last_ended FROM production_batches) l ON l.last_id=e.last_batch_id
                 WHERE e.building_id=?
                 """)) {
             statement.setString(1, id.toString());
@@ -72,7 +72,7 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
                 long tick=rows.getLong("processing_tick");Long processing=rows.wasNull()?null:tick;
                 var execution = ProductionExecution.rehydrate(id, joinedBatch(rows, "current", verified),
                         joinedBatch(rows, "last", verified), ProductionExecution.Boundary.valueOf(rows.getString("boundary")),
-                        rows.getInt("automatic") != 0, rows.getLong("execution_revision"),rows.getLong("last_completed_tick"),processing,EconomyStateCodec.decodePauseReasons(rows.getString("pause_reasons_json")));
+                        rows.getInt("automatic") != 0, rows.getLong("execution_revision"),rows.getLong("last_completed_tick"),processing,EconomyStateCodec.decodePauseReasons(rows.getString("pause_reasons_json")), rows.getLong("next_start_not_before_tick"));
                 try (var active = connection.prepareStatement("SELECT batch_id FROM production_batches WHERE building_id=? AND status IN ('ACTIVE','PAUSED','SETTLING_COMPLETED','SETTLING_ABORTED')")) {
                     active.setString(1, id.toString());
                     try (var batches = active.executeQuery()) {
@@ -93,10 +93,11 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
             throw new IllegalArgumentException("Initial execution must be empty with revision zero");
         synchronized (lock) {
             SqliteTransactions.run(connection, () -> {
-                try (var statement = connection.prepareStatement("INSERT INTO production_executions(building_id,current_batch_id,last_batch_id,boundary,automatic,execution_revision,last_completed_tick,processing_tick,pause_reasons_json) VALUES(?,NULL,NULL,'NONE',?,0,?,NULL,'[]')")) {
+                try (var statement = connection.prepareStatement("INSERT INTO production_executions(building_id,current_batch_id,last_batch_id,boundary,automatic,execution_revision,last_completed_tick,processing_tick,pause_reasons_json,next_start_not_before_tick) VALUES(?,NULL,NULL,'NONE',?,0,?,NULL,'[]',?)")) {
                     statement.setString(1, initial.buildingId().toString());
                     statement.setInt(2, initial.automatic() ? 1 : 0);
                     statement.setLong(3,initial.lastCompletedTick());
+                    statement.setLong(4,initial.nextStartNotBeforeTick());
                     statement.executeUpdate();
                 }
                 return null;
@@ -135,17 +136,17 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
             }
         }
         if (changed.executionRevision() != expectedRevision) throw new ProductionRevisionConflict("Stale execution object");
-        try(var s=connection.prepareStatement("SELECT last_completed_tick,processing_tick FROM production_executions WHERE building_id=?")){
+        try(var s=connection.prepareStatement("SELECT last_completed_tick,processing_tick,next_start_not_before_tick FROM production_executions WHERE building_id=?")){
             s.setString(1,changed.buildingId().toString());try(var r=s.executeQuery()){
                 if(!r.next())throw new ProductionRevisionConflict("Execution missing");
                 long completed=r.getLong(1),value=r.getLong(2);Long pending=r.wasNull()?null:value;
                 boolean unchanged=changed.lastCompletedTick()==completed&&Objects.equals(changed.processingTick(),pending);
                 boolean began=pending==null&&changed.lastCompletedTick()==completed&&changed.processingTick()!=null&&changed.processingTick()==Math.incrementExact(completed);
                 boolean finished=changed.processingTick()==null&&changed.lastCompletedTick()>completed&&changed.lastCompletedTick()==Math.incrementExact(completed)&&(pending==null||pending==changed.lastCompletedTick());
-                if(!unchanged&&!began&&!finished)throw new IllegalStateException("Production Tick checkpoint cannot rewind, skip or lose pending work");
+                if(changed.nextStartNotBeforeTick()<r.getLong(3)||(!unchanged&&!began&&!finished))throw new IllegalStateException("Production Tick checkpoint cannot rewind, skip or lose pending work");
             }
         }
-        try (var statement = connection.prepareStatement("UPDATE production_executions SET current_batch_id=?,last_batch_id=?,boundary=?,automatic=?,execution_revision=?,last_completed_tick=?,processing_tick=?,pause_reasons_json=? WHERE building_id=? AND execution_revision=?")) {
+        try (var statement = connection.prepareStatement("UPDATE production_executions SET current_batch_id=?,last_batch_id=?,boundary=?,automatic=?,execution_revision=?,last_completed_tick=?,processing_tick=?,pause_reasons_json=?,next_start_not_before_tick=? WHERE building_id=? AND execution_revision=?")) {
             statement.setString(1, batchId(changed.batch()));
             statement.setString(2, batchId(changed.lastBatch()));
             statement.setString(3, changed.boundary().name());
@@ -154,8 +155,9 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
             statement.setLong(6,changed.lastCompletedTick());
             if(changed.processingTick()==null)statement.setNull(7,Types.INTEGER);else statement.setLong(7,changed.processingTick());
             statement.setString(8,EconomyStateCodec.encodePauseReasons(changed.pauseReasons()));
-            statement.setString(9, changed.buildingId().toString());
-            statement.setLong(10, expectedRevision);
+            statement.setLong(9, changed.nextStartNotBeforeTick());
+            statement.setString(10, changed.buildingId().toString());
+            statement.setLong(11, expectedRevision);
             if (statement.executeUpdate() != 1) throw new ProductionRevisionConflict("Execution missing or stale: " + changed.buildingId());
         }
         saveBatch(changed.batch(), verified);
@@ -170,7 +172,13 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
         if (id == null) return null;
         if (rows.getString(prefix + "_id") == null) throw new IllegalStateException("Referenced batch missing: " + id);
         return decodeBatch(id, rows.getString(prefix + "_owner"), rows.getString(prefix + "_configuration"),
-                rows.getLong(prefix + "_progress"), rows.getString(prefix + "_status"), verified);
+                rows.getLong(prefix + "_progress"), rows.getString(prefix + "_status"), rows.getLong(prefix + "_started"),
+                nullableTick(rows, prefix + "_ended"), verified);
+    }
+
+    public ProductionBatch findBatch(SqliteTransactions.WriteSession tx, UUID batchId) throws SQLException {
+        tx.requireConnection(connection);
+        return tx.perform(() -> findBatch(batchId.toString(), null));
     }
 
     private ProductionBatch findBatch(String id, Map<String, VerifiedConfiguration> verified) throws SQLException {
@@ -179,22 +187,27 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
             try (var rows = statement.executeQuery()) {
                 if (!rows.next()) return null;
                 return decodeBatch(id, rows.getString("building_id"), rows.getString("configuration_json"),
-                        rows.getLong("progress_units"), rows.getString("status"), verified);
+                        rows.getLong("progress_units"), rows.getString("status"), rows.getLong("started_tick"), nullableTick(rows, "ended_tick"), verified);
             }
         }
     }
 
-    private ProductionBatch decodeBatch(String id, String owner, String json, long progress, String status,
+    private static Long nullableTick(ResultSet rows, String column) throws SQLException {
+        long tick = rows.getLong(column);
+        return rows.wasNull() ? null : tick;
+    }
+
+    private ProductionBatch decodeBatch(String id, String owner, String json, long progress, String status, long started, Long ended,
                                         Map<String, VerifiedConfiguration> verified) {
         var prior = verified == null ? null : verified.get(id);
         if (prior != null && prior.json().equals(json)) {
             EconomyDiagnostics.count("json.batch.reused");
             try {
                 // Progress/status/owner always come from the fresh row, never from a previous read.
-                return new ProductionBatch(UUID.fromString(id), UUID.fromString(owner), prior.configuration(), progress, ProductionBatch.Status.valueOf(status));
+                return new ProductionBatch(UUID.fromString(id), UUID.fromString(owner), prior.configuration(), progress, ProductionBatch.Status.valueOf(status), started, ended);
             } catch (RuntimeException failure) { throw new IllegalStateException("Invalid current Batch state: " + id, failure); }
         }
-        var decoded = EconomyStateCodec.decodeBatch(UUID.fromString(id), UUID.fromString(owner), json, progress, status);
+        var decoded = EconomyStateCodec.decodeBatch(UUID.fromString(id), UUID.fromString(owner), json, progress, status, started, ended);
         if (verified != null) verified.put(id, new VerifiedConfiguration(json, decoded.getConfiguration()));
         return decoded;
     }
@@ -205,15 +218,17 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
         if (prior == null) {
             if (batch.getStatus() != ProductionBatch.Status.ACTIVE || batch.getProgressUnits() != 0)
                 throw new IllegalStateException("A new batch must start ACTIVE at zero progress");
-            try (var statement = connection.prepareStatement("INSERT INTO production_batches(batch_id,building_id,configuration_json,progress_units,status) VALUES(?,?,?,0,'ACTIVE')")) {
+            try (var statement = connection.prepareStatement("INSERT INTO production_batches(batch_id,building_id,configuration_json,progress_units,status,started_tick) VALUES(?,?,?,0,'ACTIVE',?)")) {
                 statement.setString(1, batch.getId().toString());
                 statement.setString(2, batch.getBuildingId().toString());
                 statement.setString(3, EconomyStateCodec.encodeBatchConfiguration(batch.getConfiguration()));
+                statement.setLong(4, batch.startedTick());
                 statement.executeUpdate();
             }
             return;
         }
-        if (!prior.getBuildingId().equals(batch.getBuildingId()) || !prior.getConfiguration().equals(batch.getConfiguration()))
+        if (!prior.getBuildingId().equals(batch.getBuildingId()) || !prior.getConfiguration().equals(batch.getConfiguration())
+                || prior.startedTick() != batch.startedTick() || (prior.isEnded() && !Objects.equals(prior.endedTick(), batch.endedTick())))
             throw new IllegalStateException("Immutable batch commitment changed: " + batch.getId());
         boolean progressing = (prior.isActive() || prior.getStatus() == ProductionBatch.Status.PAUSED)
                 && (batch.isActive() || batch.getStatus() == ProductionBatch.Status.SETTLING_COMPLETED);
@@ -221,10 +236,14 @@ public final class SqliteProductionExecutionRepository implements ProductionExec
                 || (!progressing && batch.getProgressUnits() != prior.getProgressUnits()))
             throw new IllegalStateException("Illegal durable batch transition: " + batch.getId());
         if (prior.getProgressUnits() == batch.getProgressUnits() && prior.getStatus() == batch.getStatus()) return;
-        try (var statement = connection.prepareStatement("UPDATE production_batches SET progress_units=?,status=? WHERE batch_id=?")) {
+        String sql = batch.isEnded()
+                ? "UPDATE production_batches SET progress_units=?,status=?,ended_tick=? WHERE batch_id=?"
+                : "UPDATE production_batches SET progress_units=?,status=? WHERE batch_id=?";
+        try (var statement = connection.prepareStatement(sql)) {
             statement.setLong(1, batch.getProgressUnits());
             statement.setString(2, batch.getStatus().name());
-            statement.setString(3, batch.getId().toString());
+            if (batch.isEnded()) statement.setLong(3, batch.endedTick());
+            statement.setString(batch.isEnded() ? 4 : 3, batch.getId().toString());
             statement.executeUpdate();
         }
     }

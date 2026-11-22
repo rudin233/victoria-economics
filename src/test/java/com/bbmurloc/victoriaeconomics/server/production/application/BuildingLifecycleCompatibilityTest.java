@@ -26,7 +26,7 @@ class BuildingLifecycleCompatibilityTest {
                 case "missingPolicy"->e.sql("UPDATE building_lifecycle_operations SET blockers='SALE_CONSIDERATION_UNDECIDED'");
                 case "unknownPolicy"->e.sql("UPDATE building_lifecycle_operations SET blockers='FAKE_APPROVED'");
                 case "wrongReceipt"->e.sql("UPDATE inventory_locations SET state_json=replace(state_json,'ABORTED','COMPLETED')");
-                case "activeBatch"->{e.sql("UPDATE building_lifecycle_operations SET status='QUIESCING',blocked_tick=NULL,blockers='',revision=0");e.sql("UPDATE production_executions SET current_batch_id=last_batch_id,last_batch_id=NULL,boundary='NONE'");e.sql("UPDATE production_batches SET status='ACTIVE'");}
+                case "activeBatch"->{e.sql("UPDATE building_lifecycle_operations SET status='QUIESCING',blocked_tick=NULL,blockers='',revision=0");e.sql("UPDATE production_executions SET current_batch_id=last_batch_id,last_batch_id=NULL,boundary='NONE'");e.sql("UPDATE production_batches SET status='ACTIVE',ended_tick=NULL");}
                 case "incompleteHandoff"->e.sql("UPDATE production_executions SET current_batch_id=last_batch_id,last_batch_id=NULL,boundary='RECONFIGURING'");
             }
             byte[] main=Files.readAllBytes(file()),wal=Files.readAllBytes(Path.of(file()+"-wal"));
@@ -43,7 +43,7 @@ class BuildingLifecycleCompatibilityTest {
     }
     /** This historical format fixture is not a formal demolition path or approval of the unresolved closeout rules. */
     static void historicalTombstoneFixture(TestEconomy e)throws Exception{
-        e.staffing.requestTarget(e.id,"laborer",0);e.staffing.requestTarget(e.id,"machinist",0);
+
         e.stock.withdraw(e.id,Map.of("wood",100L,"iron",100L));
         long tick=e.clock.elapsedTicks();
         SqliteTransactions.write(e.connection,tx->{
@@ -57,7 +57,7 @@ class BuildingLifecycleCompatibilityTest {
             id=e.id;historicalTombstoneFixture(e);EconomySchema.validateExisting(e.connection);
             e.ticks(3);assertEquals(3,e.clock.elapsedTicks());assertEquals(0,e.scalar("SELECT COUNT(*) FROM payroll_accruals WHERE closed_tick IS NULL"));
             assertEquals(1,e.scalar("SELECT COUNT(*) FROM payroll_accruals"));assertEquals(BuildingLifecycle.DEMOLISHED,e.buildingRepository.load(id).lifecycle());
-            assertThrows(IllegalStateException.class,()->e.production.startBatch(id));assertThrows(IllegalStateException.class,()->e.staffing.requestTarget(id,"laborer",1));
+            assertThrows(IllegalStateException.class,()->e.production.startBatch(id));
             assertThrows(IllegalStateException.class,()->e.buildingService.createBuilding(id,"tooling_workshop",com.bbmurloc.victoriaeconomics.server.TestIdentities.COMPANY,com.bbmurloc.victoriaeconomics.server.TestIdentities.REGION));
             assertEquals(1,e.scalar("SELECT COUNT(*) FROM economic_buildings"));assertThrows(UnsupportedOperationException.class,()->e.buildingRepository.delete(id));
             EconomySchema.validateExisting(e.connection);
@@ -70,7 +70,7 @@ class BuildingLifecycleCompatibilityTest {
             historicalTombstoneFixture(e);
             switch(problem){
                 case "activePayroll"->e.sql("UPDATE payroll_accruals SET closed_tick=NULL");
-                case "employees"->e.sql("INSERT INTO building_staffing_roles VALUES('"+e.id+"','laborer',1,NULL)");
+                case "employees"->e.sql("INSERT INTO building_staffing_roles VALUES('"+e.id+"','laborer',1)");
                 case "inventory"->e.stock.deposit(e.id,Map.of("tools",1L));
                 case "automatic"->e.sql("UPDATE production_executions SET automatic=1");
                 case "start"->e.sql("INSERT INTO production_start_intents VALUES('"+UUID.randomUUID()+"','"+e.id+"')");

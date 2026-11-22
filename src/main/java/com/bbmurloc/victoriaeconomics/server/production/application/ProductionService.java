@@ -37,7 +37,12 @@ public final class ProductionService {
         }catch(RuntimeException failure){
             // An unknown result may have created the Batch. Keep both intent and Reservation until fresh verification.
             if(failure instanceof CommitOutcomeUnknownException)throw failure;
-            try{if(!journal.containsBatch(batch))compensateStart(intent);}catch(RuntimeException unknown){failure.addSuppressed(unknown);}
+            try {
+                if (!journal.containsBatch(batch)) compensateStart(intent);
+            } catch (RuntimeException compensationFailure) {
+                compensationFailure.addSuppressed(failure);
+                throw compensationFailure;
+            }
             throw failure;
         }
         // Only the immutable Batch escapes, and only after commit AND JDBC cleanup returned successfully.
@@ -59,34 +64,74 @@ public final class ProductionService {
         try(var measurement=EconomyDiagnostics.stage("production.followup")){
         var e=coordinator.execution(id);var batch=e.batch();
         if(batch!=null&&batch.needsSettlement()){
-            var recipe=batch.getConfiguration().resolvedRecipe();
-            var outcome=batch.getStatus()==ProductionBatch.Status.SETTLING_COMPLETED?ProductionSettlement.Outcome.COMPLETED:ProductionSettlement.Outcome.ABORTED;
-            var command=new ProductionSettlement(batch.getId(),outcome,recipe.inputs(),recipe.outputs());
+            var command = ProductionSettlement.forBatch(batch);
             ProductionInventoryPort.SettlementReceipt receipt;
             try(var settlementMeasurement=EconomyDiagnostics.stage("production.settlement")){receipt=inventory.settle(id,command);}
             if(!receipt.command().equals(command))throw new IllegalStateException("Settlement receipt does not match frozen command");
-            coordinator.confirmSettlement(id,batch.getId());
+            coordinator.confirmSettlement(id,receipt.command());
         }
         e=coordinator.execution(id);
         if(!e.hasUnfinishedBatch()&&!coordinator.lifecycleHeld(id))coordinator.reconfigure(id);
         }
     }
-    /** One durable advance per building/accepted server tick; no wall-time catch-up. A failure leaves that tick pending and stops global allocation. */
-    public void onServerTick(){
-        try (var diagnosticScope = EconomyDiagnostics.scope("production.tick")) {synchronized(lock){
-        long tick=coordinator.acceptedTick();recoverStarts();var failures=new ArrayList<RuntimeException>();
-        for(UUID id:coordinator.buildingIds())try(var buildingMeasurement=EconomyDiagnostics.scope("production.building")){
-            if(coordinator.processTick(id,tick)!=ProductionBoundaryCoordinator.TickResult.NEEDS_FOLLOW_UP)continue;
-            settleAndHandleBoundary(id);var e=coordinator.execution(id);
-            if(e.batch()==null&&e.automatic()&&!coordinator.lifecycleHeld(id))try{startBatch(id,true);}catch(ProductionStartBlocked denied){block(id,denied);}
-            if(e.boundary()!=ProductionExecution.Boundary.NONE&&coordinator.lifecycleHeld(id))throw new IllegalStateException("Lifecycle resource handoff remains incomplete; recover its OperationId");
-            coordinator.finishTick(id,tick);
-        }catch(RuntimeException failure){block(id,failure);failures.add(failure);}
-        if(!failures.isEmpty()){var failure=new IllegalStateException("Production Tick remains incomplete: "+tick);failures.forEach(failure::addSuppressed);throw failure;}
-        coordinator.confirmWholeTick(tick);
-    }
+    /** 先完成全部建筑的推进与结算，再在各区域内轮转开工。 */
+    public void onServerTick() {
+        try (var diagnosticScope = EconomyDiagnostics.scope("production.tick")) {
+            synchronized (lock) {
+                long tick = coordinator.acceptedTick();
+                recoverStarts();
+                var regions = coordinator.buildingsByRegion();
+                var followUp = new HashSet<UUID>();
+                var failures = new ArrayList<RuntimeException>();
+
+                for (var buildings : regions.values()) for (UUID id : buildings) {
+                    try (var buildingMeasurement = EconomyDiagnostics.scope("production.building")) {
+                        if (coordinator.processTick(id, tick) != ProductionBoundaryCoordinator.TickResult.NEEDS_FOLLOW_UP)
+                            continue;
+                        settleAndHandleBoundary(id);
+                        var execution = coordinator.execution(id);
+                        if (execution.boundary() != ProductionExecution.Boundary.NONE && coordinator.lifecycleHeld(id))
+                            throw new IllegalStateException("Lifecycle resource handoff remains incomplete; recover its OperationId");
+                        followUp.add(id);
+                    } catch (RuntimeException failure) {
+                        block(id, failure);
+                        failures.add(failure);
+                    }
+                }
+                requireTickWorkSucceeded(tick, failures);
+
+                for (var buildings : regions.values()) {
+                    int offset = Math.floorMod(tick, buildings.size());
+                    for (int i = 0; i < buildings.size(); i++) {
+                        UUID id = buildings.get((int) (((long) offset + i) % buildings.size()));
+                        if (!followUp.contains(id)) continue;
+                        try {
+                            var execution = coordinator.execution(id);
+                            if (execution.batch() == null && execution.automatic() && tick >= execution.nextStartNotBeforeTick()
+                                    && !coordinator.lifecycleHeld(id)) {
+                                try { startBatch(id, true); }
+                                catch (ProductionStartBlocked denied) { block(id, denied); }
+                            }
+                            coordinator.finishTick(id, tick);
+                        } catch (RuntimeException failure) {
+                            block(id, failure);
+                            failures.add(failure);
+                            requireTickWorkSucceeded(tick, failures);
+                        }
+                    }
+                }
+                coordinator.confirmWholeTick(tick);
+            }
         }
     }
+
+    private static void requireTickWorkSucceeded(long tick, List<RuntimeException> failures) {
+        if (failures.isEmpty()) return;
+        var failure = new IllegalStateException("Production Tick remains incomplete: " + tick);
+        failures.forEach(failure::addSuppressed);
+        throw failure;
+    }
+
     /** Restart uses the existing accepted Tick and checkpoints; it neither allocates nor guesses missed Ticks. */
     public void recoverAcceptedTick(){
         try (var diagnosticScope = EconomyDiagnostics.scope("production.recovery")) {synchronized(lock){if(!coordinator.needsRecovery())return;recoverStarts();recoverBoundaries();onServerTick();}
@@ -101,15 +146,14 @@ public final class ProductionService {
     public void recoverStarts(){synchronized(lock){
         for(var intent:journal.pendingStarts()){
             if(journal.containsBatch(intent.batchId())){
-                var e=coordinator.execution(intent.buildingId());
-                if((e.batch()==null||!e.batch().getId().equals(intent.batchId()))&&(e.lastBatch()==null||!e.lastBatch().getId().equals(intent.batchId())))throw new IllegalStateException("Committed start reference cannot be confirmed");
-                finishCommittedStart(intent.batchId());
+                coordinator.verifyCommittedStart(intent);
+                journal.finishStart(intent.batchId());
             }else compensateStart(intent);
         }
     }}
     private void compensateStart(ProductionJournal.StartIntent intent){
         inventory.release(intent.buildingId(),intent.batchId());journal.finishStart(intent.batchId());
     }
-    private void finishCommittedStart(UUID batch){try{journal.finishStart(batch);}catch(RuntimeException failure){LOG.log(System.Logger.Level.WARNING,"Committed start cleanup will retry: "+batch,failure);}}
+    private void finishCommittedStart(UUID batch){try{journal.finishStart(batch);}catch(CommitOutcomeUnknownException unknown){throw unknown;}catch(RuntimeException failure){LOG.log(System.Logger.Level.WARNING,"Committed start cleanup will retry: "+batch,failure);}}
     private void block(UUID id,RuntimeException failure){String message=failure.getMessage();if(!Objects.equals(blocked.put(id,message),message))LOG.log(System.Logger.Level.WARNING,"Production blocked at "+id+": "+message,failure);}
 }

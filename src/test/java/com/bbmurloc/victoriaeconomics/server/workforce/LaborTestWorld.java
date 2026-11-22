@@ -15,14 +15,13 @@ import com.bbmurloc.victoriaeconomics.server.production.infrastructure.*;
 import com.bbmurloc.victoriaeconomics.server.production.application.*;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.*;
 import com.bbmurloc.victoriaeconomics.server.workforce.domain.*;
-import com.bbmurloc.victoriaeconomics.server.workforce.application.*;
 import com.bbmurloc.victoriaeconomics.server.workforce.infrastructure.*;
 import java.nio.file.Path;
 import java.sql.*;
 import java.util.*;
 import java.util.function.UnaryOperator;
 
-/** Isolated persistence fixture. Low-level staffing writes deliberately do NOT represent formal payroll-aware hiring. */
+/** Isolated persistence fixture. Test helpers for construction, regional supply and batch-bound payroll. */
 public final class LaborTestWorld implements AutoCloseable {
     public final Connection physical, connection;
     public final Object lock = new Object();
@@ -37,7 +36,9 @@ public final class LaborTestWorld implements AutoCloseable {
     public final SqliteProductionMethodConfigurationRepository methods;
     public final BuildingRegistry registry = new BuildingRegistry();
     public final BuildingService buildings;
-    public final StaffingApplicationService commands;
+    public final ProductionService production;
+    public final ProductionBoundaryCoordinator coordinator;
+    public final com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore stock;
     public LaborTestWorld(Path file) throws SQLException { this(file, UnaryOperator.identity()); }
     public LaborTestWorld(Path file, UnaryOperator<Connection> decorate) throws SQLException {
         physical = DriverManager.getConnection("jdbc:sqlite:" + file);
@@ -53,7 +54,7 @@ public final class LaborTestWorld implements AutoCloseable {
         if (regions.find(TestIdentities.REGION).isEmpty()) regions.create(new Region(TestIdentities.REGION));
         TestIdentities.seed(connection);
         identities = new SqliteBuildingRepository(connection, lock);
-        staffing = new SqliteBuildingStaffingRepository(connection, recipes, occupations, lock);
+        staffing = new SqliteBuildingStaffingRepository(connection, lock);
         supply = new SqliteRegionalLaborSupplyRepository(connection, occupations, lock);
         methods = new SqliteProductionMethodConfigurationRepository(connection, recipes, lock);
         var execution = new SqliteProductionExecutionRepository(connection, lock);
@@ -61,43 +62,67 @@ public final class LaborTestWorld implements AutoCloseable {
         var initializer = new ProductionBuildingInitializer(connection, lock, identities, methods, execution, recipes, staffing,
                 () -> SqliteEconomyDatabase.open(file));
         buildings = new BuildingService(registry, identities, types, initializer, lock);
-        commands = new StaffingApplicationService(connection, recipes, occupations, lock);
+        coordinator = new ProductionBoundaryCoordinator(connection, recipes, occupations, lock);
+        stock = new com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore(connection, lock);
+        production = new ProductionService(coordinator, stock, new SqliteProductionJournal(connection), lock);
     }
     public EconomicBuilding create() { return buildings.createBuilding("tooling_workshop", TestIdentities.COMPANY, TestIdentities.REGION); }
-    public void setSupply(long amount) {
+    public void setSupply(long amount) { setSupply(TestIdentities.REGION, "laborer", amount); }
+    public void setSupply(RegionId region, String role, long amount) {
         SqliteTransactions.write(connection, tx -> {
             var repository = supply.inTransaction(tx);
-            var before = repository.find(TestIdentities.REGION, "laborer");
-            if (before.isEmpty()) repository.create(new RegionalLaborSupply(TestIdentities.REGION, "laborer", amount, 0));
+            var before = repository.find(region, role);
+            if (before.isEmpty()) repository.create(new RegionalLaborSupply(region, role, amount, 0));
             else repository.save(before.get().withTotal(amount), before.get().revision());
             return null;
         });
     }
-    public void applyPendingForPersistenceTest(UUID building) {
-        SqliteTransactions.write(connection, tx -> {
-            var payroll=new com.bbmurloc.victoriaeconomics.server.payroll.infrastructure.SqlitePayrollRepository(connection,lock).inTransaction(tx);
-            var segment=payroll.currentForBuilding(building);
-            payroll.accrue(segment,com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick());
-            var repository = staffing.inTransaction(tx); var root = repository.load(building);
-            var region = identities.inTransaction(tx).load(building).regionId();
-            var caps = methods.inTransaction(tx).load(building).recipe().requiredWorkers();
-            var available = new HashMap<String, Long>();
-            for (String role : caps.keySet()) {
-                long total = supply.inTransaction(tx).find(region, role).map(RegionalLaborSupply::totalSupply).orElse(0L);
-                available.put(role, Math.subtractExact(total, supply.inTransaction(tx).occupied(region, role)));
-            }
-            var changed=root.apply(StaffingTransition.consumePending(root,caps,available));
-            repository.save(changed,root.revision());
-            long count=0;for(int n:changed.employed().values())count=Math.addExact(count,n);
-            if(count!=segment.employees())payroll.changeEmployees(segment.id(),count,com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick());
-            return null;
+
+    public void stock(UUID building) {
+        stock.createLocation(building, 1000);
+        stock.deposit(building, Map.of("wood", 100L, "iron", 100L));
+    }
+
+    /** 财务测试使用仅含单一职业的合成批次，隔离配方与付款规则。 */
+    public ProductionBatch acquirePayrollFixture(SqliteTransactions.WriteSession tx, UUID id, UUID batchId, int count, long tick) throws SQLException {
+        var wage = new com.bbmurloc.victoriaeconomics.server.payroll.infrastructure.SqlitePayrollRepository(connection, lock).inTransaction(tx);
+        var segment = wage.currentForBuilding(id);
+        wage.accrue(segment, tick);
+        var executionRepo = new SqliteProductionExecutionRepository(connection, lock).inTransaction(tx);
+        var execution = executionRepo.load(id);
+        var roster = Map.of("laborer", count);
+        var recipe = new ResolvedProductionRecipe(Map.of(), Map.of("tools", 1L), roster);
+        var config = new ProductionBatchConfiguration(Map.of("payroll_fixture", "labor"), recipe, new WorkforcePlan(roster, 1, 1));
+        var batch = execution.start(batchId, config, tick);
+        executionRepo.save(execution, execution.executionRevision());
+        var repo = staffing.inTransaction(tx);
+        repo.acquire(id, batch.getId(), roster, repo.load(id).revision());
+        wage.changeEmployees(segment.id(), count, tick);
+        return batch;
+    }
+
+    public ProductionBatch startPayrollFixture(UUID id, int workers) { return startPayrollFixture(id, workers, true); }
+
+    public ProductionBatch startPayrollFixture(UUID id, int workers, boolean createStock) {
+        if (workers <= 0) return null;
+        var region = identities.load(id).regionId();
+        var total = supply.find(region, "laborer").map(RegionalLaborSupply::totalSupply).orElse(0L);
+        long required = Math.addExact(supply.occupied(region, "laborer"), workers);
+        if (required > total) setSupply(region, "laborer", required);
+        if (createStock) stock.createLocation(id, 1000);
+        // 使用原料意图保证夹具在各事务之间也符合新存档格式。
+        var batchId = UUID.randomUUID();
+        var journal = new SqliteProductionJournal(connection);
+        journal.recordStart(new com.bbmurloc.victoriaeconomics.server.production.port.ProductionJournal.StartIntent(batchId, id));
+        stock.reserve(id, batchId, Map.of());
+        var result = SqliteTransactions.write(connection, tx -> {
+            long tick = com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository.inTransaction(connection,tx).acceptedTick();
+            return acquirePayrollFixture(tx, id, batchId, workers, tick);
         });
+        journal.finishStart(batchId);
+        return result;
     }
-    /** Repository Pending fixture, distinct from the formal idle-immediate application command. */
-    public void requestPendingForPersistenceTest(UUID building,String role,int target){
-        SqliteTransactions.write(connection,tx->{var repo=staffing.inTransaction(tx);var before=repo.load(building);var changed=before.requestTarget(role,target,methods.inTransaction(tx).load(building).recipe().requiredWorkers());if(changed!=before)repo.save(changed,before.revision());return null;});
-    }
-    public void cancelPendingForPersistenceTest(UUID building,String role){SqliteTransactions.write(connection,tx->{var repo=staffing.inTransaction(tx);var before=repo.load(building);var changed=before.cancel(role);if(changed!=before)repo.save(changed,before.revision());return null;});}
+
     public long count(String table) throws SQLException {
         try (var statement = connection.createStatement(); var row = statement.executeQuery("SELECT COUNT(*) FROM " + table)) { row.next(); return row.getLong(1); }
     }

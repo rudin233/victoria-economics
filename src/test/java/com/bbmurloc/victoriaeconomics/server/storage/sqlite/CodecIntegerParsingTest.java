@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class CodecIntegerParsingTest {
     private static final UUID LOCATION = new UUID(0, 42);
     private static String inventory(String capacity) {
-        return "{\"formatVersion\":9,\"snapshot\":{\"location\":\"" + LOCATION + "\",\"capacity\":" + capacity
+        return "{\"formatVersion\":10,\"snapshot\":{\"location\":\"" + LOCATION + "\",\"capacity\":" + capacity
                 + ",\"quantities\":{},\"reservations\":{},\"settlements\":{}}}";
     }
 
@@ -19,7 +19,7 @@ class CodecIntegerParsingTest {
         var state = EconomyStateCodec.decodeInventory(LOCATION, inventory(literal)).state();
         assertEquals(Long.parseLong(literal), state.capacity());
         String encoded = EconomyStateCodec.encodeInventory(state);
-        assertTrue(encoded.contains("\"formatVersion\":9"));
+        assertTrue(encoded.contains("\"formatVersion\":10"));
         assertEquals(state, EconomyStateCodec.decodeInventory(LOCATION, encoded).state());
     }
 

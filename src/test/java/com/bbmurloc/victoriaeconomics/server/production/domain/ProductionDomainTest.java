@@ -61,9 +61,16 @@ class ProductionDomainTest {
     }
 
     @Test
-    void tenPercentThresholdUsesIntegerBoundaries() {
+    void oneWorkerAllowsOnePercentSpeedAndExactCompletion() {
         var planner = new WorkforcePlanningService();
-        assertThrows(IllegalStateException.class, () -> planner.plan(Map.of("worker",11),Map.of("worker",1)));
+        var production = new ProductionExecution(UUID.randomUUID());
+        var batch = production.start(UUID.randomUUID(), configuration(1,100));
+        assertEquals(1, batch.getConfiguration().workforcePlan().speedNumerator());
+        assertEquals(100, batch.getConfiguration().workforcePlan().speedDenominator());
+        production.tick(19_999);
+        assertEquals(19_999, production.batch().getProgressUnits());
+        production.tick(1);
+        assertEquals(ProductionBatch.Status.SETTLING_COMPLETED, production.batch().getStatus());
         assertEquals(2.0/11,planner.plan(Map.of("worker",11),Map.of("worker",2)).speed());
         assertEquals(0.1,planner.plan(Map.of("worker",10),Map.of("worker",1)).speed());
         assertThrows(IllegalStateException.class, () -> planner.plan(Map.of("worker",10),Map.of()));
@@ -73,7 +80,7 @@ class ProductionDomainTest {
     void participationIsLimitedOnlyByFormalDemandWithoutAnAssetFactor() {
         var plan = new WorkforcePlanningService().plan(Map.of("worker",10),Map.of("worker",10));
         assertEquals(10, plan.participatingWorkers().get("worker"));
-        assertThrows(IllegalStateException.class,()->new WorkforcePlanningService().plan(Map.of("worker",10),Map.of("worker",12)));
+        assertThrows(IllegalArgumentException.class,()->new WorkforcePlanningService().plan(Map.of("worker",10),Map.of("worker",12)));
         assertEquals(1.0, plan.speed());
     }
 
@@ -82,7 +89,7 @@ class ProductionDomainTest {
         var counts=new HashMap<>(Map.of("worker",3));var plan=new WorkforcePlanningService().plan(Map.of("worker",10),counts);
         counts.put("worker",10);assertEquals(3,plan.participatingWorkers().get("worker"));
         assertThrows(UnsupportedOperationException.class,()->plan.participatingWorkers().clear());
-        assertThrows(IllegalStateException.class,()->new WorkforcePlanningService().plan(Map.of("worker",10),Map.of("other",3)));
+        assertThrows(IllegalArgumentException.class,()->new WorkforcePlanningService().plan(Map.of("worker",10),Map.of("other",3)));
     }
 
     @Test

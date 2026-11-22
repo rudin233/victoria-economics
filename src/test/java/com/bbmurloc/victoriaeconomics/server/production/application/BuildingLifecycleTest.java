@@ -36,21 +36,21 @@ class BuildingLifecycleTest {
     void runningOperationRefundsAllInputsButRetainsOwnerStaffPendingAndWageAuthority(Kind kind)throws Exception{
         try(var e=new TestEconomy(file(),true)){
             var batch=e.production.startBatch(e.id);e.ticks(37);
-            e.production.selectProductionMethod(e.id,"tooling_workshop_base","reduced_tools");e.staffing.requestTarget(e.id,"laborer",5);
+            e.production.selectProductionMethod(e.id,"tooling_workshop_base","reduced_tools");
             var staff=e.staffingRepository.load(e.id);var pm=e.methods();var cmd=command(e,kind);
             var op=e.lifecycle.request(cmd);
             assertEquals(Status.BLOCKED,op.status());assertFalse(e.execution().automatic());assertNull(e.execution().batch());
             assertEquals(batch.getId(),e.execution().lastBatch().getId());assertEquals(ProductionBatch.Status.ABORTED,e.execution().lastBatch().getStatus());
             assertEquals(37,e.execution().lastBatch().getProgressUnits());assertEquals(100,e.quantity("wood"));assertEquals(0,e.quantity("tools"));assertTrue(e.stockState().reservations().isEmpty());
-            assertEquals(staff,e.staffingRepository.load(e.id));assertEquals(pm.effective().methods(),e.methods().effective().methods());assertEquals(pm.pending(),e.methods().pending());
+            assertEquals(staff.revision()+1,e.staffingRepository.load(e.id).revision());assertNull(e.staffingRepository.load(e.id).batchId());assertEquals(pm.effective().methods(),e.methods().effective().methods());assertEquals(pm.pending(),e.methods().pending());
             assertEquals(TestIdentities.COMPANY,e.buildingRepository.load(e.id).ownerCompanyId());assertEquals(BuildingLifecycle.EXISTING,e.buildingRepository.load(e.id).lifecycle());
-            assertEquals(10,e.supply.occupied(TestIdentities.REGION,"laborer"));assertEquals(14,e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));
+            assertEquals(0,e.supply.occupied(TestIdentities.REGION,"laborer"));assertEquals(0,e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));
             assertTrue(op.blockers().contains(Blocker.WAGE_REMAINDER_POLICY_UNDECIDED));
             if(kind==Kind.SALE)assertTrue(op.blockers().contains(Blocker.PENDING_PM_POLICY_UNDECIDED));
             var stock=e.stockState();long revision=e.execution().executionRevision();
             assertEquals(op,e.lifecycle.request(cmd));assertEquals(stock,e.stockState());assertEquals(revision,e.execution().executionRevision());
             assertEquals(op,e.lifecycle.verify(cmd).orElseThrow());EconomySchema.validateExisting(e.connection);
-            e.ticks(1);assertEquals(38,e.clock.elapsedTicks());assertEquals(38,e.scalar("SELECT last_accrued_tick FROM payroll_accruals WHERE closed_tick IS NULL"));assertEquals(14,e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));
+            e.ticks(1);assertEquals(38,e.clock.elapsedTicks());assertEquals(38,e.scalar("SELECT last_accrued_tick FROM payroll_accruals WHERE closed_tick IS NULL"));assertEquals(0,e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));
         }
     }
     @ParameterizedTest @ValueSource(strings={"IDLE","PAUSED","SETTLING_ABORTED","SETTLING_COMPLETED"})
@@ -81,30 +81,29 @@ class BuildingLifecycleTest {
     @ParameterizedTest @EnumSource(Kind.class)
     void realArrearsPauseIsAbortedWithoutLosingDebtRemainderOrRemainingLabor(Kind kind)throws Exception{
         try(var e=new TestEconomy(file(),true)){
-            e.staffing.requestTarget(e.id,"laborer",1);e.staffing.requestTarget(e.id,"machinist",1);e.production.startBatch(e.id);e.ticks(1201);
+            e.setSupply("laborer",1);e.setSupply("machinist",1);e.production.startBatch(e.id);e.ticks(1201);
             assertEquals(ProductionBatch.Status.PAUSED,e.execution().batch().getStatus());long debt=e.scalar("SELECT SUM(amount-paid) FROM payroll_liabilities"),fraction=e.scalar("SELECT remainder FROM payroll_accruals");
             assertEquals(2,debt);assertEquals(2,fraction);var op=e.lifecycle.request(command(e,kind));
             assertEquals(Status.BLOCKED,op.status());assertEquals(2,e.scalar("SELECT SUM(amount-paid) FROM payroll_liabilities"));assertEquals(fraction,e.scalar("SELECT remainder FROM payroll_accruals"));
-            assertEquals(2,e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));assertEquals(100,e.quantity("wood"));assertEquals(0,e.quantity("tools"));
+            assertEquals(0,e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));assertEquals(100,e.quantity("wood"));assertEquals(0,e.quantity("tools"));
             assertEquals(com.bbmurloc.victoriaeconomics.server.production.port.BuildingPayrollPort.State.ARREARS,e.payroll.state(e.id));
-            e.ticks(2);assertEquals(6,e.scalar("SELECT remainder FROM payroll_accruals"));assertEquals(2,e.scalar("SELECT SUM(amount-paid) FROM payroll_liabilities"));EconomySchema.validateExisting(e.connection);
+            e.ticks(2);assertEquals(fraction,e.scalar("SELECT remainder FROM payroll_accruals"));assertEquals(2,e.scalar("SELECT SUM(amount-paid) FROM payroll_liabilities"));EconomySchema.validateExisting(e.connection);
         }
     }
     @Test void blockedIdentityCannotStartReconfigureHireResumeOrBypassWithLowLevelRepositories()throws Exception{
         try(var e=new TestEconomy(file(),true)){
             e.production.startBatch(e.id);e.production.selectProductionMethod(e.id,"tooling_workshop_base","reduced_tools");var op=e.lifecycle.request(command(e,Kind.DEMOLITION));
             assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));assertThrows(IllegalStateException.class,()->e.production.setAutomatic(e.id,true));
-            assertThrows(IllegalStateException.class,()->e.production.setManualPause(e.id,false));assertThrows(IllegalStateException.class,()->e.staffing.requestTarget(e.id,"laborer",0));
-            assertThrows(IllegalStateException.class,()->e.staffing.cancelPending(e.id,"laborer"));assertThrows(IllegalStateException.class,()->e.production.cancelPendingProductionMethods(e.id));
+            assertThrows(IllegalStateException.class,()->e.production.setManualPause(e.id,false));
+            assertThrows(IllegalStateException.class,()->e.production.cancelPendingProductionMethods(e.id));
             assertThrows(IllegalStateException.class,()->e.production.selectProductionMethod(e.id,"tooling_workshop_base","efficient_tools"));
             assertThrows(IllegalStateException.class,()->e.buildingService.stopBuilding(e.id));
             var execution=e.execution();execution.requestAutomatic(true);assertThrows(IllegalStateException.class,()->e.repository.save(execution,execution.executionRevision()));
-            var forged=e.execution();forged.start(UUID.randomUUID(),forged.lastBatch().getConfiguration());forged.requestAutomatic(false);forged.tick(200);
+            var forged=e.execution();forged.start(UUID.randomUUID(),forged.lastBatch().getConfiguration(),forged.nextStartNotBeforeTick());forged.requestAutomatic(false);forged.tick(200);
             assertThrows(IllegalStateException.class,()->e.repository.save(forged,forged.executionRevision()));
             var pm=e.methods();long pmRev=pm.configurationRevision();pm.cancelPending();assertThrows(IllegalStateException.class,()->e.configurations.save(pm,pmRev));
-            var capacity=e.methods().recipe().requiredWorkers();
             assertThrows(IllegalStateException.class,()->SqliteTransactions.write(e.connection,tx->{
-                var repo=e.staffingRepository.inTransaction(tx);var staff=repo.load(e.id);repo.save(staff.requestTarget("laborer",0,capacity),staff.revision());return null;
+                var repo=e.staffingRepository.inTransaction(tx);var staff=repo.load(e.id);repo.acquire(e.id,UUID.randomUUID(),Map.of("laborer",1),staff.revision());return null;
             }));
             // Ordinary goods retain their own rules and can be handled without implying asset ownership.
             e.stock.withdraw(e.id,Map.of("wood",1L));e.stock.deposit(e.id,Map.of("tools",1L));assertEquals(99,e.quantity("wood"));
@@ -134,14 +133,14 @@ class BuildingLifecycleTest {
     @Test void restartFinishesPendingSettlementWithoutApplyingSellerPmOrAdvancingOfflineTime()throws Exception{
         UUID operation,building;
         try(var e=new TestEconomy(file(),true)){
-            building=e.id;e.production.startBatch(e.id);e.ticks(13);e.production.selectProductionMethod(e.id,"tooling_workshop_base","reduced_tools");e.staffing.requestTarget(e.id,"laborer",5);
+            building=e.id;e.production.startBatch(e.id);e.ticks(13);e.production.selectProductionMethod(e.id,"tooling_workshop_base","reduced_tools");
             var cmd=command(e,Kind.SALE);operation=cmd.id();e.inventory.failSettlement=true;
             assertThrows(IllegalStateException.class,()->e.lifecycle.request(cmd));assertEquals(Status.QUIESCING,e.lifecycle.find(operation).orElseThrow().status());
-            assertEquals(ProductionBatch.Status.SETTLING_ABORTED,e.execution().batch().getStatus());assertEquals(10,e.staffingRepository.load(e.id).employed().get("laborer"));
+            assertEquals(ProductionBatch.Status.SETTLING_ABORTED,e.execution().batch().getStatus());assertEquals(10,e.staffingRepository.load(e.id).occupiedByOccupation().get("laborer"));
         }
         try(var e=new TestEconomy(file(),false)){
             assertEquals(building,e.id);assertEquals(13,e.clock.elapsedTicks());assertEquals(Status.BLOCKED,e.lifecycle.find(operation).orElseThrow().status());assertNull(e.execution().batch());
-            assertEquals("crude_tools",e.methods().effective().methods().get("tooling_workshop_base"));assertTrue(e.methods().pending().isPresent());assertEquals(5,e.staffingRepository.load(e.id).pending().get("laborer"));
+            assertEquals("crude_tools",e.methods().effective().methods().get("tooling_workshop_base"));assertTrue(e.methods().pending().isPresent());assertEquals(0,e.staffingRepository.load(e.id).totalOccupied());
             assertEquals(100,e.quantity("wood"));assertEquals(0,e.quantity("tools"));e.ticks(1);assertEquals(14,e.clock.elapsedTicks());
         }
     }

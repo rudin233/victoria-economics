@@ -8,7 +8,7 @@ import com.bbmurloc.victoriaeconomics.server.workforce.port.StaffingQueryPort;
 import java.sql.Connection;
 import java.util.*;
 
-/** One DEFERRED snapshot of formal integer Staffing, PM capacity and derived regional supply. */
+/** 在同一个只读快照查询本批占用、配方需求和区域供给。 */
 public final class SqliteStaffingQuery implements StaffingQueryPort {
     private final Connection connection;
     private final Object lock;
@@ -19,7 +19,7 @@ public final class SqliteStaffingQuery implements StaffingQueryPort {
     public SqliteStaffingQuery(Connection connection, ProductionRecipeResolver recipes, OccupationRegistry occupations, Object lock) {
         this.connection = connection; this.lock = lock;
         buildings = new SqliteBuildingRepository(connection, lock);
-        staffing = new SqliteBuildingStaffingRepository(connection, recipes, occupations, lock);
+        staffing = new SqliteBuildingStaffingRepository(connection, lock);
         methods = new SqliteProductionMethodConfigurationRepository(connection, recipes, lock);
         supply = new SqliteRegionalLaborSupplyRepository(connection, occupations, lock);
     }
@@ -30,7 +30,7 @@ public final class SqliteStaffingQuery implements StaffingQueryPort {
                 var root = staffing.inSnapshot(tx, id);
                 var pm = methods.inSnapshot(tx, id);
                 var capacity = pm.recipe().requiredWorkers();
-                var roles = new TreeSet<>(capacity.keySet()); roles.addAll(root.employed().keySet()); roles.addAll(root.pending().keySet());
+                var roles = new TreeSet<>(capacity.keySet()); roles.addAll(root.occupiedByOccupation().keySet());
                 var facts = new TreeMap<String, Supply>();
                 for (String role : roles) {
                     var total = supply.inSnapshot(tx, building.regionId(), role);

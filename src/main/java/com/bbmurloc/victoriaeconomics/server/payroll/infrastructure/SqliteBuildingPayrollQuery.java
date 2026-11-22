@@ -40,7 +40,7 @@ public final class SqliteBuildingPayrollQuery implements BuildingPayrollPort {
                         active = true;
                         if (p.lastAccruedTick() != time.acceptedTick()) return State.RECOVERY;
                         long count = 0;
-                        try (var q = connection.prepareStatement("SELECT employed FROM building_staffing_roles WHERE building_id=?")) {
+                        try (var q = connection.prepareStatement("SELECT occupied_count FROM building_staffing_roles WHERE building_id=?")) {
                             q.setString(1, building.toString()); try (var employees = q.executeQuery()) { while (employees.next()) count = Math.addExact(count, employees.getLong(1)); }
                         }
                         if (count != p.employees()) return State.RECOVERY;

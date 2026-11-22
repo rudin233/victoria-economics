@@ -87,11 +87,8 @@ class EconomicTimePersistenceTest {
     @Test void crashAfterRealBatchAdvanceNeverReplaysThatAdvanceOnClockRecovery() throws Exception {
         UUID building;
         try(var w=new FinancialTestWorld(file())) {
-            building=w.staffingFixture(1,1);var repo=new SqliteProductionExecutionRepository(w.c,w.world.lock);
-            var root=repo.load(building);
-            var recipe=new ResolvedProductionRecipe(Map.of("ore",1L),Map.of("metal",1L),Map.of("laborer",1));
-            root.start(UUID.randomUUID(),new ProductionBatchConfiguration(Map.of("base","test"),recipe,new WorkforcePlan(Map.of("laborer",1),1,1)));
-            repo.save(root,root.executionRevision());
+            building=w.staffingFixture(1,1);
+            var repo=new SqliteProductionExecutionRepository(w.c,w.world.lock);
             var clock=new ServerTickCoordinator(w.time,w.accrual::recoverAcceptedTime,()->{
                 var execution=repo.load(building);long tick=w.time.load().acceptedTick();execution.beginTick(tick);execution.tick(1);execution.finishTick(tick);repo.save(execution,execution.executionRevision());throw new IllegalStateException("crash after production save");
             });

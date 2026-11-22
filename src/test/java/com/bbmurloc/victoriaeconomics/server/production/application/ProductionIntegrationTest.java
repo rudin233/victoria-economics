@@ -17,13 +17,22 @@ import static org.junit.jupiter.api.Assertions.*;
 class ProductionIntegrationTest {
     @TempDir Path dir;
     Path file(){return dir.resolve("economy.sqlite");}
-    @Test void completionStartsNextBatchAtTick200WithZeroProgressThenAdvancesAt201()throws Exception{
+    @Test void completionReleasesAtTick200StartsAt201AndAdvancesAt202()throws Exception{
         try(var e=new TestEconomy(file(),true)){
             var first=e.production.startBatch(e.id);e.ticks(199);assertEquals(199,e.execution().batch().getProgressUnits());
             e.ticks(1);assertEquals(first.getId(),e.execution().lastBatch().getId());assertTrue(e.execution().lastBatch().isCompleted());
-            assertNotEquals(first.getId(),e.execution().batch().getId());assertEquals(0,e.execution().batch().getProgressUnits());
+            assertNull(e.execution().batch());
+            assertEquals(200, first.startedTick() + 200);
+            assertEquals(200L, e.execution().lastBatch().endedTick());
+            assertNull(e.staffingRepository.load(e.id).batchId());
+            assertThrows(ProductionStartBlocked.class, () -> e.production.startBatch(e.id));
             assertEquals(70,e.quantity("wood"));assertEquals(30,e.quantity("tools"));assertEquals(1,e.stockState().settlements().size());
-            e.production.onServerTick();assertEquals(0,e.execution().batch().getProgressUnits());e.ticks(1);assertEquals(1,e.execution().batch().getProgressUnits());
+            e.production.onServerTick();assertNull(e.execution().batch());
+            e.ticks(1);
+            assertNotEquals(first.getId(), e.execution().batch().getId());
+            assertEquals(201, e.execution().batch().startedTick());
+            assertEquals(0, e.execution().batch().getProgressUnits());
+            e.ticks(1);assertEquals(1,e.execution().batch().getProgressUnits());
         }
     }
     @Test void pendingPmAppliesAtomicallyAfterFrozenOldBatchCompletes()throws Exception{
@@ -31,7 +40,9 @@ class ProductionIntegrationTest {
             var first=e.production.startBatch(e.id);e.production.selectProductionMethod(e.id,"tooling_workshop_base","reduced_tools");
             e.ticks(199);assertEquals("crude_tools",e.methods().effective().methods().get("tooling_workshop_base"));
             e.ticks(1);assertEquals("reduced_tools",e.methods().effective().methods().get("tooling_workshop_base"));
-            assertEquals(Map.of("laborer",5,"machinist",2),e.staffingRepository.load(e.id).employed());
+            assertEquals(0,e.staffingRepository.load(e.id).totalOccupied());
+            e.ticks(1);
+            assertEquals(Map.of("laborer",5,"machinist",2),e.staffingRepository.load(e.id).occupiedByOccupation());
             assertEquals(Map.of("laborer",10,"machinist",4),first.getConfiguration().workforcePlan().participatingWorkers());
             assertEquals(7,e.payrollRepository.load(UUID.nameUUIDFromBytes(("payroll:"+e.id).getBytes(java.nio.charset.StandardCharsets.UTF_8))).employees());
         }
@@ -41,16 +52,24 @@ class ProductionIntegrationTest {
         try(var e=new TestEconomy(file(),true)){
             batch=e.production.startBatch(e.id).getId();e.production.selectProductionMethod(e.id,"tooling_workshop_base","efficient_tools");
             e.production.selectProductionMethod(e.id,"tooling_workshop_base","reduced_tools");assertEquals("reduced_tools",e.methods().pending().orElseThrow().methods().get("tooling_workshop_base"));
-            e.production.cancelPendingProductionMethods(e.id);e.staffing.requestTarget(e.id,"laborer",0);e.staffing.cancelPending(e.id,"laborer");
+            e.production.cancelPendingProductionMethods(e.id);
         }
-        try(var e=new TestEconomy(file(),false)){assertTrue(e.methods().pending().isEmpty());assertEquals(batch,e.execution().batch().getId());assertEquals(10,e.staffingRepository.load(e.id).employed().get("laborer"));}
+        try(var e=new TestEconomy(file(),false)){assertTrue(e.methods().pending().isEmpty());assertEquals(batch,e.execution().batch().getId());assertEquals(10,e.staffingRepository.load(e.id).occupiedByOccupation().get("laborer"));}
     }
-    @Test void hiringUsesActualSupplyAndPmCapacityAndDoesNotLeaveAutoRecruitment()throws Exception{
-        try(var e=new TestEconomy(file(),true)){
-            e.staffing.requestTarget(e.id,"laborer",3);e.setSupply("laborer",5);e.staffing.requestTarget(e.id,"laborer",10);
-            assertEquals(5,e.staffingRepository.load(e.id).employed().get("laborer"));assertTrue(e.staffingRepository.load(e.id).pending().isEmpty());
-            e.setSupply("laborer",20);e.staffing.applyEffectiveChanges(e.id);assertEquals(5,e.staffingRepository.load(e.id).employed().get("laborer"));
-            assertThrows(IllegalArgumentException.class,()->e.staffing.requestTarget(e.id,"laborer",11));
+    @Test void hiringUsesSupplyAtStartAndDoesNotRefillRunningBatch() throws Exception {
+        try (var e = new TestEconomy(file(), true)) {
+            e.setSupply("laborer", 5);
+            assertEquals(0, e.staffingRepository.load(e.id).totalOccupied());
+            var first = e.production.startBatch(e.id);
+            assertEquals(5, e.staffingRepository.load(e.id).occupiedByOccupation().get("laborer"));
+            e.setSupply("laborer", 20);
+            e.ticks(399);
+            assertEquals(first.getId(), e.execution().batch().getId());
+            assertEquals(5, e.staffingRepository.load(e.id).occupiedByOccupation().get("laborer"));
+            e.ticks(1);
+            assertNull(e.staffingRepository.load(e.id).batchId());
+            e.ticks(1);
+            assertEquals(10, e.staffingRepository.load(e.id).occupiedByOccupation().get("laborer"));
         }
     }
     @Test void insufficientMaterialsLeaveNoIntentOrReservation()throws Exception{
@@ -67,7 +86,7 @@ class ProductionIntegrationTest {
         try(var e=new TestEconomy(file(),false)){assertTrue(e.journal.pendingStarts().isEmpty());assertTrue(e.stockState().reservations().isEmpty());assertEquals(100,e.quantity("wood"));}
     }
     @Test void finalAuthorityRecheckRejectsStaffingChangeAfterReservation()throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.inventory.afterReserve=()->e.staffingRaceFixture("laborer",5);assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));assertNull(e.execution().batch());assertEquals(5,e.staffingRepository.load(e.id).employed().get("laborer"));assertTrue(e.stockState().reservations().isEmpty());}
+        try(var e=new TestEconomy(file(),true)){e.inventory.afterReserve=()->e.setSupply("laborer",5);assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));assertNull(e.execution().batch());assertEquals(0,e.staffingRepository.load(e.id).totalOccupied());assertTrue(e.stockState().reservations().isEmpty());}
     }
     @Test void manualPauseResumesSameBatchWithAutomaticOff()throws Exception{
         try(var e=new TestEconomy(file(),true)){var batch=e.production.startBatch(e.id);e.ticks(50);e.production.setManualPause(e.id,true);e.production.setAutomatic(e.id,false);e.ticks(10);assertEquals(50,e.execution().batch().getProgressUnits());e.production.setManualPause(e.id,false);e.ticks(1);assertEquals(batch.getId(),e.execution().batch().getId());assertEquals(51,e.execution().batch().getProgressUnits());assertFalse(e.execution().automatic());assertEquals(1,e.stockState().reservations().size());}
@@ -172,12 +191,46 @@ class ProductionIntegrationTest {
         }
     }
 
+    @Test void pausedCheckpointKeepsAllocationPayAndFrozenResourcesWithoutRecruitingAgain() throws Exception {
+        Path world = dir.resolve("paused-world");
+        UUID batch;
+        try (var runtime = EconomyDatabase.open(world); var e = new TestEconomy(runtime, true)) {
+            batch = e.production.startBatch(e.id).getId();
+            e.ticks(25);
+            e.production.setManualPause(e.id, true);
+            e.production.stopAfterCurrentBatch(e.id);
+            e.ticks(5);
+            runtime.requestCheckpoint();
+            assertEquals(30, runtime.awaitLatestCheckpoint().economicTick());
+        }
+        try (var runtime = EconomyDatabase.open(world); var e = new TestEconomy(runtime, false)) {
+            assertEquals(30, e.clock.elapsedTicks());
+            assertEquals(batch, e.execution().batch().getId());
+            assertEquals(batch, e.staffingRepository.load(e.id).batchId());
+            assertEquals(ProductionBatch.Status.PAUSED, e.execution().batch().getStatus());
+            assertEquals(25, e.execution().batch().getProgressUnits());
+            assertEquals(Set.of(ProductionExecution.PauseReason.MANUAL), e.execution().pauseReasons());
+            assertFalse(e.execution().automatic());
+            assertEquals(Map.of("laborer", 10, "machinist", 4), e.staffingRepository.load(e.id).occupiedByOccupation());
+            assertEquals(14, e.scalar("SELECT employees FROM payroll_accruals"));
+            assertEquals(420, e.scalar("SELECT remainder FROM payroll_accruals"));
+            assertEquals(2, e.scalar("SELECT COUNT(*) FROM payroll_employment_history"));
+            assertEquals(e.execution().batch().getConfiguration().resolvedRecipe().inputs(), e.stockState().reservations().get(batch));
+            e.production.setManualPause(e.id, false);
+            e.ticks(175);
+            assertEquals(batch, e.execution().lastBatch().getId());
+            assertEquals(205L, e.execution().lastBatch().endedTick());
+            assertEquals(0, e.staffingRepository.load(e.id).totalOccupied());
+            assertEquals(30, e.quantity("tools"));
+        }
+    }
+
     @Test void missingWageConfigurationNeverAllowsStart()throws Exception{
         try(var e=new TestEconomy(file(),true)){e.sql("DELETE FROM regional_wage_rates");assertEquals(State.UNAVAILABLE,e.payroll.state(e.id));assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));assertNull(e.execution().batch());assertTrue(e.journal.pendingStarts().isEmpty());}
     }
     @Test void restartAfterInventoryReceiptLossCannotDuplicateProductsOrAdvanceTwice()throws Exception{
         try(var e=new TestEconomy(file(),true)){e.production.startBatch(e.id);e.ticks(199);e.inventory.loseSettlementAcknowledgement=true;assertThrows(IllegalStateException.class,()->e.ticks(1));assertEquals(30,e.quantity("tools"));assertTrue(e.execution().batch().needsSettlement());assertEquals(200L,e.execution().processingTick());}
-        try(var e=new TestEconomy(file(),false)){assertEquals(30,e.quantity("tools"));assertEquals(200,e.execution().lastCompletedTick());assertEquals(0,e.execution().batch().getProgressUnits());e.production.onServerTick();assertEquals(0,e.execution().batch().getProgressUnits());}
+        try(var e=new TestEconomy(file(),false)){assertEquals(30,e.quantity("tools"));assertEquals(200,e.execution().lastCompletedTick());assertNull(e.execution().batch());e.production.onServerTick();assertNull(e.execution().batch());e.ticks(1);assertEquals(0,e.execution().batch().getProgressUnits());}
     }
     @Test void restartPreservesProgressRecipeAndReservation()throws Exception{
         UUID batch;ProductionBatchConfiguration snapshot;
@@ -198,6 +251,6 @@ class ProductionIntegrationTest {
     }
     private int attemptStart(TestEconomy e){try{e.production.startBatch(e.id);return 1;}catch(IllegalStateException expected){return 0;}}
     @Test void idlePmContractionImmediatelyAndAtomicallyAdjustsEmployeesAndWageBase()throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.ticks(71);e.production.selectProductionMethod(e.id,"tooling_workshop_base","reduced_tools");assertEquals(Map.of("laborer",5,"machinist",2),e.staffingRepository.load(e.id).employed());assertEquals(7,e.scalar("SELECT employees FROM payroll_accruals"));assertEquals(71,e.scalar("SELECT last_accrued_tick FROM payroll_accruals"));assertEquals(994,e.scalar("SELECT remainder FROM payroll_accruals"));}
+        try(var e=new TestEconomy(file(),true)){e.ticks(71);e.production.selectProductionMethod(e.id,"tooling_workshop_base","reduced_tools");assertEquals(0,e.staffingRepository.load(e.id).totalOccupied());assertEquals(0,e.scalar("SELECT employees FROM payroll_accruals"));assertEquals(71,e.scalar("SELECT last_accrued_tick FROM payroll_accruals"));assertEquals(0,e.scalar("SELECT remainder FROM payroll_accruals"));}
     }
 }

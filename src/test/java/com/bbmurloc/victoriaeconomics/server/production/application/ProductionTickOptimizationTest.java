@@ -42,9 +42,9 @@ class ProductionTickOptimizationTest {
             e.lifecycle.request(command);accept(e,1);e.faults.commits=0;
             assertEquals(COMPLETED,e.coordinator.processTick(e.id,2));assertEquals(1,e.faults.commits);
             assertEquals(BuildingLifecycleOperation.Status.BLOCKED,e.lifecycle.find(command.id()).orElseThrow().status());
-            assertEquals(14,e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));
+            assertEquals(0,e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));
             assertEquals(2,e.scalar("SELECT last_accrued_tick FROM payroll_accruals WHERE closed_tick IS NULL"));
-            assertEquals(14,e.supply.occupied(TestIdentities.REGION,"laborer")+e.supply.occupied(TestIdentities.REGION,"machinist"));
+            assertEquals(0,e.supply.occupied(TestIdentities.REGION,"laborer")+e.supply.occupied(TestIdentities.REGION,"machinist"));
         }
     }
     @Test void pausedBatchKeepsManualReasonReservationAndCheckpointTogether()throws Exception{
@@ -63,7 +63,7 @@ class ProductionTickOptimizationTest {
             assertEquals(200L,e.execution().processingTick());assertEquals(199,e.execution().lastCompletedTick());assertTrue(e.stockState().settlements().isEmpty());
             e.inventory.failSettlement=true;assertThrows(IllegalStateException.class,e.production::onServerTick);assertEquals(200L,e.execution().processingTick());
             e.inventory.failSettlement=false;e.production.onServerTick();assertEquals(batch.getId(),e.execution().lastBatch().getId());
-            assertEquals(0,e.execution().batch().getProgressUnits());assertEquals(1,e.stockState().settlements().size());assertEquals(200,e.execution().lastCompletedTick());
+            assertNull(e.execution().batch());assertEquals(1,e.stockState().settlements().size());assertEquals(200,e.execution().lastCompletedTick());
         }
     }
     @Test void existingMarkerAndBirthTickAlwaysKeepTheStagedProtocol()throws Exception{
@@ -139,22 +139,22 @@ class ProductionTickOptimizationTest {
     @Test void idleTickReconfigurationFailureKeepsPmStaffingPayrollAndCheckpointConsistent()throws Exception{
         try(var e=new TestEconomy(file(),true)){
             var pm=e.methods();long revision=pm.configurationRevision();pm.requestSelection("tooling_workshop_base","reduced_tools",true);e.configurations.save(pm,revision);
-            accept(e,0);e.sql("CREATE TRIGGER fail_history BEFORE INSERT ON payroll_employment_history BEGIN SELECT RAISE(ABORT,'cutoff failure'); END");
+            accept(e,0);e.sql("CREATE TRIGGER fail_history BEFORE UPDATE ON production_method_configurations BEGIN SELECT RAISE(ABORT,'cutoff failure'); END");
             assertThrows(IllegalStateException.class,()->e.coordinator.processTick(e.id,1));
             assertEquals("crude_tools",e.methods().effective().methods().get("tooling_workshop_base"));assertTrue(e.methods().pending().isPresent());
-            assertEquals(14,e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));
-            assertEquals(Map.of("laborer",10,"machinist",4),e.staffingRepository.load(e.id).employed());assertEquals(0,e.execution().lastCompletedTick());
+            assertEquals(0,e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));
+            assertTrue(e.staffingRepository.load(e.id).occupiedByOccupation().isEmpty());assertEquals(0,e.execution().lastCompletedTick());
             e.sql("DROP TRIGGER fail_history");e.recover();assertEquals(1,e.execution().lastCompletedTick());
             assertEquals("reduced_tools",e.methods().effective().methods().get("tooling_workshop_base"));
-            assertEquals(7,e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));assertEquals(1,e.scalar("SELECT MAX(effective_tick) FROM payroll_employment_history"));
+            assertEquals(0,e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));assertEquals(0,e.scalar("SELECT MAX(effective_tick) FROM payroll_employment_history"));
         }
     }
-    @Test void idleFastPathCannotDeclareCompletionWithoutRealWageConfiguration()throws Exception{
+    @Test void idleFastPathDoesNotCreateWagesWithoutRealWageConfiguration()throws Exception{
         try(var e=new TestEconomy(file(),true)){
             accept(e,0);e.sql("DELETE FROM regional_wage_rates");
-            assertThrows(IllegalStateException.class,()->e.coordinator.processTick(e.id,1));
-            assertEquals(0,e.execution().lastCompletedTick());assertNull(e.execution().processingTick());assertNull(e.execution().batch());
-            assertEquals(14,e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));
+            assertEquals(COMPLETED,e.coordinator.processTick(e.id,1));
+            assertEquals(1,e.execution().lastCompletedTick());assertNull(e.execution().processingTick());assertNull(e.execution().batch());
+            assertEquals(0,e.scalar("SELECT employees FROM payroll_accruals WHERE closed_tick IS NULL"));
         }
     }
     @ParameterizedTest @ValueSource(strings={"DELETE","WAL"})

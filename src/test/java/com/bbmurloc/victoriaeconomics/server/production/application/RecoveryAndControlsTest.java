@@ -48,10 +48,10 @@ class RecoveryAndControlsTest {
             e.production.setAutomatic(e.id,false);e.ticks(1);assertEquals(first.getId(),e.execution().batch().getId());assertEquals(0,e.execution().batch().getProgressUnits());
         }
     }
-    @Test void arrearsDismissalAbortsBeforeChangingPeopleAndPreservesDebt()throws Exception{
+    @Test void lifecycleAbortsDuringArrearsAndPreservesDebt()throws Exception{
         try(var e=new TestEconomy(file(),true)){e.production.startBatch(e.id);e.production.setManualPause(e.id,true);e.ticks(1200);e.inventory.failSettlement=true;
-            assertThrows(IllegalStateException.class,()->e.staffing.requestTarget(e.id,"laborer",0));assertEquals(ProductionBatch.Status.SETTLING_ABORTED,e.execution().batch().getStatus());assertFalse(e.execution().automatic());assertEquals(10,e.staffingRepository.load(e.id).employed().get("laborer"));assertEquals(1,e.stockState().reservations().size());
-            e.inventory.failSettlement=false;e.production.retry(e.id);assertNull(e.execution().batch());assertTrue(e.execution().lastBatch().isAborted());assertFalse(e.staffingRepository.load(e.id).employed().containsKey("laborer"));assertEquals(4,e.scalar("SELECT employees FROM payroll_accruals"));assertEquals(14,e.scalar("SELECT matured-paid FROM payroll_accruals"));assertEquals(100,e.quantity("wood"));assertEquals(0,e.quantity("tools"));
+            assertThrows(IllegalStateException.class,e::beginDemolition);assertEquals(ProductionBatch.Status.SETTLING_ABORTED,e.execution().batch().getStatus());assertFalse(e.execution().automatic());assertEquals(10,e.staffingRepository.load(e.id).occupiedByOccupation().get("laborer"));assertEquals(1,e.stockState().reservations().size());
+            e.inventory.failSettlement=false;e.lifecycle.recoverUnfinished();assertNull(e.execution().batch());assertTrue(e.execution().lastBatch().isAborted());assertFalse(e.staffingRepository.load(e.id).occupiedByOccupation().containsKey("laborer"));assertEquals(0,e.scalar("SELECT employees FROM payroll_accruals"));assertEquals(14,e.scalar("SELECT matured-paid FROM payroll_accruals"));assertEquals(100,e.quantity("wood"));assertEquals(0,e.quantity("tools"));
         }
     }
     @Test void isolatedPauseReasonsCannotClearManualPauseWhenPayrollReasonDisappears()throws Exception{
@@ -96,12 +96,13 @@ class RecoveryAndControlsTest {
             var stop = pool.submit(() -> {
                 start.await();
                 synchronized (e.lock) {
-                    boolean nextBatchAlreadyStarted = e.execution().lastBatch() != null;
+                    var current = e.execution().batch();
+                    boolean nextBatchAlreadyStarted = current != null && !current.getId().equals(batch.getId());
                     e.production.stopAfterCurrentBatch(e.id);
                     return nextBatchAlreadyStarted;
                 }
             });
-            var tick = pool.submit(() -> { start.await(); e.ticks(1); return null; });
+            var tick = pool.submit(() -> { start.await(); e.ticks(2); return null; });
             var retry = pool.submit(() -> { start.await(); e.production.retry(e.id); return null; });
             start.countDown();
             boolean nextBatchAlreadyStarted = stop.get(15, TimeUnit.SECONDS);
@@ -154,6 +155,8 @@ class RecoveryAndControlsTest {
 
             e.ticks(1);
             assertEquals(batch.getId(), e.execution().lastBatch().getId());
+            assertNull(e.execution().batch());
+            e.ticks(1);
             assertNotEquals(batch.getId(), e.execution().batch().getId());
             assertEquals(0, e.execution().batch().getProgressUnits());
             assertEquals(1, e.stockState().settlements().size());
