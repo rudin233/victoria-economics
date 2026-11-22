@@ -51,12 +51,33 @@ class StartCommitRecoveryTest {
         try(var e=new TestEconomy(file(),false)){e.production.selectProductionMethod(e.id,"tooling_workshop_base","reduced_tools");assertTrue(e.methods().pending().isPresent());}
         try(var e=new TestEconomy(file(),false)){assertEquals("reduced_tools",e.methods().pending().orElseThrow().methods().get("tooling_workshop_base"));assertEquals("crude_tools",e.execution().batch().getConfiguration().productionMethodSelections().get("tooling_workshop_base"));}
     }
-    @Test void terminationDecisionSurvivesSettlementReceiptLossAndRestart()throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.production.startBatch(e.id);e.ticks(99);e.inventory.loseSettlementAcknowledgement=true;assertThrows(CommitOutcomeUnknownException.class,()->e.production.abortBatch(e.id));assertEquals(ProductionBatch.Status.SETTLING_ABORTED,e.execution().batch().getStatus());assertFalse(e.execution().automatic());assertEquals(100,e.quantity("wood"));}
-        try(var e=new TestEconomy(file(),false)){assertNull(e.execution().batch());assertTrue(e.execution().lastBatch().isAborted());assertEquals(0,e.quantity("tools"));assertEquals(1,e.stockState().settlements().size());assertFalse(e.execution().automatic());}
+    @Test void stopDecisionSurvivesSettlementReceiptLossAndRestart() throws Exception {
+        UUID batch;
+        try (var e = new TestEconomy(file(), true)) {
+            batch = e.production.startBatch(e.id).getId();
+            e.ticks(99);
+            e.production.stopAfterCurrentBatch(e.id);
+            e.ticks(100);
+            e.inventory.loseSettlementAcknowledgement = true;
+            var failure = assertThrows(IllegalStateException.class, () -> e.ticks(1));
+            assertInstanceOf(CommitOutcomeUnknownException.class, failure.getSuppressed()[0]);
+            assertEquals(ProductionBatch.Status.SETTLING_COMPLETED, e.execution().batch().getStatus());
+            assertFalse(e.execution().automatic());
+            assertEquals(1, e.stockState().settlements().size());
+        }
+        try (var e = new TestEconomy(file(), false)) {
+            assertNull(e.execution().batch());
+            assertEquals(batch, e.execution().lastBatch().getId());
+            assertTrue(e.execution().lastBatch().isCompleted());
+            assertFalse(e.execution().automatic());
+            assertEquals(70, e.quantity("wood"));
+            assertEquals(30, e.quantity("tools"));
+            assertEquals(1, e.stockState().settlements().size());
+            assertEquals(200, e.execution().lastCompletedTick());
+        }
     }
     @Test void finalExecutionRevisionRecheckPreservesOtherControlCommand()throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.inventory.afterReserve=()->e.production.setAutomatic(e.id,false);assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));assertNull(e.execution().batch());assertFalse(e.execution().automatic());assertTrue(e.stockState().reservations().isEmpty());}
+        try(var e=new TestEconomy(file(),true)){e.inventory.afterReserve=()->e.production.stopAfterCurrentBatch(e.id);assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));assertNull(e.execution().batch());assertFalse(e.execution().automatic());assertTrue(e.stockState().reservations().isEmpty());}
     }
     @Test void concurrentPmAndStartFollowSuccessfulCommitOrder()throws Exception{
         try(var e=new TestEconomy(file(),true);var pool=Executors.newFixedThreadPool(2)){

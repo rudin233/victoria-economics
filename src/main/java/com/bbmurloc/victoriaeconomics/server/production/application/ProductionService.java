@@ -43,7 +43,10 @@ public final class ProductionService {
         // Only the immutable Batch escapes, and only after commit AND JDBC cleanup returned successfully.
         finishCommittedStart(batch);blocked.remove(id);return started;
     }}}
-    public void abortBatch(UUID id){synchronized(lock){coordinator.abort(id);settleAndHandleBoundary(id);}}
+    /** 关闭自动续产，当前批次继续按原状态推进和结算。 */
+    public void stopAfterCurrentBatch(UUID id) {
+        coordinator.automatic(id, false);
+    }
     public void setAutomatic(UUID id,boolean enabled){coordinator.automatic(id,enabled);}
     public void setManualPause(UUID id,boolean pause){coordinator.manualPause(id,pause);}
     public void retry(UUID id){synchronized(lock){recoverStarts();settleAndHandleBoundary(id);blocked.remove(id);}}

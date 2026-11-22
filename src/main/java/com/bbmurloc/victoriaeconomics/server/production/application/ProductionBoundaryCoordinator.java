@@ -201,8 +201,18 @@ public final class ProductionBoundaryCoordinator {
     }
     public void finishTick(UUID id,long tick){write(tx->{var repo=executions.inTransaction(tx);var e=repo.load(id);if(e.lastCompletedTick()==tick&&e.processingTick()==null)return null;e.finishTick(tick);repo.save(e,e.executionRevision());return null;});}
     public void confirmSettlement(UUID id,UUID batch){write(tx->{var repo=executions.inTransaction(tx);var e=repo.load(id);if(e.batch()==null&&e.lastBatch()!=null&&e.lastBatch().getId().equals(batch)&&e.lastBatch().isEnded())return null;if(e.batch()==null||!e.batch().getId().equals(batch))throw new IllegalStateException("Foreign settlement receipt");if(!e.batch().isEnded()){e.settlementCompleted(batch);repo.save(e,e.executionRevision());}return null;});}
-    public void abort(UUID id){write(tx->{live(tx,id);var e=executions.inTransaction(tx).load(id);e.terminate();executions.inTransaction(tx).save(e,e.executionRevision());return null;});}
-    public void automatic(UUID id,boolean enabled){write(tx->{admit(tx,id);var e=executions.inTransaction(tx).load(id);e.requestAutomatic(enabled);executions.inTransaction(tx).save(e,e.executionRevision());return null;});}
+    public void automatic(UUID id, boolean enabled) {
+        write(tx -> {
+            admit(tx, id);
+            var repository = executions.inTransaction(tx);
+            var execution = repository.load(id);
+            // 开工意图尚在时保留版本更新，让已准备的开工在提交前重新核验。
+            if (!enabled && !execution.automatic() && noStartIntent(tx, id)) return null;
+            execution.requestAutomatic(enabled);
+            repository.save(execution, execution.executionRevision());
+            return null;
+        });
+    }
     public void manualPause(UUID id,boolean pause){write(tx->{admit(tx,id);var e=executions.inTransaction(tx).load(id);if(pause)e.pause();else e.resume();executions.inTransaction(tx).save(e,e.executionRevision());return null;});}
     public void confirmWholeTick(long tick){write(tx->{
         var time=SqliteEconomicTimeRepository.inTransaction(connection,tx);if(time.acceptedTick()!=tick||!time.payrollCaughtUp())throw new IllegalStateException("Time/payroll not ready");

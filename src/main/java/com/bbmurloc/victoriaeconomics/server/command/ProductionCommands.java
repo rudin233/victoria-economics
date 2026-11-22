@@ -61,7 +61,10 @@ public final class ProductionCommands {
                                     var batch = economy.getProductionService().startBatch(id(ctx));
                                     reply(ctx, "Started " + batch.getId());
                                 })))
-                                .then(literal("stop").requires(source -> source.hasPermission(4)).executes(ctx -> run(ctx, economy -> economy.getProductionService().abortBatch(id(ctx)))))
+                                .then(literal("stop").requires(source -> source.hasPermission(4)).executes(ctx -> run(ctx, economy -> {
+                                    economy.getProductionService().stopAfterCurrentBatch(id(ctx));
+                                    reply(ctx, "已停止自动续产。");
+                                })))
                                 .then(literal("retry").requires(source -> source.hasPermission(4)).executes(ctx -> run(ctx, economy -> economy.getProductionService().retry(id(ctx)))))
                                 .then(literal("automatic").requires(source -> source.hasPermission(4))
                                         .then(argument("enabled", BoolArgumentType.bool()).executes(ctx -> run(ctx, economy -> economy.getProductionService().setAutomatic(id(ctx), BoolArgumentType.getBool(ctx, "enabled"))))))

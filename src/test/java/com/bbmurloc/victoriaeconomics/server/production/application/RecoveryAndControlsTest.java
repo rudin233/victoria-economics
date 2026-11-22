@@ -6,8 +6,6 @@ import com.bbmurloc.victoriaeconomics.server.storage.sqlite.*;
 import com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import java.nio.file.*;
 import java.sql.*;
 import java.util.*;
@@ -16,12 +14,31 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class RecoveryAndControlsTest {
     @TempDir Path dir;Path file(){return dir.resolve("control.sqlite");}
-    @ParameterizedTest @ValueSource(booleans={false,true})
-    void lostReceiptRecoversExactOutcomeWithoutDuplicatingGoods(boolean completed)throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.production.startBatch(e.id);e.ticks(199);e.inventory.loseSettlementAcknowledgement=true;
-            if(completed)assertThrows(IllegalStateException.class,()->e.ticks(1));else assertThrows(CommitOutcomeUnknownException.class,()->e.production.abortBatch(e.id));
+    @Test void stopDuringLostCompletionReceiptDoesNotDuplicateGoodsOnRecovery() throws Exception {
+        UUID batch;
+        try (var e = new TestEconomy(file(), true)) {
+            batch = e.production.startBatch(e.id).getId();
+            e.ticks(199);
+            e.inventory.loseSettlementAcknowledgement = true;
+            assertThrows(IllegalStateException.class, () -> e.ticks(1));
+            assertEquals(ProductionBatch.Status.SETTLING_COMPLETED, e.execution().batch().getStatus());
+            var settledStock = e.stockState();
+            assertEquals(1, settledStock.settlements().size());
+
+            e.production.stopAfterCurrentBatch(e.id);
+            assertFalse(e.execution().automatic());
+            assertEquals(ProductionBatch.Status.SETTLING_COMPLETED, e.execution().batch().getStatus());
+            assertEquals(settledStock, e.stockState());
         }
-        try(var e=new TestEconomy(file(),false)){assertEquals(completed?30:0,e.quantity("tools"));assertEquals(completed?70:100,e.quantity("wood"));assertEquals(1,e.stockState().settlements().size());assertEquals(completed,e.execution().lastBatch().isCompleted());}
+        try (var e = new TestEconomy(file(), false)) {
+            e.ticks(1);
+            assertNull(e.execution().batch());
+            assertEquals(batch, e.execution().lastBatch().getId());
+            assertTrue(e.execution().lastBatch().isCompleted());
+            assertEquals(70, e.quantity("wood"));
+            assertEquals(30, e.quantity("tools"));
+            assertEquals(1, e.stockState().settlements().size());
+        }
     }
     @Test void realArrearsPauseOriginalBatchAndDoNotReleaseInputsOrRollBackWages()throws Exception{
         try(var e=new TestEconomy(file(),true)){var first=e.production.startBatch(e.id);e.production.setManualPause(e.id,true);e.ticks(1200);
@@ -42,15 +59,27 @@ class RecoveryAndControlsTest {
     }
     @Test void recoveredPersistentPayrollCursorClearsOnlyItsReasonAndAutomaticOffDoesNotPreventResume()throws Exception{
         try(var e=new TestEconomy(file(),true)){
-            UUID batch=e.production.startBatch(e.id).getId();e.ticks(10);e.production.setManualPause(e.id,true);e.production.setAutomatic(e.id,false);
+            UUID batch=e.production.startBatch(e.id).getId();e.ticks(10);e.production.setManualPause(e.id,true);
             new SqliteEconomicTimeRepository(e.connection,e.lock).acceptNext(10);
             assertThrows(IllegalStateException.class,e.production::onServerTick);
-            assertEquals(Set.of(ProductionExecution.PauseReason.MANUAL,ProductionExecution.PauseReason.PAYROLL_RECOVERY),e.execution().pauseReasons());
+            var pauseReasons = Set.of(ProductionExecution.PauseReason.MANUAL, ProductionExecution.PauseReason.PAYROLL_RECOVERY);
+            assertEquals(pauseReasons, e.execution().pauseReasons());
+            var stock = e.stockState();
+            e.production.stopAfterCurrentBatch(e.id);
+            assertEquals(pauseReasons, e.execution().pauseReasons());
+            assertEquals(ProductionBatch.Status.PAUSED, e.execution().batch().getStatus());
+            assertEquals(stock, e.stockState());
+
             e.recover();e.ticks(1);
             assertEquals(State.CURRENT,e.payroll.state(e.id));assertEquals(Set.of(ProductionExecution.PauseReason.MANUAL),e.execution().pauseReasons());
             assertEquals(batch,e.execution().batch().getId());assertEquals(10,e.execution().batch().getProgressUnits());assertEquals(1,e.stockState().reservations().size());
             e.production.setManualPause(e.id,false);e.ticks(1);
             assertEquals(batch,e.execution().batch().getId());assertEquals(11,e.execution().batch().getProgressUnits());assertFalse(e.execution().automatic());
+            e.ticks(189);
+            assertNull(e.execution().batch());
+            assertEquals(batch, e.execution().lastBatch().getId());
+            assertTrue(e.execution().lastBatch().isCompleted());
+            assertEquals(30, e.quantity("tools"));
         }
     }
     @Test void journalCleanupFailureNeverCompensatesCommittedBatch()throws Exception{
@@ -59,9 +88,45 @@ class RecoveryAndControlsTest {
     @Test void unavailableJournalBlocksMutationAndPreservesCommitments()throws Exception{
         try(var e=new TestEconomy(file(),true)){e.journal.failReads=true;assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));assertTrue(e.stockState().reservations().isEmpty());assertNull(e.execution().batch());}
     }
-    @Test void mixedConcurrentControlsNeverLoseOrDuplicateSettlement()throws Exception{
-        try(var e=new TestEconomy(file(),true);var pool=Executors.newFixedThreadPool(3)){
-            e.production.startBatch(e.id);e.ticks(100);var a=pool.submit(()->e.production.abortBatch(e.id));var b=pool.submit(()->e.production.setAutomatic(e.id,false));var c=pool.submit(()->e.production.retry(e.id));a.get(15,TimeUnit.SECONDS);b.get(15,TimeUnit.SECONDS);c.get(15,TimeUnit.SECONDS);e.production.retry(e.id);assertEquals(1,e.stockState().settlements().size());assertEquals(0,e.quantity("tools"));assertEquals(100,e.quantity("wood"));assertFalse(e.execution().automatic());
+    @Test void concurrentStopRetryAndCompletionFollowCommitOrder() throws Exception {
+        try (var e = new TestEconomy(file(), true); var pool = Executors.newFixedThreadPool(3)) {
+            var batch = e.production.startBatch(e.id);
+            e.ticks(199);
+            var start = new CountDownLatch(1);
+            var stop = pool.submit(() -> {
+                start.await();
+                synchronized (e.lock) {
+                    boolean nextBatchAlreadyStarted = e.execution().lastBatch() != null;
+                    e.production.stopAfterCurrentBatch(e.id);
+                    return nextBatchAlreadyStarted;
+                }
+            });
+            var tick = pool.submit(() -> { start.await(); e.ticks(1); return null; });
+            var retry = pool.submit(() -> { start.await(); e.production.retry(e.id); return null; });
+            start.countDown();
+            boolean nextBatchAlreadyStarted = stop.get(15, TimeUnit.SECONDS);
+            tick.get(15, TimeUnit.SECONDS);
+            retry.get(15, TimeUnit.SECONDS);
+
+            var execution = e.execution();
+            assertFalse(execution.automatic());
+            assertEquals(batch.getId(), execution.lastBatch().getId());
+            assertTrue(execution.lastBatch().isCompleted());
+            assertEquals(1, e.stockState().settlements().size());
+            assertEquals(30, e.quantity("tools"));
+            assertEquals(70, e.quantity("wood"));
+            assertEquals(nextBatchAlreadyStarted ? 1 : 0, e.stockState().reservations().size());
+            assertEquals(nextBatchAlreadyStarted ? 2 : 1, e.scalar("SELECT COUNT(*) FROM production_batches"));
+            if (nextBatchAlreadyStarted) {
+                assertNotEquals(batch.getId(), execution.batch().getId());
+                assertEquals(0, execution.batch().getProgressUnits());
+                e.ticks(200);
+                assertEquals(execution.batch().getId(), e.execution().lastBatch().getId());
+                assertEquals(2, e.stockState().settlements().size());
+                assertEquals(60, e.quantity("tools"));
+                assertEquals(40, e.quantity("wood"));
+            }
+            assertNull(e.execution().batch());
         }
     }
     @Test void abandonedIntentUsesItsOwnBuildingForCompensation()throws Exception{
@@ -72,7 +137,27 @@ class RecoveryAndControlsTest {
         byte[] before=Files.readAllBytes(legacy);assertThrows(IllegalStateException.class,()->SqliteEconomyDatabase.open(legacy));assertArrayEquals(before,Files.readAllBytes(legacy));
     }
     @Test void opaqueRollbackCheckpointCannotApplyToAnotherRoot(){var a=new ProductionExecution(UUID.randomUUID());var b=new ProductionExecution(UUID.randomUUID());assertThrows(IllegalArgumentException.class,()->b.restoreState(a.state()));}
-    @Test void automaticOffPreventsNextBatchButDoesNotStopCurrentProgress()throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.production.startBatch(e.id);e.production.setAutomatic(e.id,false);e.ticks(200);assertNull(e.execution().batch());assertTrue(e.execution().lastBatch().isCompleted());assertEquals(30,e.quantity("tools"));}
+    @Test void enablingAutomaticAfterRepeatedStopOnlyRestoresNextBatch() throws Exception {
+        try (var e = new TestEconomy(file(), true)) {
+            var batch = e.production.startBatch(e.id);
+            e.ticks(199);
+            var stock = e.stockState();
+            e.production.stopAfterCurrentBatch(e.id);
+            long revision = e.execution().executionRevision();
+            e.production.stopAfterCurrentBatch(e.id);
+            assertEquals(revision, e.execution().executionRevision());
+            e.production.setAutomatic(e.id, true);
+            assertTrue(e.execution().automatic());
+            assertEquals(batch.getId(), e.execution().batch().getId());
+            assertEquals(199, e.execution().batch().getProgressUnits());
+            assertEquals(stock, e.stockState());
+
+            e.ticks(1);
+            assertEquals(batch.getId(), e.execution().lastBatch().getId());
+            assertNotEquals(batch.getId(), e.execution().batch().getId());
+            assertEquals(0, e.execution().batch().getProgressUnits());
+            assertEquals(1, e.stockState().settlements().size());
+            assertEquals(1, e.stockState().reservations().size());
+        }
     }
 }

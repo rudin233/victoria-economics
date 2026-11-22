@@ -66,9 +66,17 @@ class BoundaryRecoveryTest {
         try(var e=new TestEconomy(file(),true)){
             e.production.startBatch(e.id);assertThrows(IllegalStateException.class,()->e.coordinator.reconfigure(e.id));
             e.production.setManualPause(e.id,true);assertThrows(IllegalStateException.class,()->e.coordinator.reconfigure(e.id));
-            assertEquals(1,e.stockState().reservations().size());e.inventory.failSettlement=true;
-            assertThrows(IllegalStateException.class,()->e.production.abortBatch(e.id));assertThrows(IllegalStateException.class,()->e.coordinator.reconfigure(e.id));
-            assertEquals(ProductionBatch.Status.SETTLING_ABORTED,e.execution().batch().getStatus());
+            assertEquals(1, e.stockState().reservations().size());
+            e.production.stopAfterCurrentBatch(e.id);
+            assertEquals(Set.of(ProductionExecution.PauseReason.MANUAL), e.execution().pauseReasons());
+            e.production.setManualPause(e.id, false);
+            e.ticks(199);
+            e.inventory.failSettlement = true;
+            assertThrows(IllegalStateException.class, () -> e.ticks(1));
+            assertThrows(IllegalStateException.class, () -> e.coordinator.reconfigure(e.id));
+            assertEquals(ProductionBatch.Status.SETTLING_COMPLETED, e.execution().batch().getStatus());
+            assertFalse(e.execution().automatic());
+            assertEquals(1, e.stockState().reservations().size());
         }
     }
     @Test void beginTickCommitAndProgressAreAtomicAndRestartNeverAdvancesTwice()throws Exception{
@@ -78,16 +86,54 @@ class BoundaryRecoveryTest {
         }
         try(var e=new TestEconomy(file(),false)){assertEquals(1,e.execution().batch().getProgressUnits());assertEquals(1,e.execution().lastCompletedTick());e.production.onServerTick();assertEquals(1,e.execution().batch().getProgressUnits());}
     }
-    @Test void callbackConfirmationCannotHideAnUnsettledManualAbortAfterTickCompletion()throws Exception{
-        try(var e=new TestEconomy(file(),true)){
-            e.production.startBatch(e.id);e.ticks(1);e.inventory.failSettlement=true;
-            assertThrows(IllegalStateException.class,()->e.production.abortBatch(e.id));
-            assertEquals(1,e.execution().lastCompletedTick());assertTrue(e.coordinator.needsRecovery());
-            assertThrows(IllegalStateException.class,()->e.coordinator.confirmWholeTick(1));
-            assertEquals(1,e.stockState().reservations().size());
-            e.inventory.failSettlement=false;e.production.recoverAcceptedTick();
-            assertFalse(e.coordinator.needsRecovery());assertTrue(e.stockState().reservations().isEmpty());
-            assertEquals(ProductionBatch.Status.ABORTED,e.execution().lastBatch().getStatus());
+    @Test void callbackConfirmationCannotHideUnsettledCompletionAfterStop() throws Exception {
+        try (var e = new TestEconomy(file(), true)) {
+            e.production.startBatch(e.id);
+            e.ticks(199);
+            e.production.stopAfterCurrentBatch(e.id);
+            e.inventory.failSettlement = true;
+            assertThrows(IllegalStateException.class, () -> e.ticks(1));
+            assertEquals(199, e.execution().lastCompletedTick());
+            assertEquals(200L, e.execution().processingTick());
+            assertTrue(e.coordinator.needsRecovery());
+            assertThrows(IllegalStateException.class, () -> e.coordinator.confirmWholeTick(200));
+            assertEquals(1, e.stockState().reservations().size());
+
+            e.inventory.failSettlement = false;
+            e.production.recoverAcceptedTick();
+            assertFalse(e.coordinator.needsRecovery());
+            assertTrue(e.stockState().reservations().isEmpty());
+            assertNull(e.execution().batch());
+            assertEquals(ProductionBatch.Status.COMPLETED, e.execution().lastBatch().getStatus());
+            assertEquals(1, e.stockState().settlements().size());
+        }
+    }
+
+    @Test void stopDuringReconfigurationPreservesSettlementAndBlocksNextBatch() throws Exception {
+        UUID batch;
+        try (var e = new TestEconomy(file(), true)) {
+            batch = e.production.startBatch(e.id).getId();
+            e.production.selectProductionMethod(e.id, "tooling_workshop_base", "reduced_tools");
+            e.ticks(199);
+            e.sql("CREATE TRIGGER fail_boundary " + failure("execution") + " BEGIN SELECT RAISE(ABORT,'injected'); END");
+            assertThrows(IllegalStateException.class, () -> e.ticks(1));
+            var stock = e.stockState();
+            assertEquals(1, stock.settlements().size());
+            e.production.stopAfterCurrentBatch(e.id);
+            assertEquals(ProductionExecution.Boundary.RECONFIGURING, e.execution().boundary());
+            assertEquals(ProductionBatch.Status.COMPLETED, e.execution().batch().getStatus());
+            assertEquals(stock, e.stockState());
+            e.sql("DROP TRIGGER fail_boundary");
+        }
+        try (var e = new TestEconomy(file(), false)) {
+            assertEquals(ProductionExecution.Boundary.NONE, e.execution().boundary());
+            assertEquals("reduced_tools", e.methods().effective().methods().get("tooling_workshop_base"));
+            assertFalse(e.execution().automatic());
+            assertNull(e.execution().batch());
+            assertEquals(batch, e.execution().lastBatch().getId());
+            assertEquals(1, e.stockState().settlements().size());
+            assertEquals(30, e.quantity("tools"));
+            assertEquals(70, e.quantity("wood"));
         }
     }
     @Test void completionCheckpointFailureAfterStartingNextBatchDoesNotAdvanceNewBatchOnRecovery()throws Exception{

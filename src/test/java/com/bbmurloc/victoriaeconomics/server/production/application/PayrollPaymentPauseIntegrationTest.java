@@ -23,7 +23,12 @@ class PayrollPaymentPauseIntegrationTest {
             fund(e.companyCash,2);e.ticks(1200);progress=e.execution().batch().getProgressUnits();assertEquals(1199,progress);
             assertEquals(State.ARREARS,e.payroll.state(e.id));assertEquals(ProductionBatch.Status.PAUSED,e.execution().batch().getStatus());assertEquals(2,e.accounts.load(e.householdCash).balance());assertEquals(2,e.scalar("SELECT SUM(amount-paid) FROM payroll_liabilities"));
             assertEquals(1,e.stockState().reservations().size());assertEquals(first,e.execution().batch().getId());assertEquals(second,e.repository.load(secondBuilding).batch().getId());
-            e.production.setAutomatic(e.id,false);e.production.setManualPause(secondBuilding,true);
+            var pauseReasons = e.execution().pauseReasons();
+            var reserved = e.stockState();
+            e.production.stopAfterCurrentBatch(e.id);
+            assertEquals(pauseReasons, e.execution().pauseReasons());
+            assertEquals(reserved, e.stockState());
+            e.production.setManualPause(secondBuilding,true);
         }
         // Restart uses the same accepted time/Run, without a second payment or offline catchup.
         try(var e=new TestEconomy(file(),false)){
@@ -35,10 +40,10 @@ class PayrollPaymentPauseIntegrationTest {
             e.production.setManualPause(secondBuilding,false);e.ticks(1);assertEquals(second,e.repository.load(secondBuilding).batch().getId());assertEquals(progress+1,e.repository.load(secondBuilding).batch().getProgressUnits());assertEquals(2,e.scalar("SELECT COUNT(*) FROM payroll_payment_runs"));
         }
     }
-    @Test void irrevocablyAbortedBatchNeverResurrectsWhenItsRealWagesArePaid()throws Exception{
+    @Test void batchAbortedByArrearsDismissalNeverResurrectsWhenItsRealWagesArePaid()throws Exception{
         UUID batch;
         try(var e=new TestEconomy(file(),true)){
-            batch=e.production.startBatch(e.id).getId();e.production.setManualPause(e.id,true);e.ticks(1200);assertEquals(State.ARREARS,e.payroll.state(e.id));e.production.abortBatch(e.id);
+            batch=e.production.startBatch(e.id).getId();e.production.setManualPause(e.id,true);e.ticks(1200);assertEquals(State.ARREARS,e.payroll.state(e.id));e.staffing.requestTarget(e.id,"laborer",0);
             assertNull(e.execution().batch());assertEquals(batch,e.execution().lastBatch().getId());assertTrue(e.execution().lastBatch().isAborted());assertTrue(e.stockState().reservations().isEmpty());
             // Explicit accepted-time fixture for an idle stopped actor, not production catchup or offline scheduling.
             try(var fixture=new FinancialTestWorld(file())){fixture.fundingFixture(e.companyCash,28);fixture.acceptedTimeFixture(2400);fixture.accrual.recoverAcceptedTime();}

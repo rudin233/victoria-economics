@@ -55,6 +55,7 @@ public final class ProductionExecution {
     public void pause(){pause(PauseReason.MANUAL);}public void resume(){resume(PauseReason.MANUAL);}
     public void pause(PauseReason reason){if(batch==null||batch.needsSettlement()||batch.isEnded())return;pauses.add(reason);change(ProductionBatch.Status.PAUSED,batch.getProgressUnits());}
     public void resume(PauseReason reason){pauses.remove(reason);if(batch!=null&&batch.getStatus()==ProductionBatch.Status.PAUSED&&pauses.isEmpty())change(ProductionBatch.Status.ACTIVE,batch.getProgressUnits());}
+    /** 建筑生命周期交接与欠薪缩员使用的特殊中止操作。 */
     public void terminate(){automatic=false;if(batch!=null&&!batch.isEnded()&&!batch.needsSettlement()){pauses.clear();change(ProductionBatch.Status.SETTLING_ABORTED,batch.getProgressUnits());}}
     public void settlementCompleted(UUID id){if(batch==null||!batch.getId().equals(id))throw new IllegalStateException("Wrong settlement owner");if(batch.isEnded())return;if(!batch.needsSettlement())throw new IllegalStateException("Settlement not decided");pauses.clear();change(batch.getStatus()==ProductionBatch.Status.SETTLING_COMPLETED?ProductionBatch.Status.COMPLETED:ProductionBatch.Status.ABORTED,batch.getProgressUnits());boundary=Boundary.RECONFIGURING;}
     public void reconfigurationCompleted(){if(boundary!=Boundary.RECONFIGURING||batch==null||!batch.isEnded())throw new IllegalStateException("No settled reconfiguration barrier");lastBatch=batch;batch=null;boundary=Boundary.NONE;}

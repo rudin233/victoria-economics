@@ -2,10 +2,13 @@ package com.bbmurloc.victoriaeconomics.server.production.application;
 
 import com.bbmurloc.victoriaeconomics.server.production.domain.*;
 import com.bbmurloc.victoriaeconomics.server.production.port.BuildingPayrollPort.State;
+import com.bbmurloc.victoriaeconomics.server.storage.EconomyDatabase;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.*;
 import com.bbmurloc.victoriaeconomics.server.time.infrastructure.SqliteEconomicTimeRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.*;
@@ -78,9 +81,97 @@ class ProductionIntegrationTest {
             assertEquals(batch.getId(),e.execution().batch().getId());assertEquals(11,e.execution().batch().getProgressUnits());assertTrue(e.execution().pauseReasons().isEmpty());
         }
     }
-    @Test void abortAtNinetyNinePercentRefundsAllInputsAndProducesNothing()throws Exception{
-        try(var e=new TestEconomy(file(),true)){e.production.startBatch(e.id);e.ticks(198);e.production.abortBatch(e.id);assertTrue(e.execution().lastBatch().isAborted());assertEquals(100,e.quantity("wood"));assertEquals(0,e.quantity("tools"));assertTrue(e.stockState().reservations().isEmpty());assertFalse(e.execution().automatic());}
+    @Test void stopAtTick199KeepsBatchIntactAndCompletesExactlyOnce() throws Exception {
+        try (var e = new TestEconomy(file(), true)) {
+            var batch = e.production.startBatch(e.id);
+            e.ticks(199);
+            var stock = e.stockState();
+
+            e.production.stopAfterCurrentBatch(e.id);
+            var stopped = e.execution();
+            assertFalse(stopped.automatic());
+            assertEquals(batch.getId(), stopped.batch().getId());
+            assertEquals(batch.getConfiguration(), stopped.batch().getConfiguration());
+            assertEquals(ProductionBatch.Status.ACTIVE, stopped.batch().getStatus());
+            assertEquals(199, stopped.batch().getProgressUnits());
+            assertEquals(stock, e.stockState());
+            assertThrows(ProductionStartBlocked.class, () -> e.production.startBatch(e.id));
+            assertEquals(stock, e.stockState());
+
+            e.ticks(1);
+            assertNull(e.execution().batch());
+            assertEquals(batch.getId(), e.execution().lastBatch().getId());
+            assertEquals(ProductionBatch.Status.COMPLETED, e.execution().lastBatch().getStatus());
+            assertEquals(200, e.execution().lastCompletedTick());
+            assertEquals(70, e.quantity("wood"));
+            assertEquals(30, e.quantity("tools"));
+            assertEquals(1, e.stockState().settlements().size());
+            assertTrue(e.stockState().reservations().isEmpty());
+            assertEquals(1, e.scalar("SELECT COUNT(*) FROM production_batches"));
+
+            e.ticks(1);
+            assertNull(e.execution().batch());
+            var manuallyStarted = e.production.startBatch(e.id);
+            assertNotEquals(batch.getId(), manuallyStarted.getId());
+            assertTrue(e.execution().automatic());
+            assertEquals(1, e.stockState().reservations().size());
+        }
     }
+
+    @Test void idleStopDoesNotStartOrSettleBatch() throws Exception {
+        try (var e = new TestEconomy(file(), true)) {
+            e.production.setAutomatic(e.id, true);
+            var stock = e.stockState();
+            e.production.stopAfterCurrentBatch(e.id);
+            long revision = e.execution().executionRevision();
+            e.production.stopAfterCurrentBatch(e.id);
+            assertEquals(revision, e.execution().executionRevision());
+            e.ticks(1);
+            assertFalse(e.execution().automatic());
+            assertNull(e.execution().batch());
+            assertNull(e.execution().lastBatch());
+            assertEquals(stock, e.stockState());
+            assertTrue(e.journal.pendingStarts().isEmpty());
+        }
+    }
+    @ParameterizedTest @ValueSource(ints = {50, 199})
+    void stopSurvivesCompleteCheckpointAndRestart(int savedTick) throws Exception {
+        Path world = dir.resolve("world");
+        UUID batch;
+        try (var runtime = EconomyDatabase.open(world); var e = new TestEconomy(runtime, true)) {
+            batch = e.production.startBatch(e.id).getId();
+            e.ticks(savedTick);
+            e.production.stopAfterCurrentBatch(e.id);
+            runtime.requestCheckpoint();
+            assertEquals(savedTick, runtime.awaitLatestCheckpoint().economicTick());
+        }
+        try (var runtime = EconomyDatabase.open(world); var e = new TestEconomy(runtime, false)) {
+            assertEquals(savedTick, runtime.checkpointStatus().committed().economicTick());
+            assertEquals(savedTick, e.clock.elapsedTicks());
+            assertFalse(e.execution().automatic());
+            assertEquals(batch, e.execution().batch().getId());
+            assertEquals(savedTick, e.execution().batch().getProgressUnits());
+            assertEquals(1, e.stockState().reservations().size());
+
+            e.ticks(200 - savedTick);
+            assertNull(e.execution().batch());
+            assertEquals(batch, e.execution().lastBatch().getId());
+            assertTrue(e.execution().lastBatch().isCompleted());
+            assertEquals(200, e.execution().lastCompletedTick());
+            assertEquals(70, e.quantity("wood"));
+            assertEquals(30, e.quantity("tools"));
+            assertEquals(1, e.stockState().settlements().size());
+        }
+        try (var runtime = EconomyDatabase.open(world); var e = new TestEconomy(runtime, false)) {
+            assertEquals(200, e.clock.elapsedTicks());
+            e.ticks(1);
+            assertNull(e.execution().batch());
+            assertEquals(batch, e.execution().lastBatch().getId());
+            assertEquals(1, e.stockState().settlements().size());
+            assertEquals(30, e.quantity("tools"));
+        }
+    }
+
     @Test void missingWageConfigurationNeverAllowsStart()throws Exception{
         try(var e=new TestEconomy(file(),true)){e.sql("DELETE FROM regional_wage_rates");assertEquals(State.UNAVAILABLE,e.payroll.state(e.id));assertThrows(IllegalStateException.class,()->e.production.startBatch(e.id));assertNull(e.execution().batch());assertTrue(e.journal.pendingStarts().isEmpty());}
     }

@@ -123,7 +123,7 @@ class ProductionDomainTest {
     }
 
     @Test
-    void pausedProductionKeepsCommitmentAndTerminatesAtActualProgress() {
+    void specialTerminationPreservesActualProgressAfterPauseAndResume() {
         var execution = new ProductionExecution(UUID.randomUUID());
         execution.start(UUID.randomUUID(), configuration(10, 10));
         execution.tick(50);

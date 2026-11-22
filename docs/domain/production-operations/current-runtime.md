@@ -1,6 +1,6 @@
 # 当前经济运行链与代码阅读地图
 
-日期：2026-10-21；Schema v10、业务 JSON format 9。当前存档合同见 [P 检查点设计](../../design/VE-Task-P-一致性检查点架构.md)及 [P 验收报告](../../testing/VE-Task-P-经济Tick性能诊断与优化验收.md)。[任务 E 报告](../../design/VE-Task-E-M5.1-M5.2-M5.3-建筑生命周期与整体验收.md)记录此前 v9 阶段；其中逐 Tick 落盘要求已被用户本轮决定替代。旧 overview、搬包审查及 ADR-PO-02 保留历史。
+日期：2026-10-21；Schema v10、业务 JSON format 9。当前存档合同见 [P 检查点设计](../../design/VE-Task-P-一致性检查点架构.md)及 [P 验收报告](../../testing/VE-Task-P-经济Tick性能诊断与优化验收.md)。[任务 E 报告](../../design/VE-Task-E-M5.1-M5.2-M5.3-建筑生命周期与整体验收.md)记录此前 v9 阶段；其中逐 Tick 落盘要求已被用户本轮决定替代。[生产概览](overview.md)与[代码阅读地图](code-reading-map.md)描述现行行为。搬包审查和 ADR-PO-02 的实施记录保留历史。
 
 工作包 P 恢复阶段只局部减少同步结算重复工作：同一显式 WriteSession 的 Execution Session 复用已严格解码的不可变配置，每次保存仍重新读取行并比对原 JSON；不跨事务缓存经济状态。prepare/commitStart 各自重新校验库存、Staffing、工资及 CAS。自动重开不再重复已经完成的重配置，资产阶段、Journal 和未知提交恢复边界保持。具体安全论证、688 项回归及未通过的性能项目见 P 报告第 12 节；不能把查询数量下降等同于 20 TPS 验收通过。
 
@@ -37,7 +37,7 @@ Minecraft 原生文件和 VE SQLite 没有共同物理事务。正式虚拟库�
 
 每职业至少 10%，速度是人数比例瓶颈。Staffing Pending 不改变当前 Batch；部分招聘消费一次请求。PM、人数和旧工资截止在同一 IMMEDIATE 写事务生效。没有设备、NPC Employment 或旧三阶段边界。普通工具、机械商品仍保留。
 
-完成全额耗料产出，中止全退零产；欠薪只暂停，MANUAL 等原因独立保留。公司周期父 Run 的多币种分区、真实扣转、账本和债务减少同事务；历史来源的未决部分冲销仍 BLOCKED。所有账户零余额开户，没有正式测试注资或默认人口入口。
+正常完工全额耗料、全额产出。普通欠薪状态推进时暂停当前批次，MANUAL 等暂停原因各自保留。仅在受控的出售或拆除准备、欠薪期间缩减已雇人员等特殊业务路径中，未决定完工的批次才可能中止，按全额退料、零产出结算。公司周期父 Run 的多币种分区、真实扣转、账本和债务减少同事务；历史来源的未决部分冲销仍 BLOCKED。所有账户零余额开户，没有正式测试注资或默认人口入口。
 
 ## 生命周期的实际开放范围
 
@@ -69,6 +69,8 @@ Minecraft 原生文件和 VE SQLite 没有共同物理事务。正式虚拟库�
 /ve building <building> lifecycle retry <operation>
 /ve building <building> lifecycle verify <operation>
 ```
+
+`stop` 仅在现有经济锁和执行版本保护下提交 `automatic=false`。空闲建筑停止自动开工，当前批次保留进度、配方、人员、原料预留和暂停原因。达到满进度后完整结算并处理待生效配置，自动续产关闭时不创建下一批。`automatic true` 允许后续自动开工。`start` 要求上一批结束并通过现有开工检查，成功后开启自动续产。
 
 sale / demolish 返回的是准备状态或 BLOCKED，不是交易成功。相同 OperationId 的完整命令必须一致。verify 始终开新可信连接，经完整格式预检后读取事实；不会自动重发或发布未经证实的 owner。
 

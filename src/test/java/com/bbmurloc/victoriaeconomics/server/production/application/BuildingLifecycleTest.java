@@ -59,7 +59,13 @@ class BuildingLifecycleTest {
             if(!stage.equals("IDLE"))e.production.startBatch(e.id);
             switch(stage){
                 case "PAUSED"->{e.ticks(7);e.production.setManualPause(e.id,true);}
-                case "SETTLING_ABORTED"->{e.ticks(7);e.coordinator.abort(e.id);}
+                case "SETTLING_ABORTED" -> {
+                    e.ticks(7);
+                    // 构造已持久化的特殊中止决定，验证生命周期接手时沿用该决定。
+                    var execution = e.execution();
+                    execution.terminate();
+                    e.repository.save(execution, execution.executionRevision());
+                }
                 case "SETTLING_COMPLETED"->{e.ticks(199);new SqliteEconomicTimeRepository(e.connection,e.lock).acceptNext(199);e.accrual.recoverAcceptedTime();e.coordinator.advance(e.id,200);}
             }
             var op=e.lifecycle.request(command(e,Kind.SALE));assertEquals(Status.BLOCKED,op.status());assertNull(e.execution().batch());

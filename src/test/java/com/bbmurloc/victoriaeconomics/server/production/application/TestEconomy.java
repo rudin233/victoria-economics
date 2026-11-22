@@ -9,6 +9,7 @@ import com.bbmurloc.victoriaeconomics.server.building.*;
 import com.bbmurloc.victoriaeconomics.server.production.domain.*;
 import com.bbmurloc.victoriaeconomics.server.production.port.*;
 import com.bbmurloc.victoriaeconomics.server.production.infrastructure.*;
+import com.bbmurloc.victoriaeconomics.server.storage.EconomyDatabase;
 import com.bbmurloc.victoriaeconomics.server.storage.sqlite.*;
 import com.bbmurloc.victoriaeconomics.server.inventory.domain.GoodsInventory;
 import com.bbmurloc.victoriaeconomics.server.inventory.infrastructure.SqliteInventoryStore;
@@ -22,11 +23,13 @@ import com.bbmurloc.victoriaeconomics.server.financial.JdbcFaults;
 import java.nio.file.Path;
 import java.sql.*;
 import java.util.*;
+import java.util.function.Supplier;
 
 /** Full real SQLite Staffing/Payroll production fixture. No fake CURRENT, employee identities or cash. */
 final class TestEconomy implements AutoCloseable {
     final Object lock=new Object();
     final Connection physical,connection;
+    private final boolean ownsConnection;
     final JdbcFaults faults;
     final BuildingRegistry buildings=new BuildingRegistry();
     final BuildingTypeRegistry types=new BuildingTypeRegistry();
@@ -60,7 +63,16 @@ final class TestEconomy implements AutoCloseable {
     final UUID id;
     TestEconomy(Path file,boolean create)throws SQLException{this(file,create,1000);}
     TestEconomy(Path file,boolean create,long capacity)throws SQLException{
-        physical=DriverManager.getConnection("jdbc:sqlite:"+file);faults=new JdbcFaults(SqliteConnectionGuard.protect(physical));connection=faults.connection;
+        this(DriverManager.getConnection("jdbc:sqlite:"+file), true, () -> SqliteEconomyDatabase.open(file), create, capacity);
+    }
+    TestEconomy(EconomyDatabase runtime, boolean create) throws SQLException {
+        this(runtime.getConnection(), false, runtime::openVerificationConnection, create, 1000);
+    }
+    private TestEconomy(Connection physical, boolean ownsConnection, Supplier<Connection> verificationConnection,
+                        boolean create, long capacity) throws SQLException {
+        this.physical = physical;
+        this.ownsConnection = ownsConnection;
+        faults=new JdbcFaults(SqliteConnectionGuard.protect(physical));connection=faults.connection;
         EconomySchema.initialize(connection);TestIdentities.seed(connection);
         DefaultDefinitions.registerBuildingTypes(types);DefaultDefinitions.registerProductionMethods(methods);DefaultDefinitions.registerOccupations(occupations);
         SqliteOccupationCatalog.register(connection,occupations);
@@ -72,7 +84,7 @@ final class TestEconomy implements AutoCloseable {
         buildingRepository=new SqliteBuildingRepository(connection,lock);repository=new SqliteProductionExecutionRepository(connection,lock);configurations=new SqliteProductionMethodConfigurationRepository(connection,resolver,lock);
         staffingRepository=new SqliteBuildingStaffingRepository(connection,resolver,occupations,lock);supply=new SqliteRegionalLaborSupplyRepository(connection,occupations,lock);
         buildingRepository.loadAll().forEach(buildings::add);
-        var initializer=new ProductionBuildingInitializer(connection,lock,buildingRepository,configurations,repository,resolver,staffingRepository,()->SqliteEconomyDatabase.open(file));
+        var initializer=new ProductionBuildingInitializer(connection,lock,buildingRepository,configurations,repository,resolver,staffingRepository,verificationConnection);
         buildingService=new BuildingService(buildings,buildingRepository,types,initializer,lock);
         stock=new SqliteInventoryStore(connection,lock);inventory=new FaultInventory(stock);journal=new FaultJournal(new SqliteProductionJournal(connection));
         coordinator=new ProductionBoundaryCoordinator(connection,resolver,occupations,lock);production=new ProductionService(coordinator,inventory,journal,lock);
@@ -82,7 +94,7 @@ final class TestEconomy implements AutoCloseable {
         payments=new com.bbmurloc.victoriaeconomics.server.payroll.application.CompanyPayrollService(connection,lock);
         periods=new com.bbmurloc.victoriaeconomics.server.payroll.application.PayrollPeriodService(connection,lock);
         households=new com.bbmurloc.victoriaeconomics.server.household.application.RegionalHouseholdService(connection,lock);
-        lifecycle=new com.bbmurloc.victoriaeconomics.server.building.application.BuildingLifecycleService(connection,lock,resolver,production::settleForLifecycle,()->SqliteEconomyDatabase.open(file));
+        lifecycle=new com.bbmurloc.victoriaeconomics.server.building.application.BuildingLifecycleService(connection,lock,resolver,production::settleForLifecycle,verificationConnection);
         var currency=new com.bbmurloc.victoriaeconomics.server.finance.domain.CurrencyId(new UUID(700,1));
         // Explicit zero-cash test accounts, with no issuance. Real zero-payment periods preserve arrears assertions.
         companyCash=finance.open(new UUID(800,1),com.bbmurloc.victoriaeconomics.server.finance.domain.FinanceAccount.OwnerKind.COMPANY,TestIdentities.COMPANY.value(),currency).id();
@@ -109,7 +121,7 @@ final class TestEconomy implements AutoCloseable {
     });}
     void sql(String sql)throws SQLException{try(var s=connection.createStatement()){s.execute(sql);}}
     long scalar(String sql)throws SQLException{try(var s=connection.createStatement();var r=s.executeQuery(sql)){r.next();return r.getLong(1);}}
-    @Override public void close()throws SQLException{physical.close();}
+    @Override public void close()throws SQLException{if(ownsConnection)physical.close();}
     static final class FaultJournal implements ProductionJournal {
         final ProductionJournal delegate;boolean failContains,failReads,failCleanup;
         FaultJournal(ProductionJournal delegate){this.delegate=delegate;}
